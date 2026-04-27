@@ -13,9 +13,10 @@ It does not store project facts, causal truth, task archives, or code.
 2. master/VISIBILITY_BOUNDARY.md
 3. master/RESPONSIBILITY_CONTRACT.md
 4. master/CLAIM_VERIFICATION_POLICY.md
-5. organization/ORGANIZATION_MODEL.md
-6. organization/DEPARTMENT_CATALOG.yaml
-7. organization/topologies/linear_001_002_003.yaml
+5. master/BUSINESS_STATE_BOUNDARY.md
+6. organization/ORGANIZATION_MODEL.md
+7. organization/DEPARTMENT_CATALOG.yaml
+8. organization/topologies/linear_001_002_003.yaml
 ```
 
 ## Phase-1 target
