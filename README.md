@@ -16,6 +16,12 @@ specific business = code-repo + aegis-archive + aegis-causal + aegis-knowledge
 
 `aegis-master-kit` is not a project knowledge base, not a causal truth store, not a task archive, and not a code repository. It only tells the Master how to organize work.
 
+## High-level governance flow
+
+The following diagram shows the high-level Master governance flow. It is not a complete system architecture diagram.
+
+![Aegis high-level governance flow](docs/aegis-high-level-governance-flow.png)
+
 ## Repository layout
 
 ```text
