@@ -1,0 +1,19 @@
+[project]
+name = "aegis-router"
+version = "0.1.2"
+description = "A lightweight local MCP-style message router for Aegis agent communication domains."
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+authors = [{name = "Aegis Project"}]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+aegis-router = "aegis_router.server:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

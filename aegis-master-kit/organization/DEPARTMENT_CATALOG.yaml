@@ -1,0 +1,18 @@
+departments:
+  - id: "001"
+    name: request_admission
+    display_name: Request Admission Department
+    purpose: Verify request necessity, evidence strength, and responsibility boundary.
+    phase_1_status: placeholder
+
+  - id: "002"
+    name: planning_and_dispatch
+    display_name: Planning and Dispatch Department
+    purpose: Transform admitted requests into executable department-level tasks.
+    phase_1_status: placeholder
+
+  - id: "003"
+    name: execution_and_verification
+    display_name: Execution and Verification Department
+    purpose: Execute candidate work and verify results.
+    phase_1_status: placeholder

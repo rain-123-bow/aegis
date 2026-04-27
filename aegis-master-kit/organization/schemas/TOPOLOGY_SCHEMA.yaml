@@ -1,0 +1,12 @@
+topology_id: <string>
+nodes:
+  - department_id: <string>
+    role: <string>
+edges:
+  - from: <department_id>
+    to: <department_id>
+    condition: <string>
+escalation:
+  to: master
+  when:
+    - <condition>

@@ -1,0 +1,15 @@
+id: F0001
+statement: <conclusion>
+why: <minimal causal explanation>
+evidence:
+  - type: code|log|experiment|observation|summary
+    ref: <reference>
+scope: <valid scope>
+assumptions:
+  - <assumption>
+depends_on: []
+invalidates: []
+supersedes: []
+confidence: low|medium|high
+status: tentative|active|superseded|invalidated
+version_context: <branch or commit context>

@@ -1,0 +1,23 @@
+topology_id: linear_001_002_003
+purpose: Phase-1 smoke topology for Master organization construction.
+nodes:
+  - department_id: "001"
+    role: request_admission
+  - department_id: "002"
+    role: planning_and_dispatch
+  - department_id: "003"
+    role: execution_and_verification
+edges:
+  - from: "001"
+    to: "002"
+    condition: admission_accepted
+  - from: "002"
+    to: "003"
+    condition: plan_ready
+escalation:
+  to: master
+  when:
+    - evidence_insufficient
+    - responsibility_boundary_unclear
+    - department_conflict
+    - high_risk_unclosed

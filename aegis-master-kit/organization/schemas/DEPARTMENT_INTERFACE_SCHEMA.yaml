@@ -1,0 +1,16 @@
+department_id: <string>
+name: <string>
+purpose: <string>
+input_contract:
+  - <item>
+output_contract:
+  - <item>
+visible_to_parent:
+  - department_status
+  - leader_identity
+  - input_output_state
+  - escalation_request
+hidden_from_parent:
+  - internal_agent_count
+  - internal_agent_topology
+  - internal_deliberation_trace
