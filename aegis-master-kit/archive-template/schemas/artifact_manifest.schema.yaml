@@ -1,0 +1,41 @@
+schema_id: artifact_manifest.schema.v1
+kind: aegis_schema
+purpose: Stage artifact reference inside task dossier.
+required:
+  - artifact_id
+  - artifact_type
+  - path
+  - status
+fields:
+  artifact_id:
+    type: string
+  artifact_type:
+    type: enum
+    values:
+      - problem_definition
+      - design_doc
+      - contract_doc
+      - implementation_note
+      - review_report
+      - verification_report
+      - test_report
+      - risk_report
+      - handoff_note
+      - postmortem
+      - other
+  title:
+    type: string
+  path:
+    type: path
+  created_by:
+    type: string
+  created_at:
+    type: datetime_or_null
+  status:
+    type: enum
+    values: [draft, accepted, rejected, superseded, archived]
+  sensitivity:
+    type: enum
+    values: [public_metadata_only, encrypted_detail, redacted, forbidden]
+  notes:
+    type: string

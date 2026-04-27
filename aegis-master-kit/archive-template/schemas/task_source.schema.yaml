@@ -1,0 +1,31 @@
+schema_id: task_source.schema.v1
+kind: aegis_schema
+purpose: First-class task origin record.
+required:
+  - source_type
+  - raised_by
+  - raised_at
+  - original_request
+  - trigger_reason
+fields:
+  source_type:
+    type: enum
+    values:
+      - developer_request
+      - master_generated
+      - test_failure
+      - review_blocker
+      - incident
+      - roadmap
+      - external_requirement
+      - followup
+  source_ref:
+    type: string_or_null
+  raised_by:
+    type: string
+  raised_at:
+    type: datetime
+  original_request:
+    type: string
+  trigger_reason:
+    type: string

@@ -1,0 +1,50 @@
+schema_id: timeline_event.schema.v1
+kind: aegis_schema
+purpose: Critical task event record.
+required:
+  - event_id
+  - time
+  - actor
+  - event_type
+  - summary
+fields:
+  event_id:
+    type: string
+    example: E001
+  time:
+    type: datetime
+  actor:
+    type: string
+  event_type:
+    type: enum
+    values:
+      - task_proposed
+      - task_admitted
+      - task_started
+      - requirement_added
+      - architecture_clarified
+      - decision_made
+      - contract_frozen
+      - design_created
+      - design_accepted
+      - implementation_started
+      - implementation_completed
+      - review_completed
+      - verification_completed
+      - test_completed
+      - scope_changed
+      - blocked
+      - restarted
+      - completed
+      - aborted
+      - superseded
+      - amendment_added
+      - integrity_event
+  summary:
+    type: string
+  confirmed_points:
+    type: list_of_string
+  unresolved_points:
+    type: list_of_string
+  evidence_refs:
+    type: list_of_string

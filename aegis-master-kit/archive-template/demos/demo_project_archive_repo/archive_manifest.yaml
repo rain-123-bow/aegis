@@ -1,0 +1,25 @@
+archive_id: archive-main
+project_id: demo-business
+project_name: Demo Business
+archive_version: v1
+created_at: 2026-04-27T00:00:00Z
+created_by: master-main
+storage_mode: encrypted_payload
+status: sealed
+
+authority:
+  owner_role: master
+  developer_direct_mutation_allowed: false
+  ordinary_agent_execution_dependency: false
+
+security:
+  plaintext_in_repo_allowed: false
+  encrypted_at_rest_required: true
+  master_private_security_required: true
+  private_material_disclosure_allowed: false
+
+paths:
+  encrypted_payload: encrypted/archive_payload.bin
+  public_manifest: public/archive_public_manifest.yaml
+  integrity_dir: integrity
+  public_indexes_dir: public/indexes

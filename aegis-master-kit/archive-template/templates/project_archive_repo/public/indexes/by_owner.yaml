@@ -1,0 +1,7 @@
+index_type: by_owner
+generated_at: <generated-at>
+generated_by: <master-id>
+sensitivity: minimal_non_sensitive
+payload_version: 0
+public_root_token: <master-generated-opaque-root-token>
+entries: {}

@@ -1,0 +1,9 @@
+index_type: by_owner
+generated_at: 2026-04-27T00:30:00Z
+generated_by: master-main
+sensitivity: minimal_non_sensitive
+payload_version: 1
+public_root_token: opaque-demo-root-token
+entries:
+developer-demo:
+  - T20260427-001-demo-archive-contract

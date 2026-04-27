@@ -1,0 +1,8 @@
+payload_schema_version: v1
+archive_id: archive-main
+project_id: <project-id>
+payload_version: 0
+created_at: <created-at>
+created_by: <master-id>
+contains_plaintext: true
+repo_visible_allowed: false

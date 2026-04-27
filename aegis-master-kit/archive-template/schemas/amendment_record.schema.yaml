@@ -1,0 +1,41 @@
+schema_id: amendment_record.schema.v1
+kind: aegis_schema
+purpose: Append-only correction record for sealed Archive content.
+required:
+  - amendment_id
+  - amended_at
+  - amended_by
+  - reason
+  - target
+fields:
+  amendment_id:
+    type: string
+    example: A001
+  amended_at:
+    type: datetime
+  amended_by:
+    type: string
+  requested_by:
+    type: string_or_null
+  reason:
+    type: string
+  target:
+    required: [logical_path]
+    fields:
+      logical_path: {type: string}
+      field: {type: string_or_null}
+      section_id: {type: string_or_null}
+  previous_value_ref:
+    type: string
+    description: Opaque or summarized reference. Sensitive content should not be exposed publicly.
+  new_value:
+    type: string
+  evidence_refs:
+    type: list_of_string
+  approval:
+    fields:
+      required: {type: boolean}
+      approved_by: {type: string_or_null}
+      approved_at: {type: datetime_or_null}
+  seal_ref:
+    type: string_or_null

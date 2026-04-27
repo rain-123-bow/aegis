@@ -1,0 +1,50 @@
+schema_id: integrity_seal.schema.v1
+kind: aegis_schema
+purpose: Repo-visible opaque seal record. Does not expose private security internals.
+required:
+  - seal_id
+  - project_id
+  - archive_id
+  - archive_version
+  - payload_version
+  - public_root_token
+  - sealed_at
+  - sealed_by
+  - verification_state
+  - master_private_proof
+fields:
+  seal_id:
+    type: string
+  project_id:
+    type: string
+  archive_id:
+    type: string
+  archive_version:
+    type: string
+  payload_version:
+    type: integer
+  previous_seal_ref:
+    type: string_or_null
+  public_root_token:
+    type: string
+    description: Opaque Master-generated public root token.
+  ledger_seq_from:
+    type: integer
+  ledger_seq_to:
+    type: integer
+  sealed_at:
+    type: datetime
+  sealed_by:
+    type: string
+  verification_state:
+    type: enum
+    values: [sealed, compromised, recovery_required, bootstrap_pending]
+  master_private_proof:
+    type: string
+    description: Opaque proof value. Generation and validation internals are not repo-visible.
+forbidden:
+  - decryption keys
+  - integrity secrets
+  - seeds
+  - private proof construction details
+  - reproducible verification internals

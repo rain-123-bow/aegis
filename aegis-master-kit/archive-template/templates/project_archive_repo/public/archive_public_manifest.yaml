@@ -1,0 +1,8 @@
+project_id: <project-id>
+archive_id: archive-main
+payload_version: 0
+public_root_token: <master-generated-opaque-root-token>
+latest_seal_ref: null
+public_index_policy: minimal_non_sensitive
+public_task_count: null
+status_summary: null
