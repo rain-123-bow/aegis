@@ -44,6 +44,7 @@ class AegisRouterMcpServer:
             "deactivate_agent": self._deactivate_agent,
             "unregister_agent": self._unregister_agent,
             "heartbeat": self._heartbeat,
+            "get_local_route_table": self._get_local_route_table,
             "list_visible_agents": self._list_visible_agents,
             "send_message": self._send_message,
             "receive_messages": self._receive_messages,
@@ -92,6 +93,12 @@ class AegisRouterMcpServer:
             _tool_schema(
                 "heartbeat",
                 "Update agent heartbeat timestamp.",
+                {"agent_id": {"type": "string"}},
+                ["agent_id"],
+            ),
+            _tool_schema(
+                "get_local_route_table",
+                "Return an agent's local route table derived from the authoritative route table.",
                 {"agent_id": {"type": "string"}},
                 ["agent_id"],
             ),
@@ -164,6 +171,9 @@ class AegisRouterMcpServer:
 
     def _heartbeat(self, args: dict[str, Any]) -> Any:
         return self.router.heartbeat(args["agent_id"])
+
+    def _get_local_route_table(self, args: dict[str, Any]) -> Any:
+        return self.router.get_local_route_table(args["agent_id"])
 
     def _list_visible_agents(self, args: dict[str, Any]) -> Any:
         return self.router.list_visible_agents(args["agent_id"])

@@ -24,10 +24,27 @@ The Master cares about:
 - department input/output
 - department state
 - escalation
+- the top-level directed communication topology
 
 The Master does not care how many internal agents a department uses.
 
-## 3. Second layer: department leader view
+The first-layer executable topology is defined by:
+
+```text
+aegis-master-kit/organization/topologies/master_top_level_v1.yaml
+```
+
+The topology is a directed graph. It defines which top-level roles may send envelopes to which other top-level roles.
+
+## 3. Router-enforced topology
+
+The top-level router owns an authoritative route table. It must reject any message whose `sender -> receiver` edge does not exist in the route table.
+
+Each role also carries a role-local route table. The role-local table tells the role who it may send to, who may send to it, and which directed edges form protocol-level bidirectional loops.
+
+Router enforcement and role-local self-limitation must describe the same directed graph.
+
+## 4. Second layer: department leader view
 
 A department leader may define:
 
@@ -39,7 +56,7 @@ A department leader may define:
 
 Department internals may be defined by documents or by executable network programs.
 
-## 4. Future communication platform
+## 5. Future communication platform
 
 A future agent communication platform can instantiate topology networks from Aegis organization definitions.
 

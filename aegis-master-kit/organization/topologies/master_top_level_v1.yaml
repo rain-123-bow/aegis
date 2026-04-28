@@ -1,0 +1,208 @@
+topology_id: master_top_level_v1
+version: 1
+scope: top_level_master_domain
+purpose: First-layer directed communication topology between Master and top-level department leaders.
+
+contracts:
+  topology_contract: aegis-master-kit/organization/contracts/TOP_LEVEL_ROUTE_TOPOLOGY_CONTRACT.md
+  envelope_contract: aegis-master-kit/organization/contracts/ROUTE_ENVELOPE_AND_MAILBUCKET_CONTRACT.md
+
+nodes:
+  - role_id: master
+    display_name: Master
+    responsibility: Top-level governance hub and final causal merge authority.
+
+  - role_id: debate
+    display_name: Debate Module
+    responsibility: Adversarial reasoning and adjudication for ambiguous or multi-solution problems.
+
+  - role_id: execution
+    display_name: Execution Module
+    responsibility: Candidate implementation and branch-local causal fork generation.
+
+  - role_id: test
+    display_name: Test Module
+    responsibility: System-level test, evidence production, and evidence-backed failure feedback.
+
+  - role_id: final_review
+    display_name: Final Review Module
+    responsibility: Final review gate before results return to Master.
+
+router_route_table:
+  - edge_id: E001
+    from: master
+    to: debate
+    direction: one_way
+    reason: Master starts adversarial reasoning when ambiguity, risk, solution conflict, or causal incompleteness requires it.
+    router_enforced: true
+
+  - edge_id: E002
+    from: master
+    to: execution
+    direction: one_way
+    reason: Master sends admitted executable work to execution.
+    router_enforced: true
+
+  - edge_id: E003
+    from: debate
+    to: master
+    direction: one_way
+    reason: Debate returns structured debate results, conflict surfaces, adjudication material, or causal proposals to Master.
+    router_enforced: true
+
+  - edge_id: E004
+    from: execution
+    to: test
+    direction: one_way
+    reason: Execution submits candidate work to system-level testing.
+    router_enforced: true
+
+  - edge_id: E005
+    from: test
+    to: final_review
+    direction: one_way
+    reason: Test sends evidence-backed test conclusions to final review.
+    router_enforced: true
+
+  - edge_id: E006
+    from: final_review
+    to: master
+    direction: one_way
+    reason: Final review sends final review result to Master.
+    router_enforced: true
+
+  - edge_id: E007
+    from: test
+    to: execution
+    direction: one_way
+    reason: Test sends evidence-backed failure feedback to execution for correction.
+    router_enforced: true
+    evidence_required: true
+
+  - edge_id: E008
+    from: execution
+    to: debate
+    direction: one_way
+    reason: Execution requests debate when implementation exposes multiple plausible solution paths or causal uncertainty.
+    router_enforced: true
+    conditional: true
+
+  - edge_id: E009
+    from: debate
+    to: execution
+    direction: one_way
+    reason: Debate returns the selected adjudicated route to execution.
+    router_enforced: true
+
+  - edge_id: E010
+    from: execution
+    to: master
+    direction: one_way
+    reason: Execution submits branch-local causal forks, governance blockers, or merge-relevant reasoning state to Master.
+    router_enforced: true
+
+role_route_tables:
+  master:
+    outgoing:
+      - debate
+      - execution
+    incoming:
+      - debate
+      - final_review
+      - execution
+    notes:
+      - Master does not directly inspect department internals.
+      - Master is final causal merge authority for execution-generated causal forks.
+
+  debate:
+    outgoing:
+      - master
+      - execution
+    incoming:
+      - master
+      - execution
+    notes:
+      - Debate returns to Master when Master started or owns the governance decision.
+      - Debate returns to execution when execution requested implementation-route adjudication.
+
+  execution:
+    outgoing:
+      - test
+      - debate
+      - master
+    incoming:
+      - master
+      - test
+      - debate
+    notes:
+      - Execution sends candidate work to test.
+      - Execution requests debate only when multiple plausible implementation routes or causal uncertainty exists.
+      - Execution sends causal forks to Master; it does not merge them into global causal truth.
+
+  test:
+    outgoing:
+      - final_review
+      - execution
+    incoming:
+      - execution
+    notes:
+      - Test sends evidence-backed failure feedback to execution.
+      - Test sends test conclusions to final review.
+
+  final_review:
+    outgoing:
+      - master
+    incoming:
+      - test
+    notes:
+      - Final review returns only to Master.
+
+protocol_pairs:
+  - pair_id: P001
+    roles:
+      - master
+      - debate
+    relation: bidirectional_protocol_by_two_directed_edges
+    edges:
+      - E001
+      - E003
+    note: Master starts debate; debate returns structured results to Master.
+
+  - pair_id: P002
+    roles:
+      - execution
+      - debate
+    relation: conditional_bidirectional_protocol_by_two_directed_edges
+    edges:
+      - E008
+      - E009
+    note: Execution requests adjudication; debate returns a selected route.
+
+  - pair_id: P003
+    roles:
+      - execution
+      - test
+    relation: repair_feedback_protocol_by_two_directed_edges
+    edges:
+      - E004
+      - E007
+    note: Execution submits candidate work; test returns evidence-backed failure feedback when correction is needed.
+
+mailbucket:
+  shared_root_owner: router
+  shared_root_is_temporary: true
+  router_is_vault: false
+  envelope_fields:
+    - sender
+    - receiver
+    - path
+    - auth
+  folder_naming: "<sender>__<receiver>__<utc_timestamp>__<nonce>"
+  required_files:
+    - README.md
+  payload_location: filesystem_folder
+  retention_rule: Agents must copy valuable material into their own private folders. The shared mailbucket is cleaned by router after grace period.
+  cleanup:
+    default_enabled: true
+    grace_period_required: true
+    semantic_value_ignored_by_router: true

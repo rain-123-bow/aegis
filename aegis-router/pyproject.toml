@@ -17,3 +17,6 @@ aegis-router = "aegis_router.server:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "contract: runtime contract verification tests for documented Aegis protocols",
+]
