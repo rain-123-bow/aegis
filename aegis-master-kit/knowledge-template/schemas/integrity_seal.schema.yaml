@@ -1,0 +1,31 @@
+schema: integrity_seal.schema.yaml
+version: v1
+note: This schema describes repo-visible opaque seal metadata only. It must not include private proof-generation details.
+required:
+  - seal_id
+  - project_id
+  - state_store
+  - sealed_at
+  - sealed_by
+  - public_root
+  - previous_seal_ref
+  - opaque_master_proof
+fields:
+  seal_id:
+    type: string
+  project_id:
+    type: string
+  state_store:
+    enum: [knowledge]
+  sealed_at:
+    type: datetime
+  sealed_by:
+    type: string
+  public_root:
+    type: string
+  previous_seal_ref:
+    type: string
+  opaque_master_proof:
+    type: string
+    opaque: true
+    must_not_expose_generation_logic: true

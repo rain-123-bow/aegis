@@ -1,0 +1,82 @@
+schema: knowledge_entry.schema.yaml
+version: v1
+required:
+  - id
+  - statement
+  - category
+  - fact_type
+  - sources
+  - applicability
+  - status
+  - confidence
+  - admission
+  - lifecycle
+fields:
+  id:
+    type: string
+    immutable: true
+    pattern: '^K[0-9]{8}-[0-9]{3}-[a-z0-9-]+$'
+  statement:
+    type: string
+    neutrality_required: true
+    forbidden_semantics:
+      - strategy_recommendation
+      - causal_conclusion
+      - responsibility_claim
+      - blame_assignment
+      - unscoped_opinion
+  category:
+    enum:
+      - environment
+      - platform
+      - hardware
+      - dependency
+      - toolchain
+      - interface
+      - resource
+      - customer_requirement
+      - external_policy
+      - runtime_behavior
+      - project_rule
+      - glossary
+      - other
+  fact_type:
+    enum: [unconditional, conditional]
+  sources:
+    type: list
+    min_items: 1
+    item_schema: knowledge_source.schema.yaml
+  applicability:
+    schema: knowledge_applicability.schema.yaml
+  status:
+    enum: [active, tentative, deprecated, invalidated, superseded, conflicted]
+  confidence:
+    enum: [high, medium, low]
+  admission:
+    type: object
+    required: [admission_state, approved_by, approved_at]
+    fields:
+      admission_state:
+        enum: [verified_fact, reported_fact, tentative_fact, accepted_external_requirement]
+      approved_by:
+        type: string
+      approved_at:
+        type: datetime
+  lifecycle:
+    type: object
+    required: [created_at, created_by, updated_at]
+  freshness:
+    type: object
+  supersedes:
+    type: list
+  superseded_by:
+    type: list
+  invalidation:
+    type: object
+  conflict_refs:
+    type: list
+  related_archive_refs:
+    type: list
+  related_causal_refs:
+    type: list
+    note: references only; Knowledge must not embed causal conclusions

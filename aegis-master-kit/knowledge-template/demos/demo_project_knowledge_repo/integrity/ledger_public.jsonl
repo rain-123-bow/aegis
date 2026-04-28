@@ -1,0 +1,2 @@
+{"seq":0,"state":"demo_bootstrap","note":"Demo shell only."}
+{"seq":1,"state":"demo_sealed","public_root":"opaque_demo_public_root","note":"Opaque demo seal."}

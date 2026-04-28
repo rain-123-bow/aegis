@@ -1,0 +1,10 @@
+index_name: by_category
+generated_at: 2026-04-27T00:25:00Z
+generated_from_payload_root: opaque_demo_root
+entries:
+  environment:
+    - K20260427-001-target-os
+    - K20260427-003-old-target-os
+  runtime_behavior:
+    - K20260427-002-high-temp-downclock
+sensitivity: encrypted_only

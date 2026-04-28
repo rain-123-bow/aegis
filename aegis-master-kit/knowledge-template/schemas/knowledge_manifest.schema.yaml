@@ -1,0 +1,42 @@
+schema: knowledge_manifest.schema.yaml
+version: v1
+required:
+  - knowledge_base_id
+  - project_id
+  - knowledge_version
+  - created_at
+  - created_by
+  - owner
+  - scope
+  - policies
+  - indexes
+fields:
+  knowledge_base_id:
+    type: string
+  project_id:
+    type: string
+  project_name:
+    type: string
+  knowledge_version:
+    type: string
+  created_at:
+    type: datetime
+  created_by:
+    type: string
+  owner:
+    type: object
+    required: [role, id]
+  scope:
+    type: object
+    required: [description, includes, excludes]
+  policies:
+    type: object
+    required:
+      - all_roles_may_request_access
+      - developer_may_directly_mutate
+      - master_review_required
+      - encrypted_at_rest_required
+      - knowledge_produces_causal_truth
+      - physical_delete_allowed
+  indexes:
+    type: object

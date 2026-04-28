@@ -1,0 +1,30 @@
+proposal_id: P20260427-001-target-memory-budget
+proposed_action: add_entry
+proposer:
+  role: developer
+  id: developer
+submitted_at: 2026-04-27T00:30:00Z
+reason_for_submission: Customer provided a memory usage requirement for target deployment.
+expected_impact: Future planning and verification should use the memory budget as an external constraint.
+target_entry_id: null
+proposed_statement: Customer requires total process memory usage to stay below 500 MB in target deployment.
+sources:
+  - type: customer_requirement
+    ref: customer-performance-requirement:memory-budget
+    provided_by: developer
+    collected_at: 2026-04-27T00:30:00Z
+    evidence_level: reported
+scope:
+  project_scope: demo-project
+  module_scope: all-runtime-processes
+  environment_scope: target-deployment
+version_context:
+  commit: null
+  branch: main
+  release: null
+applicability_conditions: []
+master_review:
+  result: needs_more_evidence
+  reviewed_by: master-main
+  reviewed_at: 2026-04-27T00:31:00Z
+  rationale: Need customer document reference or clear external requirement provenance before accepting as active external constraint.

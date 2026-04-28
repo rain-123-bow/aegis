@@ -1,0 +1,17 @@
+knowledge_base_id: knowledge-main
+project_id: example-project
+project_name: Example Project
+repo_visible_state: bootstrap_pending
+security_class: external_state_encrypted_master_private_integrity
+plaintext_present: false
+latest_public_root_ref: integrity/latest_public_root.txt
+latest_session_seal_ref: integrity/session_seals/latest.seal.yaml
+public_summary:
+  total_entries: 0
+  active_entries: 0
+  tentative_entries: 0
+  conflicted_entries: 0
+  invalidated_entries: 0
+notes:
+  - This manifest is public-safe metadata only.
+  - Real Knowledge plaintext must exist only in Master-controlled runtime.

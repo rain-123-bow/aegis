@@ -1,0 +1,32 @@
+knowledge_base_id: demo-knowledge-main
+project_id: demo-project
+project_name: Demo Project
+knowledge_version: v1
+created_at: 2026-04-27T00:00:00Z
+created_by: master-main
+owner:
+  role: master
+  id: master-main
+scope:
+  description: Demo project-level Knowledge Base.
+  includes:
+    - environment facts
+    - runtime behavior facts
+    - invalidated historical knowledge
+  excludes:
+    - task history
+    - causal conclusions
+policies:
+  all_roles_may_request_access: true
+  developer_may_directly_mutate: false
+  master_review_required: true
+  encrypted_at_rest_required: true
+  knowledge_produces_causal_truth: false
+  physical_delete_allowed: false
+indexes:
+  by_status: indexes/by_status.yaml
+  by_category: indexes/by_category.yaml
+  by_scope: indexes/by_scope.yaml
+  by_source_type: indexes/by_source_type.yaml
+  by_version_context: indexes/by_version_context.yaml
+  by_freshness: indexes/by_freshness.yaml
