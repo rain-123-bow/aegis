@@ -1,0 +1,23 @@
+causal_store_id: causal-main
+project_id: <project-id>
+project_name: <project-name>
+causal_version: bootstrap_pending
+created_at: <timestamp>
+created_by: master
+branch_context:
+  git_branch: <branch>
+  git_commit: <commit-or-unknown>
+  base_branch: <base-branch-or-null>
+  base_causal_version: <base-causal-version-or-null>
+  base_knowledge_version: <base-knowledge-version-or-null>
+  base_archive_version: <base-archive-version-or-null>
+security_profile:
+  encrypted_at_rest: true
+  plaintext_in_repo_allowed: false
+  master_private_security_material_required: true
+  route_expand_sealed: true
+payload_layout:
+  encrypted_payload: encrypted/causal_payload.bin
+  public_manifest: public/causal_public_manifest.yaml
+  public_index: public/causal_public_index.yaml
+  integrity_dir: integrity/

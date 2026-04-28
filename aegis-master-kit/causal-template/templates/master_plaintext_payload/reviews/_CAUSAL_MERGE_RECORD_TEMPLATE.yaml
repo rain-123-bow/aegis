@@ -1,0 +1,14 @@
+merge_id: MRYYYYMMDD-NNN
+from_branch: <source-branch>
+to_branch: <target-branch>
+base_causal_version: <old-version>
+new_causal_version: <new-version>
+review_refs:
+  - <CR-id>
+accepted_claims: []
+accepted_tentative_claims: []
+rejected_proposals: []
+status_transitions: []
+route_plan_updates: []
+sealed_at: <timestamp>
+sealed_by: master

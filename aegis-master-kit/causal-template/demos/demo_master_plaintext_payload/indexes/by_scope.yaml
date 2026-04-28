@@ -1,0 +1,3 @@
+aegis/causal-store:
+  - C20260427-001-causal-store-needs-route-expand
+  - C20260427-002-agents-cannot-write-global-causal

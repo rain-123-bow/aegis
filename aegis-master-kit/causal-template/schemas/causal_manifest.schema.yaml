@@ -1,0 +1,39 @@
+schema_name: causal_manifest
+version: v1
+required:
+  - causal_store_id
+  - project_id
+  - causal_version
+  - created_at
+  - created_by
+  - branch_context
+  - security_profile
+fields:
+  causal_store_id: string
+  project_id: string
+  project_name: string
+  causal_version: string
+  created_at: datetime
+  created_by: string
+  branch_context:
+    required: [git_branch]
+    fields:
+      git_branch: string
+      git_commit: string
+      base_branch: string
+      base_causal_version: string
+      base_knowledge_version: string
+      base_archive_version: string
+  security_profile:
+    fields:
+      encrypted_at_rest: boolean
+      plaintext_in_repo_allowed: boolean
+      master_private_security_material_required: boolean
+      route_expand_sealed: boolean
+  payload_layout:
+    fields:
+      claims_dir: string
+      proposals_dir: string
+      routing_dir: string
+      reviews_dir: string
+      indexes_dir: string

@@ -1,0 +1,24 @@
+schema_name: causal_evidence_ref
+version: v1
+required:
+  - type
+  - ref
+fields:
+  type:
+    enum:
+      - knowledge
+      - archive_artifact
+      - code_inspection
+      - runtime_log
+      - test_result
+      - statistical_result
+      - contract
+      - causal_claim
+      - external_spec
+      - observation
+  ref: string
+  summary: string
+  scope: string
+  collected_at: datetime
+  confidence_impact:
+    enum: [supports_high, supports_medium, supports_low, challenges, neutral]

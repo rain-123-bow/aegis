@@ -16,9 +16,10 @@ It does not store project facts, causal truth, task archives, or code.
 5. master/BUSINESS_STATE_BOUNDARY.md
 6. archive-template/README.md
 7. knowledge-template/README.md
-8. organization/ORGANIZATION_MODEL.md
-9. organization/DEPARTMENT_CATALOG.yaml
-10. organization/topologies/linear_001_002_003.yaml
+8. causal-template/README.md
+9. organization/ORGANIZATION_MODEL.md
+10. organization/DEPARTMENT_CATALOG.yaml
+11. organization/topologies/linear_001_002_003.yaml
 ```
 
 ## Phase-1 target

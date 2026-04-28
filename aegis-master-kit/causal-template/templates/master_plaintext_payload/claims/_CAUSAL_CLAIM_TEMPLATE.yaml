@@ -1,0 +1,42 @@
+id: CYYYYMMDD-NNN-short-slug
+# Direct facts are invalid here. Reject as Causal; route to Knowledge.
+claim: <inferred judgment, not raw fact>
+why: <minimal supporting cause; no full chain-of-thought>
+type: causal_claim
+scope:
+  project: <project>
+  module: <module-or-null>
+  environment: <environment-or-null>
+  task_scope: <task-scope>
+version_context:
+  git_branch: <branch>
+  git_commit: <commit>
+  knowledge_version: <knowledge-version>
+  causal_version: <causal-version>
+valid_when:
+  conditions:
+    - <objective condition>
+assumptions:
+  - <assumption>
+uses_knowledge:
+  - <K-id>
+uses_causal:
+  - <C-id>
+uses_archive:
+  - <archive-task-or-artifact-ref>
+evidence_refs:
+  - type: knowledge
+    ref: <K-id>
+    summary: <evidence summary>
+proof_mode: <first_principles|contract_deduction|code_inspection|reproducible_test|statistical_evidence|observation_only|expert_report>
+confidence: <high|medium|low>
+relations:
+  depends_on: []
+  invalidates: []
+  supersedes: []
+  challenged_by: []
+status: <active|tentative|conflicted|invalidated|superseded|deprecated|rejected>
+admitted_by: master
+admitted_at: <timestamp>
+updated_at: <timestamp>
+status_transition_refs: []

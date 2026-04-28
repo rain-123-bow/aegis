@@ -1,0 +1,22 @@
+schema_name: causal_status_transition
+version: v1
+required:
+  - transition_id
+  - claim_id
+  - from_status
+  - to_status
+  - reason
+  - evidence_refs
+  - changed_by
+  - changed_at
+fields:
+  transition_id: string
+  claim_id: string
+  from_status: string
+  to_status: string
+  reason: string
+  evidence_refs: list
+  changed_by: string
+  changed_at: datetime
+  superseded_by: string
+  invalidation_reason: string

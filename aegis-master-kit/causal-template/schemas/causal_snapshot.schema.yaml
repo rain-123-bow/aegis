@@ -1,0 +1,21 @@
+schema_name: causal_snapshot
+version: v1
+required:
+  - snapshot_id
+  - causal_version
+  - created_at
+  - created_by
+fields:
+  snapshot_id: string
+  causal_version: string
+  git_branch: string
+  git_commit: string
+  included_statuses: list
+  active_claim_count: integer
+  tentative_claim_count: integer
+  conflicted_claim_count: integer
+  route_plan_refs: list
+  public_root_ref: string
+  seal_ref: string
+  created_at: datetime
+  created_by: string

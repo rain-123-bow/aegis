@@ -1,0 +1,38 @@
+schema_name: causal_review_record
+version: v1
+required:
+  - review_id
+  - reviewed_by
+  - reasoning_budget
+  - input_proposals
+  - base_versions
+  - decisions
+  - reviewed_at
+fields:
+  review_id: string
+  reviewed_by: string
+  reasoning_budget:
+    enum: [high, very_high, external_adjudication]
+  input_proposals: list
+  base_versions:
+    fields:
+      causal_version: string
+      knowledge_version: string
+      archive_version: string
+      git_branch: string
+      git_commit: string
+  decisions:
+    type: list
+    allowed_actions:
+      - accept_as_active
+      - accept_as_tentative
+      - reject
+      - request_more_evidence
+      - mark_conflicted
+      - split_scope
+      - supersede_existing
+      - invalidate_existing
+      - mark_branch_stale
+  conflicts_resolved: list
+  produced_merge_record: string
+  reviewed_at: datetime

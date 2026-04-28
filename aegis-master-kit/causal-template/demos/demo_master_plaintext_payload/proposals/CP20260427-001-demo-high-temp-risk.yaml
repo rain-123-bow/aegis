@@ -1,0 +1,46 @@
+proposal_id: CP20260427-001-demo-high-temp-risk
+proposed_by:
+  role: verification_agent
+  id: verifier-demo-001
+task_id: T20260427-001-demo-causal
+based_on:
+  git_branch: verifier-demo-branch
+  git_commit: demo
+  causal_version: CGV0001
+  knowledge_version: KGV0001
+  archive_version: AGV0001
+proposed_claim:
+  claim: Current runtime strategy has real-time risk under high-temperature downclock conditions.
+  why: The target device downclocks under high temperature and the current strategy is near CPU budget in the measured workload.
+  evidence_refs:
+    - type: knowledge
+      ref: K20260427-002-high-temp-downclock
+      summary: Conditional objective fact about target hardware downclock behavior.
+    - type: test_result
+      ref: archive:T20260427-001/artifacts/high_temp_runtime_test.md
+      summary: Runtime test showing CPU usage close to budget under workload.
+  scope:
+    project: demo
+    module: runtime-pipeline
+    environment: target-device-x
+    task_scope: high-temperature-runtime
+  version_context:
+    git_branch: verifier-demo-branch
+    git_commit: demo
+    knowledge_version: KGV0001
+    causal_version: CGV0001
+  valid_when:
+    conditions:
+      - chip_temperature_celsius >= 85
+      - workload_profile == demo_high_temp_workload
+  assumptions:
+    - CPU budget remains unchanged.
+proposal_intent:
+  - add_new_causal_claim
+challenges: []
+route_expand_impact:
+  changes_route_plan: true
+  changes_expand_depth: false
+  reason: New high-temperature risk may need to enter future runtime design queries.
+status: pending_review
+submitted_at: 2026-04-27T00:00:00Z

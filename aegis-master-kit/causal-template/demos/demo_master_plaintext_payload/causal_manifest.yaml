@@ -1,0 +1,25 @@
+causal_store_id: causal-main
+project_id: aegis-demo-project
+project_name: Aegis Demo Project
+causal_version: CGV0001
+created_at: 2026-04-27T00:00:00Z
+created_by: master
+branch_context:
+  git_branch: main
+  git_commit: demo
+  base_branch: null
+  base_causal_version: null
+  base_knowledge_version: KGV0001
+  base_archive_version: AGV0001
+security_profile:
+  encrypted_at_rest: true
+  plaintext_in_repo_allowed: false
+  master_private_security_material_required: true
+  route_expand_sealed: true
+payload_layout:
+  claims_dir: claims/
+  proposals_dir: proposals/
+  routing_dir: routing/
+  reviews_dir: reviews/
+  conflicts_dir: conflicts/
+  indexes_dir: indexes/

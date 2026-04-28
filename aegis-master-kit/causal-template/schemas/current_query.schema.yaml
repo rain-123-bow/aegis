@@ -1,0 +1,26 @@
+schema_name: current_query
+version: v1
+required:
+  - query_id
+  - query
+  - task_type
+  - goal
+  - policy_profile
+fields:
+  query_id: string
+  query: string
+  task_type:
+    enum: [analysis, design, implementation, debug, verification, review, summary, planning]
+  goal: string
+  constraints: list
+  policy_profile:
+    fields:
+      read_order:
+        enum: [conclusion_first, causal_first]
+      evidence_threshold:
+        enum: [low, medium, high]
+      allow_empirical_assumption: boolean
+      exploration_mode:
+        enum: [conservative, balanced, exploratory]
+  generated_at: datetime
+  generated_by: string

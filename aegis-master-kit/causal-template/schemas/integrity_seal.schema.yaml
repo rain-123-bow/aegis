@@ -1,0 +1,24 @@
+schema_name: integrity_seal
+version: v1
+required:
+  - seal_id
+  - store_type
+  - project_id
+  - public_root
+  - sealed_at
+  - sealed_by
+fields:
+  seal_id: string
+  store_type:
+    enum: [causal]
+  project_id: string
+  causal_version: string
+  public_root: string
+  previous_seal_ref: string
+  proof_scope: string
+  opaque_master_proof: string
+  sealed_at: datetime
+  sealed_by: string
+notes:
+  - This schema describes public/opaque seal metadata only.
+  - It must not include private proof generation material.

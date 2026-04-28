@@ -1,0 +1,15 @@
+query_id: Q20260427-001
+query: Design Causal Store v1.
+task_type: design
+goal: Define causal claims, proposals, review, merge, route/expand, security, and branch semantics.
+constraints:
+  - no full chain-of-thought storage
+  - local project store must be encrypted
+  - agents cannot write canonical global causal directly
+policy_profile:
+  read_order: conclusion_first
+  evidence_threshold: high
+  allow_empirical_assumption: false
+  exploration_mode: conservative
+generated_at: 2026-04-27T00:00:00Z
+generated_by: master

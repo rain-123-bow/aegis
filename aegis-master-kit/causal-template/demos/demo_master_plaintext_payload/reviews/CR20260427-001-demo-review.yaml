@@ -1,0 +1,19 @@
+review_id: CR20260427-001-demo-review
+reviewed_by: master
+reasoning_budget: high
+input_proposals:
+  - CP20260427-001-demo-high-temp-risk
+base_versions:
+  causal_version: CGV0001
+  knowledge_version: KGV0001
+  archive_version: AGV0001
+  git_branch: verifier-demo-branch
+  git_commit: demo
+decisions:
+  - proposal_id: CP20260427-001-demo-high-temp-risk
+    action: request_more_evidence
+    produced_claim: null
+    rationale_summary: Claim is plausible but needs exact CPU budget and measured margin before becoming active causal premise.
+conflicts_resolved: []
+produced_merge_record: null
+reviewed_at: 2026-04-27T00:00:00Z

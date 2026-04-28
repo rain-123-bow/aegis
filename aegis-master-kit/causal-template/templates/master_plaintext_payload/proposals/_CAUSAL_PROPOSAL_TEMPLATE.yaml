@@ -1,0 +1,32 @@
+proposal_id: CPYYYYMMDD-NNN-short-slug
+# Accept as Causal Proposal only. Reject as Global Causal Write.
+# Pending Master/Adjudicator high-budget review; not active global truth.
+proposed_by:
+  role: <developer|implementation_agent|reviewer_agent|verification_agent|debate_agent|master>
+  id: <id>
+task_id: <task-id>
+based_on:
+  git_branch: <branch>
+  git_commit: <commit>
+  causal_version: <causal-version>
+  knowledge_version: <knowledge-version>
+  archive_version: <archive-version>
+proposed_claim:
+  # Direct facts are rejected as Causal and routed to Knowledge when appropriate.
+  claim: <inferred judgment, not raw fact>
+  why: <minimal supporting cause>
+  evidence_refs: []
+  scope: {}
+  version_context: {}
+  valid_when:
+    conditions: []
+  assumptions: []
+proposal_intent:
+  - add_new_causal_claim
+challenges: []
+route_expand_impact:
+  changes_route_plan: false
+  changes_expand_depth: false
+  reason: <none>
+status: draft
+submitted_at: <timestamp>

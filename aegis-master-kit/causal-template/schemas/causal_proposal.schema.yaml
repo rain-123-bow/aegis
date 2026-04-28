@@ -1,0 +1,45 @@
+schema_name: causal_proposal
+version: v1
+required:
+  - proposal_id
+  - proposed_by
+  - task_id
+  - based_on
+  - proposed_claim
+  - proposal_intent
+  - status
+fields:
+  proposal_id: string
+  proposal_boundary:
+    description: Accept as Causal Proposal only; not active global truth until Master/Adjudicator review and merge. Direct global writes are rejected.
+  proposed_by:
+    fields:
+      role: string
+      id: string
+  task_id: string
+  based_on:
+    fields:
+      git_branch: string
+      git_commit: string
+      causal_version: string
+      knowledge_version: string
+      archive_version: string
+  proposed_claim:
+    description: Claim-shaped object. Must include inferred judgment, why, evidence_refs, scope, version_context, valid_when, assumptions. Direct facts are rejected as Causal and routed to Knowledge when appropriate.
+  proposal_intent:
+    enum_list:
+      - add_new_causal_claim
+      - challenge_existing_claim
+      - supersede_existing_claim
+      - invalidate_existing_claim
+      - split_scope
+      - request_route_update
+  challenges: list
+  route_expand_impact:
+    fields:
+      changes_route_plan: boolean
+      changes_expand_depth: boolean
+      reason: string
+  status:
+    enum: [draft, submitted, pending_review, accepted, accepted_as_tentative, rejected, needs_more_evidence, superseded_by_review]
+  submitted_at: datetime

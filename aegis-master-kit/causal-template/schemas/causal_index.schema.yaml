@@ -1,0 +1,12 @@
+schema_name: causal_index
+version: v1
+fields:
+  by_status: map
+  by_scope: map
+  by_topic: map
+  by_dependency: map
+  by_route_relevance: map
+  by_proof_mode: map
+notes:
+  - Indexes are derived helpers.
+  - Sealed payload is source of truth after Master validation.

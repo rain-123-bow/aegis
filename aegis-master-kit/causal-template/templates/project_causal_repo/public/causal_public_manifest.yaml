@@ -1,0 +1,8 @@
+project_id: <project-id>
+store_type: causal
+causal_version_public_label: bootstrap_pending
+encrypted_payload_ref: ../encrypted/causal_payload.bin
+latest_public_root_ref: ../integrity/latest_public_root.txt
+public_index_ref: causal_public_index.yaml
+state: bootstrap_pending
+last_public_update: <timestamp>
