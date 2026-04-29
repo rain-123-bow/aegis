@@ -7,6 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from .errors import ConflictError, InvalidRequestError, NotFoundError, PermissionDeniedError
 from .mailbucket import cleanup_expired_mailbucket_messages
 from .models import AgentRecord, DomainRecord, MessageRecord, utc_now
@@ -29,6 +33,7 @@ TOP_LEVEL_ROUTE_EDGES: tuple[tuple[str, str], ...] = (
 ROUTE_ENVELOPE_FIELDS = frozenset({"sender", "receiver", "path", "auth"})
 ROUTE_ENVELOPE_AUTH_FIELDS = frozenset({"alg", "key_id", "nonce", "timestamp", "signature"})
 DEV_HMAC_AUTH_ALG = "aegis-dev-hmac-sha256"
+REAL_ED25519_AUTH_ALG = "aegis-ed25519-v1"
 ROUTE_ENVELOPE_REPLAY_WINDOW_SECONDS = 300
 GOVERNANCE_MESSAGE_TYPES_BY_EDGE: dict[tuple[str, str], frozenset[str]] = {
     ("master", "debate"): frozenset({"debate_request", "status_update"}),
@@ -244,7 +249,7 @@ class Router:
 
     def _route_envelope_signature_material(self, payload: dict[str, Any]) -> bytes:
         auth = payload["auth"]
-        # Phase 4 canonical auth material follows the documented Envelope v1 order.
+        # Canonical auth material follows the documented Envelope v1 order.
         parts = [
             payload["sender"],
             payload["receiver"],
@@ -254,6 +259,62 @@ class Router:
         ]
         return "|".join(parts).encode("utf-8")
 
+    def _load_ed25519_public_key(self, public_key_text: str) -> Ed25519PublicKey:
+        if not isinstance(public_key_text, str) or not public_key_text:
+            raise InvalidRequestError("sender identity public key must be a non-empty string")
+        key_bytes = public_key_text.encode("utf-8")
+        try:
+            if "BEGIN PUBLIC KEY" in public_key_text:
+                loaded = serialization.load_pem_public_key(key_bytes)
+                if not isinstance(loaded, Ed25519PublicKey):
+                    raise InvalidRequestError("sender identity public key must be Ed25519")
+                return loaded
+            return Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key_text, validate=True))
+        except ValueError as exc:
+            raise InvalidRequestError("sender identity public key is malformed") from exc
+
+    def _validate_dev_hmac_route_envelope_auth(
+        self, data: dict[str, Any], payload: dict[str, Any], material: bytes
+    ) -> None:
+        auth = payload["auth"]
+        sender = self._agent(data, payload["sender"])
+        metadata = sender.get("metadata", {})
+        identity_keys = metadata.get("dev_identity_keys") or metadata.get("identity_keys") or {}
+        if not isinstance(identity_keys, dict):
+            raise InvalidRequestError("agent identity key registry must be an object")
+        key = identity_keys.get(auth["key_id"])
+        if not isinstance(key, str) or not key:
+            raise PermissionDeniedError("sender identity key is not registered")
+
+        expected = base64.b64encode(hmac.new(key.encode("utf-8"), material, hashlib.sha256).digest()).decode("ascii")
+        if not hmac.compare_digest(expected, auth["signature"]):
+            raise PermissionDeniedError("route_envelope signature verification failed")
+
+    def _validate_ed25519_route_envelope_auth(
+        self, data: dict[str, Any], payload: dict[str, Any], material: bytes
+    ) -> None:
+        auth = payload["auth"]
+        sender = self._agent(data, payload["sender"])
+        metadata = sender.get("metadata", {})
+        identity_public_keys = metadata.get("identity_public_keys") or {}
+        if not isinstance(identity_public_keys, dict):
+            raise InvalidRequestError("agent identity public key registry must be an object")
+        key_entry = identity_public_keys.get(auth["key_id"])
+        if not isinstance(key_entry, dict):
+            raise PermissionDeniedError("sender identity public key is not registered")
+        if key_entry.get("alg") != "ed25519":
+            raise PermissionDeniedError("sender identity public key algorithm is not supported")
+
+        public_key = self._load_ed25519_public_key(key_entry.get("public_key", ""))
+        try:
+            signature = base64.b64decode(auth["signature"], validate=True)
+        except ValueError as exc:
+            raise InvalidRequestError("route_envelope signature must be base64") from exc
+        try:
+            public_key.verify(signature, material)
+        except InvalidSignature as exc:
+            raise PermissionDeniedError("route_envelope signature verification failed") from exc
+
     def _validate_route_envelope_auth(self, data: dict[str, Any], payload: dict[str, Any]) -> None:
         auth = payload["auth"]
         missing = [field for field in ("alg", "key_id", "nonce", "timestamp", "signature") if field not in auth]
@@ -262,7 +323,7 @@ class Router:
         unknown = sorted(set(auth) - ROUTE_ENVELOPE_AUTH_FIELDS)
         if unknown:
             raise InvalidRequestError(f"route_envelope auth has unknown field(s): {', '.join(unknown)}")
-        if auth["alg"] != DEV_HMAC_AUTH_ALG:
+        if auth["alg"] not in {DEV_HMAC_AUTH_ALG, REAL_ED25519_AUTH_ALG}:
             raise PermissionDeniedError(f"unsupported route_envelope auth algorithm: {auth['alg']}")
         for field in ("key_id", "nonce", "signature"):
             if not isinstance(auth[field], str) or not auth[field]:
@@ -274,19 +335,11 @@ class Router:
         if age_seconds > ROUTE_ENVELOPE_REPLAY_WINDOW_SECONDS:
             raise PermissionDeniedError("route_envelope auth timestamp is outside replay window")
 
-        sender = self._agent(data, payload["sender"])
-        metadata = sender.get("metadata", {})
-        identity_keys = metadata.get("dev_identity_keys") or metadata.get("identity_keys") or {}
-        if not isinstance(identity_keys, dict):
-            raise InvalidRequestError("agent identity key registry must be an object")
-        key = identity_keys.get(auth["key_id"])
-        if not isinstance(key, str) or not key:
-            raise PermissionDeniedError("sender identity key is not registered")
-
         material = self._route_envelope_signature_material(payload)
-        expected = base64.b64encode(hmac.new(key.encode("utf-8"), material, hashlib.sha256).digest()).decode("ascii")
-        if not hmac.compare_digest(expected, auth["signature"]):
-            raise PermissionDeniedError("route_envelope signature verification failed")
+        if auth["alg"] == DEV_HMAC_AUTH_ALG:
+            self._validate_dev_hmac_route_envelope_auth(data, payload, material)
+        else:
+            self._validate_ed25519_route_envelope_auth(data, payload, material)
 
         replay_nonces = data.setdefault("route_envelope_replay_nonces", {})
         replay_key = f"{payload['sender']}:{auth['key_id']}:{auth['nonce']}"
