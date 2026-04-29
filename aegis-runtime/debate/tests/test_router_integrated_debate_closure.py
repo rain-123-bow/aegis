@@ -115,7 +115,10 @@ def _debate_request() -> dict:
                 "action_impact": "Use worker -> Leader turns and Leader -> all transcript broadcasts.",
                 "risk_if_wrong": "Debate may lose controlled ordering or become free-form group chat.",
                 "material_conditions": ["request-scoped debate run", "Leader owns transcript and turn order"],
-                "invalidation_conditions": ["a future contract changes the default internal topology"],
+                "invalidation_conditions": [
+                    "a future contract changes the default internal topology",
+                    "if leader-mediated broadcast cannot scale for large worker counts, S2 must be re-evaluated",
+                ],
             },
             {
                 "stance_id": "S3",
@@ -254,6 +257,66 @@ def test_master_debate_request_closes_through_router_and_persists_causal_candida
         assert causal_result[required_key]
     assert final_report["causal_status"] == "causal_candidate"
     assert causal_result["status"] == "causal_candidate"
+    assert "causal_chain" not in causal_result
+    assert not any("causal_chain" in turn for turn in run_payload["transcript"])
+
+    causal_chain = final_report["causal_chain"]
+    assert causal_chain["source_request_id"] == request["request_id"]
+    assert causal_chain["decision_problem"] == request["decision_target"]
+    assert causal_chain["selected_stance_id"] == "S2"
+    assert causal_chain["nodes"]
+    assert causal_chain["edges"]
+    nodes_by_id = {node["id"]: node for node in causal_chain["nodes"]}
+    edges_by_id = {edge["id"]: edge for edge in causal_chain["edges"]}
+    assert nodes_by_id["conclusion.S2.selected"]["type"] == "conclusion"
+    assert nodes_by_id["rejection.S1"]["type"] == "alternative_rejection"
+    assert nodes_by_id["rejection.S3"]["type"] == "alternative_rejection"
+    assert any(
+        node["type"] in {"premise", "evidence"}
+        and "INTERNAL_TOPOLOGY_CONTRACT.md" in " ".join(node["evidence_refs"])
+        for node in causal_chain["nodes"]
+    )
+    assert any(node["type"] == "invalidation_condition" for node in causal_chain["nodes"])
+    assert "message explosion" in nodes_by_id["rejection.S1"]["why"]
+    assert "hidden side channels" in nodes_by_id["rejection.S1"]["why"]
+    assert "ordering ambiguity" in nodes_by_id["rejection.S1"]["why"]
+    assert "weak Leader control" in nodes_by_id["rejection.S1"]["why"]
+    assert "cannot see each other's arguments" in nodes_by_id["rejection.S3"]["why"]
+    assert "adversarial pressure is lost" in nodes_by_id["rejection.S3"]["why"]
+    assert "canonical transcript" in nodes_by_id["selection.S2"]["why"]
+    assert "adversarial pressure" in nodes_by_id["selection.S2"]["why"]
+    assert "side channels" in nodes_by_id["selection.S2"]["why"]
+
+    assert edges_by_id["edge.rejection.S1.selection.S2"]["from"] == "rejection.S1"
+    assert edges_by_id["edge.rejection.S1.selection.S2"]["to"] == "selection.S2"
+    assert edges_by_id["edge.rejection.S1.selection.S2"]["relation"] == "supports_selection"
+    assert edges_by_id["edge.rejection.S3.selection.S2"]["from"] == "rejection.S3"
+    assert edges_by_id["edge.rejection.S3.selection.S2"]["to"] == "selection.S2"
+    assert edges_by_id["edge.rejection.S3.selection.S2"]["relation"] == "supports_selection"
+    assert edges_by_id["edge.premise.selection.S2"]["from"] == "premise.debate_topology_contract"
+    assert edges_by_id["edge.premise.selection.S2"]["to"] == "selection.S2"
+    assert edges_by_id["edge.premise.selection.S2"]["relation"] == "supports_selection"
+    assert causal_chain["selected_path"][-1] == "conclusion.S2.selected"
+    assert "selection.S2" in causal_chain["selected_path"]
+    rejected_path_by_id = {path["stance_id"]: path for path in causal_chain["rejected_paths"]}
+    assert set(rejected_path_by_id) == {"S1", "S3"}
+    assert "rejection.S1" in rejected_path_by_id["S1"]["rejection_node_ids"]
+    assert "rejection.S3" in rejected_path_by_id["S3"]["rejection_node_ids"]
+    assert "edge.rejection.S1.selection.S2" in rejected_path_by_id["S1"]["decisive_edge_ids"]
+    assert "edge.rejection.S3.selection.S2" in rejected_path_by_id["S3"]["decisive_edge_ids"]
+
+    reopened_targets = {
+        target
+        for entrypoint in causal_chain["invalidation_entrypoints"]
+        for target in entrypoint["reopens_node_ids"]
+    }
+    assert {"rejection.S1", "rejection.S3", "conclusion.S2.selected"} <= reopened_targets
+    assert any(
+        edge["relation"] == "reopens_if"
+        and edge["from"].startswith("invalidation.")
+        and edge["to"] in {"rejection.S1", "rejection.S3", "conclusion.S2.selected"}
+        for edge in causal_chain["edges"]
+    )
 
     report_path = tmp_path / "final_report.json"
     report_path.write_text(json.dumps(final_report, indent=2, sort_keys=True), encoding="utf-8")
@@ -280,6 +343,11 @@ def test_master_debate_request_closes_through_router_and_persists_causal_candida
     master_inbox = router.receive_messages("master")
     delivered = [message for message in master_inbox if message["message_id"] == result_message["message_id"]]
     assert len(delivered) == 1
+    returned_report = json.loads((Path(report_mail["folder_path"]) / "final_report.json").read_text(encoding="utf-8"))
+    assert returned_report["causal_chain"]["chain_id"] == causal_chain["chain_id"]
+    assert returned_report["causal_chain"]["selected_stance_id"] == "S2"
+    assert returned_report["causal_chain"]["nodes"]
+    assert returned_report["causal_chain"]["edges"]
     acked = router.ack_message("master", result_message["message_id"])
     assert acked["status"] == "acked"
 
@@ -292,6 +360,9 @@ def test_master_debate_request_closes_through_router_and_persists_causal_candida
     assert (Path(report_mail["folder_path"]) / "final_report.json").is_file()
     persisted = json.loads(master_private.read_text(encoding="utf-8"))
     assert persisted["selected_position"]["stance_id"] == "S2"
+    assert persisted["causal_chain"]["chain_id"] == causal_chain["chain_id"]
+    assert persisted["causal_chain"]["nodes"]
+    assert persisted["causal_chain"]["edges"]
 
     router_state_text = json.dumps(router._load(), sort_keys=True).lower()
     for forbidden in ["archive", "knowledge", "causal", "global_causal", "causal_store"]:

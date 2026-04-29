@@ -29,6 +29,33 @@ TurnType = Literal[
     "evidence_request",
 ]
 
+CausalChainNodeType = Literal[
+    "premise",
+    "evidence",
+    "stance_claim",
+    "worker_attack",
+    "worker_concession",
+    "alternative_rejection",
+    "selection_reason",
+    "risk",
+    "invalidation_condition",
+    "conclusion",
+]
+
+CausalChainRelation = Literal[
+    "supports",
+    "contradicts",
+    "invalidates",
+    "narrows_scope",
+    "defeats_assumption",
+    "supports_rejection",
+    "supports_selection",
+    "creates_risk",
+    "reopens_if",
+]
+
+Confidence = Literal["high", "medium", "low"]
+
 
 class DebateContractError(ValueError):
     """Base error for Debate Department runtime contract violations."""
@@ -323,6 +350,7 @@ class FinalReport:
     scoped_positions: list[dict[str, Any]]
     unresolved_questions: list[str]
     causal_result: dict[str, Any]
+    causal_chain: dict[str, Any]
     next_action: dict[str, str]
     transcript_digest: list[dict[str, Any]]
     cleanup_result: dict[str, Any]
@@ -342,6 +370,7 @@ class FinalReport:
             raise DebateContractError("stop_and_request_test requires required_measurements or test_request")
         if self.decision == "stop_and_escalate_to_master" and not self.escalation:
             raise DebateContractError("stop_and_escalate_to_master requires escalation details")
+        self._validate_causal_chain()
         required = ["statement", "why", "evidence", "scope", "assumptions", "invalidation_conditions", "risk_if_wrong"]
         missing = [key for key in required if key not in self.causal_result or self.causal_result[key] in (None, "", [])]
         if missing:
@@ -354,6 +383,143 @@ class FinalReport:
             raise DebateContractError("stop_and_request_test requires next_action.target == test")
         if self.decision == "stop_and_escalate_to_master" and self.next_action.get("target") != "master":
             raise DebateContractError("stop_and_escalate_to_master requires next_action.target == master")
+
+    def _validate_causal_chain(self) -> None:
+        if not isinstance(self.causal_chain, dict):
+            raise DebateContractError("final report causal_chain must be an object")
+        required_fields = [
+            "chain_id",
+            "source_request_id",
+            "decision_problem",
+            "selected_stance_id",
+            "nodes",
+            "edges",
+            "selected_path",
+            "rejected_paths",
+            "unresolved_questions",
+            "invalidation_entrypoints",
+        ]
+        missing = [key for key in required_fields if key not in self.causal_chain]
+        if missing:
+            raise DebateContractError(f"final report causal_chain is missing required field(s): {', '.join(missing)}")
+        for field_name in ["chain_id", "source_request_id", "decision_problem", "selected_stance_id"]:
+            if not isinstance(self.causal_chain[field_name], str):
+                raise DebateContractError(f"final report causal_chain.{field_name} must be a string")
+
+        nodes = self.causal_chain["nodes"]
+        edges = self.causal_chain["edges"]
+        if not isinstance(nodes, list) or not nodes:
+            raise DebateContractError("final report causal_chain.nodes must be a non-empty list")
+        if not isinstance(edges, list) or not edges:
+            raise DebateContractError("final report causal_chain.edges must be a non-empty list")
+
+        allowed_node_types = {
+            "premise",
+            "evidence",
+            "stance_claim",
+            "worker_attack",
+            "worker_concession",
+            "alternative_rejection",
+            "selection_reason",
+            "risk",
+            "invalidation_condition",
+            "conclusion",
+        }
+        allowed_relations = {
+            "supports",
+            "contradicts",
+            "invalidates",
+            "narrows_scope",
+            "defeats_assumption",
+            "supports_rejection",
+            "supports_selection",
+            "creates_risk",
+            "reopens_if",
+        }
+
+        node_ids: set[str] = set()
+        for node in nodes:
+            if not isinstance(node, dict):
+                raise DebateContractError("final report causal_chain.nodes entries must be objects")
+            for field_name in ["id", "type", "statement", "why", "evidence_refs", "assumptions", "scope", "confidence"]:
+                if field_name not in node:
+                    raise DebateContractError(f"final report causal_chain node is missing {field_name}")
+            if not isinstance(node["id"], str) or not node["id"]:
+                raise DebateContractError("final report causal_chain node.id must be a non-empty string")
+            if node["id"] in node_ids:
+                raise DebateContractError(f"duplicate causal_chain node id: {node['id']}")
+            node_ids.add(node["id"])
+            if node["type"] not in allowed_node_types:
+                raise DebateContractError(f"invalid causal_chain node type: {node['type']}")
+            if node.get("stance_id") is not None and not isinstance(node.get("stance_id"), str):
+                raise DebateContractError("final report causal_chain node.stance_id must be string or null")
+            if node.get("worker_id") is not None and not isinstance(node.get("worker_id"), str):
+                raise DebateContractError("final report causal_chain node.worker_id must be string or null")
+            if not isinstance(node["statement"], str) or not node["statement"]:
+                raise DebateContractError("final report causal_chain node.statement must be a non-empty string")
+            if not isinstance(node["why"], str) or not node["why"]:
+                raise DebateContractError("final report causal_chain node.why must be a non-empty string")
+            _ensure_string_list(node["evidence_refs"], "causal_chain node.evidence_refs")
+            _ensure_string_list(node["assumptions"], "causal_chain node.assumptions")
+            if not isinstance(node["scope"], str) or not node["scope"]:
+                raise DebateContractError("final report causal_chain node.scope must be a non-empty string")
+            if node["confidence"] not in {"high", "medium", "low"}:
+                raise DebateContractError("final report causal_chain node.confidence must be high, medium, or low")
+
+        edge_ids: set[str] = set()
+        for edge in edges:
+            if not isinstance(edge, dict):
+                raise DebateContractError("final report causal_chain.edges entries must be objects")
+            for field_name in ["id", "from", "to", "relation", "why"]:
+                if field_name not in edge:
+                    raise DebateContractError(f"final report causal_chain edge is missing {field_name}")
+            if not isinstance(edge["id"], str) or not edge["id"]:
+                raise DebateContractError("final report causal_chain edge.id must be a non-empty string")
+            if edge["id"] in edge_ids:
+                raise DebateContractError(f"duplicate causal_chain edge id: {edge['id']}")
+            edge_ids.add(edge["id"])
+            if edge["from"] not in node_ids or edge["to"] not in node_ids:
+                raise DebateContractError("final report causal_chain edge endpoints must reference causal_chain nodes")
+            if edge["relation"] not in allowed_relations:
+                raise DebateContractError(f"invalid causal_chain edge relation: {edge['relation']}")
+            if not isinstance(edge["why"], str) or not edge["why"]:
+                raise DebateContractError("final report causal_chain edge.why must be a non-empty string")
+
+        selected_path = self.causal_chain["selected_path"]
+        if not isinstance(selected_path, list) or not selected_path:
+            raise DebateContractError("final report causal_chain.selected_path must be a non-empty list")
+        for node_id in selected_path:
+            if node_id not in node_ids:
+                raise DebateContractError("final report causal_chain.selected_path must reference nodes")
+
+        rejected_paths = self.causal_chain["rejected_paths"]
+        if not isinstance(rejected_paths, list):
+            raise DebateContractError("final report causal_chain.rejected_paths must be a list")
+        for path in rejected_paths:
+            if not isinstance(path, dict):
+                raise DebateContractError("final report causal_chain.rejected_paths entries must be objects")
+            if not isinstance(path.get("stance_id"), str) or not path["stance_id"]:
+                raise DebateContractError("final report causal_chain rejected path requires stance_id")
+            for node_id in _ensure_string_list(path.get("rejection_node_ids", []), "rejected_path.rejection_node_ids"):
+                if node_id not in node_ids:
+                    raise DebateContractError("rejected_path.rejection_node_ids must reference nodes")
+            for edge_id in _ensure_string_list(path.get("decisive_edge_ids", []), "rejected_path.decisive_edge_ids"):
+                if edge_id not in edge_ids:
+                    raise DebateContractError("rejected_path.decisive_edge_ids must reference edges")
+
+        _ensure_string_list(self.causal_chain["unresolved_questions"], "causal_chain.unresolved_questions")
+        entrypoints = self.causal_chain["invalidation_entrypoints"]
+        if not isinstance(entrypoints, list):
+            raise DebateContractError("final report causal_chain.invalidation_entrypoints must be a list")
+        for entrypoint in entrypoints:
+            if not isinstance(entrypoint, dict):
+                raise DebateContractError("final report causal_chain.invalidation_entrypoints entries must be objects")
+            condition_node_id = entrypoint.get("condition_node_id")
+            if condition_node_id not in node_ids:
+                raise DebateContractError("invalidation_entrypoint.condition_node_id must reference a node")
+            for node_id in _ensure_string_list(entrypoint.get("reopens_node_ids", []), "entrypoint.reopens_node_ids"):
+                if node_id not in node_ids:
+                    raise DebateContractError("entrypoint.reopens_node_ids must reference nodes")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate_no_bare_conclusion()
@@ -368,6 +534,7 @@ class FinalReport:
             "scoped_positions": self.scoped_positions,
             "unresolved_questions": list(self.unresolved_questions),
             "causal_result": self.causal_result,
+            "causal_chain": self.causal_chain,
             "next_action": self.next_action,
             "transcript_digest": list(self.transcript_digest),
             "cleanup_result": self.cleanup_result,

@@ -171,6 +171,12 @@ class DebateLeaderRuntime:
                 "confidence": "high",
                 "status": "causal_candidate",
             },
+            causal_chain=self._make_early_causal_chain(
+                run_id=run_id,
+                request=request,
+                admission_decision=admission_decision,
+                reason=reason,
+            ),
             next_action=next_action,
             transcript_digest=[],
             cleanup_result=cleanup_result,
@@ -316,6 +322,19 @@ class DebateLeaderRuntime:
         if escalation:
             causal_result["escalation"] = dict(escalation)
 
+        causal_chain = self._make_causal_chain(
+            run_id=run_id,
+            request=request,
+            selected=selected,
+            stances=stances,
+            transcript=transcript,
+            rejected_positions=rejected_positions,
+            scoped_positions=scoped_positions,
+            unresolved_questions=unresolved,
+            decision=decision,
+            statement=statement,
+        )
+
         report = FinalReport(
             run_id=run_id,
             request_id=request.request_id,
@@ -326,6 +345,7 @@ class DebateLeaderRuntime:
             scoped_positions=scoped_positions,
             unresolved_questions=unresolved,
             causal_result=causal_result,
+            causal_chain=causal_chain,
             next_action=next_action,
             transcript_digest=transcript_digest,
             cleanup_result=cleanup_result,
@@ -335,6 +355,406 @@ class DebateLeaderRuntime:
         )
         report.validate_no_bare_conclusion()
         return report
+
+    def _make_early_causal_chain(
+        self,
+        *,
+        run_id: str,
+        request: DebateRequest,
+        admission_decision: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        premise_id = "premise.admission_boundary"
+        conclusion_id = f"conclusion.{admission_decision}"
+        edge_id = "edge.admission_boundary.conclusion"
+        return {
+            "chain_id": f"{run_id}:causal-chain",
+            "source_request_id": request.request_id,
+            "decision_problem": request.decision_target or request.question,
+            "selected_stance_id": "",
+            "nodes": [
+                self._chain_node(
+                    node_id=premise_id,
+                    node_type="premise",
+                    stance_id=None,
+                    worker_id=None,
+                    statement="Debate admission requires decision target, scope, and at least two defensible stances.",
+                    why="The Debate Leader must not create request-scoped workers without enough context to form adversarial positions.",
+                    evidence_refs=self._evidence_refs(request),
+                    assumptions=request.constraints or ["Admission happens before worker creation."],
+                    scope=request.scope or "admission stage before debate run",
+                    confidence="high",
+                ),
+                self._chain_node(
+                    node_id=conclusion_id,
+                    node_type="conclusion",
+                    stance_id=None,
+                    worker_id=None,
+                    statement=admission_decision,
+                    why=reason,
+                    evidence_refs=[request.request_id],
+                    assumptions=request.constraints or ["No debate run is created before admission succeeds."],
+                    scope=request.scope or "admission stage before debate run",
+                    confidence="high",
+                ),
+            ],
+            "edges": [
+                self._chain_edge(
+                    edge_id=edge_id,
+                    from_id=premise_id,
+                    to_id=conclusion_id,
+                    relation="supports",
+                    why="The admission boundary directly determines the non-terminal admission result.",
+                )
+            ],
+            "selected_path": [premise_id, conclusion_id],
+            "rejected_paths": [],
+            "unresolved_questions": [reason],
+            "invalidation_entrypoints": [],
+        }
+
+    def _make_causal_chain(
+        self,
+        *,
+        run_id: str,
+        request: DebateRequest,
+        selected: StancePacket,
+        stances: list[StancePacket],
+        transcript: list[WorkerTurn],
+        rejected_positions: list[dict[str, Any]],
+        scoped_positions: list[dict[str, Any]],
+        unresolved_questions: list[str],
+        decision: str,
+        statement: str,
+    ) -> dict[str, Any]:
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        rejected_by_id = {item["stance_id"]: item for item in rejected_positions}
+        stance_by_id = {stance.stance_id: stance for stance in stances}
+        evidence_refs = self._evidence_refs(request)
+        premise_id = "premise.debate_topology_contract"
+        conclusion_id = f"conclusion.{selected.stance_id}.selected"
+        selection_id = f"selection.{selected.stance_id}"
+        risk_id = f"risk.{selected.stance_id}"
+
+        nodes.append(
+            self._chain_node(
+                node_id=premise_id,
+                node_type="premise",
+                stance_id=None,
+                worker_id=None,
+                statement="Debate Department demo runtime requires Leader-mediated round-robin broadcast.",
+                why=(
+                    "The contract preserves Leader-controlled turn order, one canonical transcript, shared worker view, "
+                    "and no default worker peer-to-peer side channel."
+                ),
+                evidence_refs=evidence_refs
+                or ["aegis-master-kit/organization/departments/debate/INTERNAL_TOPOLOGY_CONTRACT.md"],
+                assumptions=request.constraints or ["Debate Department contract governs the demo runtime."],
+                scope=request.scope or "Debate Department demo runtime",
+                confidence="high",
+            )
+        )
+
+        for stance in stances:
+            nodes.append(
+                self._chain_node(
+                    node_id=f"stance.{stance.stance_id}",
+                    node_type="stance_claim",
+                    stance_id=stance.stance_id,
+                    worker_id=None,
+                    statement=stance.claim,
+                    why=stance.why,
+                    evidence_refs=[item.ref for item in stance.evidence] or evidence_refs or [request.request_id],
+                    assumptions=stance.assumptions or request.constraints,
+                    scope=stance.scope or request.scope,
+                    confidence="medium",
+                )
+            )
+
+        attack_node_ids_by_target: dict[str, list[str]] = {stance.stance_id: [] for stance in stances}
+        for turn in transcript:
+            node_type = "worker_concession" if turn.turn_type == "concession" else "worker_attack"
+            target_ids = [target.get("stance_id", "") for target in turn.targets_attacked if target.get("stance_id")]
+            node_id = f"turn.{turn.turn_index}.{turn.stance_id}.{node_type}"
+            nodes.append(
+                self._chain_node(
+                    node_id=node_id,
+                    node_type=node_type,
+                    stance_id=turn.stance_id,
+                    worker_id=turn.worker_id,
+                    statement=(
+                        f"Worker {turn.stance_id} produced {turn.turn_type} turn against "
+                        f"{', '.join(target_ids) if target_ids else 'competing stances'}."
+                    ),
+                    why=turn.why if turn.why else turn.weakness_found,
+                    evidence_refs=[turn.turn_id] + [item.ref for item in turn.evidence],
+                    assumptions=turn.assumptions,
+                    scope=request.scope or "request-scoped debate run",
+                    confidence=turn.confidence,
+                )
+            )
+            edges.append(
+                self._chain_edge(
+                    edge_id=f"edge.stance.{turn.stance_id}.turn.{turn.turn_index}",
+                    from_id=f"stance.{turn.stance_id}",
+                    to_id=node_id,
+                    relation="supports",
+                    why="The worker turn is generated from the stance packet assigned to that request-scoped worker.",
+                )
+            )
+            for target_id in target_ids:
+                if target_id in attack_node_ids_by_target:
+                    attack_node_ids_by_target[target_id].append(node_id)
+
+        for rejected in rejected_positions:
+            stance_id = rejected["stance_id"]
+            stance = stance_by_id[stance_id]
+            rejection_id = f"rejection.{stance_id}"
+            nodes.append(
+                self._chain_node(
+                    node_id=rejection_id,
+                    node_type="alternative_rejection",
+                    stance_id=stance_id,
+                    worker_id=None,
+                    statement=f"Reject {stance_id}: {stance.claim}",
+                    why=f"{rejected['why_rejected']} {rejected['decisive_failure']}",
+                    evidence_refs=[item.ref for item in stance.evidence] or evidence_refs or [request.request_id],
+                    assumptions=stance.assumptions or request.constraints,
+                    scope=stance.scope or request.scope,
+                    confidence="high",
+                )
+            )
+            edges.append(
+                self._chain_edge(
+                    edge_id=f"edge.premise.rejection.{stance_id}",
+                    from_id=premise_id,
+                    to_id=rejection_id,
+                    relation="supports_rejection",
+                    why="The topology premise defeats alternatives that break Leader control, shared transcript, or adversarial pressure.",
+                )
+            )
+            for attack_id in attack_node_ids_by_target.get(stance_id, []):
+                edges.append(
+                    self._chain_edge(
+                        edge_id=f"edge.{attack_id}.rejection.{stance_id}",
+                        from_id=attack_id,
+                        to_id=rejection_id,
+                        relation="supports_rejection",
+                        why="The worker attack record pressures this alternative and contributes to its rejection.",
+                    )
+                )
+
+        nodes.append(
+            self._chain_node(
+                node_id=selection_id,
+                node_type="selection_reason",
+                stance_id=selected.stance_id,
+                worker_id=None,
+                statement=f"Select {selected.stance_id}: {selected.claim}",
+                why=(
+                    "The selected stance preserves Leader-controlled turn order, canonical transcript, shared worker view, "
+                    "adversarial pressure, and avoids direct worker-to-worker side channels."
+                ),
+                evidence_refs=[item.ref for item in selected.evidence] or evidence_refs or [request.request_id],
+                assumptions=selected.assumptions or request.constraints,
+                scope=selected.scope or request.scope,
+                confidence="high",
+            )
+        )
+        edges.append(
+            self._chain_edge(
+                edge_id=f"edge.premise.selection.{selected.stance_id}",
+                from_id=premise_id,
+                to_id=selection_id,
+                relation="supports_selection",
+                why="The selected stance satisfies the leader-mediated topology premise.",
+            )
+        )
+        edges.append(
+            self._chain_edge(
+                edge_id=f"edge.stance.{selected.stance_id}.selection.{selected.stance_id}",
+                from_id=f"stance.{selected.stance_id}",
+                to_id=selection_id,
+                relation="supports_selection",
+                why="The selected stance packet explicitly claims the mechanism that the topology premise requires.",
+            )
+        )
+
+        for rejected in rejected_positions:
+            stance_id = rejected["stance_id"]
+            edges.append(
+                self._chain_edge(
+                    edge_id=f"edge.rejection.{stance_id}.selection.{selected.stance_id}",
+                    from_id=f"rejection.{stance_id}",
+                    to_id=selection_id,
+                    relation="supports_selection",
+                    why=f"Rejecting {stance_id} narrows the decision to the stance that preserves the required debate mechanism.",
+                )
+            )
+
+        nodes.append(
+            self._chain_node(
+                node_id=risk_id,
+                node_type="risk",
+                stance_id=selected.stance_id,
+                worker_id=None,
+                statement=selected.risk_if_wrong or "Selected stance may fail under changed runtime or contract conditions.",
+                why="Risk must be explicit so Master can decide whether to merge, reopen, or request further validation.",
+                evidence_refs=[request.request_id],
+                assumptions=selected.assumptions or request.constraints,
+                scope=selected.scope or request.scope,
+                confidence="medium",
+            )
+        )
+        edges.append(
+            self._chain_edge(
+                edge_id=f"edge.selection.{selected.stance_id}.risk.{selected.stance_id}",
+                from_id=selection_id,
+                to_id=risk_id,
+                relation="creates_risk",
+                why="A selected implementation model creates explicit risk if its assumptions are wrong.",
+            )
+        )
+
+        nodes.append(
+            self._chain_node(
+                node_id=conclusion_id,
+                node_type="conclusion",
+                stance_id=selected.stance_id,
+                worker_id=None,
+                statement=statement,
+                why=f"Debate Leader selects {selected.stance_id} after integrating stance packets, worker attacks, rejected alternatives, risk, and invalidation conditions.",
+                evidence_refs=[request.request_id, run_id],
+                assumptions=selected.assumptions or request.constraints,
+                scope=selected.scope if decision == "accept_one" else request.scope,
+                confidence="high" if decision == "accept_one" else "medium",
+            )
+        )
+        edges.append(
+            self._chain_edge(
+                edge_id=f"edge.selection.{selected.stance_id}.conclusion",
+                from_id=selection_id,
+                to_id=conclusion_id,
+                relation="supports_selection",
+                why="The selection reason is the immediate causal support for the final conclusion.",
+            )
+        )
+        edges.append(
+            self._chain_edge(
+                edge_id=f"edge.risk.{selected.stance_id}.conclusion",
+                from_id=risk_id,
+                to_id=conclusion_id,
+                relation="narrows_scope",
+                why="Explicit risk narrows the conclusion to the stated demo scope and assumptions.",
+            )
+        )
+
+        invalidation_entrypoints: list[dict[str, Any]] = []
+        for stance in stances:
+            existing_node_ids = {node["id"] for node in nodes}
+            if stance.stance_id == selected.stance_id:
+                target_node_ids = [conclusion_id]
+            elif f"rejection.{stance.stance_id}" in existing_node_ids:
+                target_node_ids = [f"rejection.{stance.stance_id}"]
+            else:
+                target_node_ids = [f"stance.{stance.stance_id}"]
+            conditions = list(stance.invalidation_conditions)
+            if stance.stance_id == selected.stance_id and not any("scale" in item.lower() for item in conditions):
+                conditions.append("if leader-mediated broadcast cannot scale for large worker counts, re-evaluate the selected stance")
+            for index, condition in enumerate(conditions):
+                condition_id = f"invalidation.{stance.stance_id}.{index}"
+                nodes.append(
+                    self._chain_node(
+                        node_id=condition_id,
+                        node_type="invalidation_condition",
+                        stance_id=stance.stance_id,
+                        worker_id=None,
+                        statement=condition,
+                        why="This condition marks where Master or a future Debate run may reopen the causal candidate.",
+                        evidence_refs=[request.request_id],
+                        assumptions=stance.assumptions or request.constraints,
+                        scope=stance.scope or request.scope,
+                        confidence="medium",
+                    )
+                )
+                for target_node_id in target_node_ids:
+                    if target_node_id in {node["id"] for node in nodes}:
+                        edges.append(
+                            self._chain_edge(
+                                edge_id=f"edge.{condition_id}.reopens.{target_node_id}",
+                                from_id=condition_id,
+                                to_id=target_node_id,
+                                relation="reopens_if",
+                                why="If this condition becomes true, the affected rejection or conclusion must be reopened.",
+                            )
+                        )
+                invalidation_entrypoints.append(
+                    {"condition_node_id": condition_id, "reopens_node_ids": list(target_node_ids)}
+                )
+
+        selected_path = [premise_id, f"stance.{selected.stance_id}", selection_id, conclusion_id]
+        rejected_paths = [
+            {
+                "stance_id": rejected["stance_id"],
+                "rejection_node_ids": [f"rejection.{rejected['stance_id']}"],
+                "decisive_edge_ids": [
+                    f"edge.premise.rejection.{rejected['stance_id']}",
+                    f"edge.rejection.{rejected['stance_id']}.selection.{selected.stance_id}",
+                ],
+            }
+            for rejected in rejected_positions
+        ]
+
+        return {
+            "chain_id": f"{run_id}:causal-chain",
+            "source_request_id": request.request_id,
+            "decision_problem": request.decision_target or request.question,
+            "selected_stance_id": selected.stance_id if decision == "accept_one" else "",
+            "nodes": nodes,
+            "edges": edges,
+            "selected_path": selected_path,
+            "rejected_paths": rejected_paths,
+            "unresolved_questions": list(unresolved_questions),
+            "invalidation_entrypoints": invalidation_entrypoints,
+            "scoped_paths": list(scoped_positions),
+        }
+
+    def _chain_node(
+        self,
+        *,
+        node_id: str,
+        node_type: str,
+        stance_id: str | None,
+        worker_id: str | None,
+        statement: str,
+        why: str,
+        evidence_refs: list[str],
+        assumptions: list[str],
+        scope: str,
+        confidence: str,
+    ) -> dict[str, Any]:
+        return {
+            "id": node_id,
+            "type": node_type,
+            "stance_id": stance_id,
+            "worker_id": worker_id,
+            "statement": statement,
+            "why": why,
+            "evidence_refs": [item for item in evidence_refs if item],
+            "assumptions": [item for item in assumptions if item] or ["demo causal-chain construction assumption"],
+            "scope": scope or "request-scoped debate run",
+            "confidence": confidence,
+        }
+
+    def _chain_edge(self, *, edge_id: str, from_id: str, to_id: str, relation: str, why: str) -> dict[str, Any]:
+        return {"id": edge_id, "from": from_id, "to": to_id, "relation": relation, "why": why}
+
+    def _evidence_refs(self, request: DebateRequest) -> list[str]:
+        refs = [item.ref for item in request.evidence]
+        if request.request_id not in refs:
+            refs.append(request.request_id)
+        return refs
 
     def _select_stance(self, stances: list[StancePacket]) -> StancePacket:
         for stance in stances:
