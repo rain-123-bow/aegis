@@ -1,0 +1,23 @@
+parent_task_id: TASK_0001
+split_decision: accepted
+leader_decision: request_more_context|request_test_measurement|request_debate|resolve_internal_review_dispute|governance_blocker_to_master|submit_causal_fork_to_master
+why_split_is_valid: "Each subtask has independent ownership, frozen boundaries, and local validation."
+common_contracts:
+  - "contract.md"
+subtasks:
+  - subtask_id: SUBTASK_A
+    responsibility: "Implement one independent responsibility."
+    owned_files_or_modules:
+      - "path/to/module"
+    input_contract: "Input boundary."
+    output_contract: "Output boundary."
+    dependencies: []
+    independence_reason: "Why this can be implemented separately."
+    local_success_criteria:
+      - "Local test or review check."
+    expected_branch: "execution/TASK_0001/GROUP_A/subtask-a"
+    merge_risk: low
+    feedback_mapping_rule: "Failures in this module map to GROUP_A unless integration-level evidence proves otherwise."
+rejected_splits:
+  - proposal: "Split by arbitrary file count."
+    why_rejected: "File count does not prove semantic independence."

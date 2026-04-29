@@ -1,0 +1,12 @@
+schema_id: back_review_report_v1
+required: [group_id, subtask_id, decision, summary]
+fields:
+  group_id: string
+  subtask_id: string
+  decision: accept|reject|request_changes|request_more_evidence|scope_violation|contract_violation
+  leader_resolution_label: resolve_internal_review_dispute|request_debate|governance_blocker_to_master|map_to_group|rework_required|release_groups
+  summary: string
+  objections: list[object]
+  front_agent_answers: list[object]
+  required_changes: list[string]
+  confidence: high|medium|low

@@ -1,0 +1,13 @@
+schema_id: front_implementation_report_v1
+required: [group_id, subtask_id, branch_name, summary, changed_files]
+fields:
+  group_id: string
+  subtask_id: string
+  branch_name: string
+  group_decision: request_more_context|resolve_internal_review_dispute|rework_required|submit_causal_fork_to_master
+  summary: string
+  changed_files: list[object]
+  local_tests: list[object]
+  assumptions: list[string]
+  known_limits: list[string]
+  questions_for_back_agent: list[string]

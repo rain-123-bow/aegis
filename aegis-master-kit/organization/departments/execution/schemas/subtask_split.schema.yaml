@@ -1,0 +1,10 @@
+schema_id: subtask_split_v1
+required: [parent_task_id, split_decision, subtasks]
+fields:
+  parent_task_id: string
+  split_decision: accepted|rejected|needs_debate|needs_contract|request_test_measurement|resolve_internal_review_dispute|governance_blocker_to_master
+  leader_decision: request_more_context|request_test_measurement|request_debate|resolve_internal_review_dispute|governance_blocker_to_master|submit_causal_fork_to_master
+  why_split_is_valid: string
+  common_contracts: list[string]
+  subtasks: list[object]
+  rejected_splits: list[object]

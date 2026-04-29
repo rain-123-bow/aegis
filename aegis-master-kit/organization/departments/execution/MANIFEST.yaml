@@ -1,0 +1,45 @@
+department_id: execution
+version: v0.1
+scope: department_contract_package
+status: contract_only
+external_role_id: execution
+external_boundary: Execution Leader
+runtime_package: aegis-runtime/execution
+contracts:
+  department: EXECUTION_DEPARTMENT_CONTRACT.md
+  leader: EXECUTION_LEADER_CONTRACT.md
+  task_split: TASK_SPLIT_CONTRACT.md
+  debate_decision: DECISION_TO_DEBATE_RULES.md
+  group: EXECUTION_GROUP_CONTRACT.md
+  front_agent: FRONT_AGENT_CONTRACT.md
+  back_agent: BACK_AGENT_CONTRACT.md
+  branch_workspace: BRANCH_AND_WORKSPACE_CONTRACT.md
+  integration_test_handoff: INTEGRATION_AND_TEST_HANDOFF_CONTRACT.md
+  test_feedback_rework: TEST_FEEDBACK_AND_REWORK_CONTRACT.md
+  causal_chain: EXECUTION_CAUSAL_CHAIN_RULES.md
+schemas:
+  - schemas/execution_request.schema.yaml
+  - schemas/subtask_split.schema.yaml
+  - schemas/execution_group.schema.yaml
+  - schemas/implementation_report.schema.yaml
+  - schemas/review_report.schema.yaml
+  - schemas/integration_candidate.schema.yaml
+  - schemas/test_feedback_mapping.schema.yaml
+  - schemas/execution_final_report.schema.yaml
+templates:
+  - templates/execution_request.yaml
+  - templates/subtask_split.yaml
+  - templates/group_assignment.yaml
+  - templates/front_agent_prompt.md
+  - templates/back_agent_prompt.md
+  - templates/leader_integration_report.md
+  - templates/execution_final_causal_chain.md
+tests:
+  - tests/EXECUTION_DEPARTMENT_CONSTRAINT_TESTS.md
+hard_rules:
+  - Do not split if independence cannot be proven.
+  - Do not parallelize across unfrozen interfaces.
+  - Do not create an Execution Group without local validation criteria.
+  - Do not treat Front Agent output as accepted without Back Agent review.
+  - Do not release groups before Test success feedback and Leader final causal handoff.
+  - Do not merge execution causal candidates into global causal truth.

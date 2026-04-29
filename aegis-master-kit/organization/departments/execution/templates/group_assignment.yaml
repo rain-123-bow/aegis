@@ -1,0 +1,13 @@
+group_id: GROUP_A
+parent_task_id: TASK_0001
+subtask_id: SUBTASK_A
+responsibility_scope: "Precise group scope."
+branch_name: "execution/TASK_0001/GROUP_A/subtask-a"
+owned_files_or_modules:
+  - "path/to/module"
+front_agent_instruction: "Implement the assigned subtask and run local checks."
+back_agent_instruction: "Review implementation and test evidence independently."
+local_success_criteria:
+  - "Local test passes."
+lifecycle_status: CREATED
+leader_decision: resolve_internal_review_dispute|request_failure_evidence|triage_required|map_to_group|map_to_integration_owner|rework_required|release_groups|submit_causal_fork_to_master

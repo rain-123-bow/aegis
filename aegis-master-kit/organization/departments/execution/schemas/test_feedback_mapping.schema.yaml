@@ -1,0 +1,13 @@
+schema_id: test_feedback_mapping_v1
+required: [feedback_id, test_result, evidence_refs]
+fields:
+  feedback_id: string
+  test_result: passed|failed
+  feedback_decision: test_passed|test_failed_mapped|test_failed_missing_evidence|test_failed_ambiguous_owner
+  leader_decision: request_failure_evidence|triage_required|map_to_group|map_to_integration_owner|rework_required|release_groups
+  evidence_refs: list[string]
+  missing_evidence: list[failing_command|log|reproduction_step|assertion|artifact_path|changed_scope|environment_condition]
+  tested_scope: string
+  uncovered_scope: list[string]
+  failures: list[object]
+  confidence: high|medium|low
