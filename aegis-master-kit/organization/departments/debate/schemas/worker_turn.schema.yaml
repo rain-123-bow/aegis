@@ -1,0 +1,63 @@
+schema_id: worker_turn_v1
+version: 1
+purpose: Required structure for one Debate Worker turn.
+required:
+  - debate_run_id
+  - round
+  - turn_index
+  - worker_id
+  - stance_id
+  - turn_type
+  - claim
+  - why
+  - assumptions
+  - confidence
+  - new_information
+fields:
+  debate_run_id:
+    type: string
+  round:
+    type: integer
+  turn_index:
+    type: integer
+  worker_id:
+    type: string
+  stance_id:
+    type: string
+  turn_type:
+    type: enum
+    allowed: [defend, attack, answer, scope_narrowing, concession, evidence_request]
+  claim:
+    type: string
+  why:
+    type: string
+  evidence:
+    type: list[object]
+    required: false
+    item_fields:
+      type: string
+      ref: string
+      relevance: string
+  assumptions:
+    type: list[string]
+  targets_attacked:
+    type: list[object]
+    required: false
+    item_fields:
+      stance_id: string
+      attack: string
+      weakness_found: string
+  scope_change:
+    type: string
+    required: false
+  concession_reason:
+    type: string
+    required: false
+  confidence:
+    type: enum
+    allowed: [high, medium, low]
+  new_information:
+    type: boolean
+  invalidation_conditions_found:
+    type: list[string]
+    required: false

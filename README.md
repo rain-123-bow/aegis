@@ -29,6 +29,7 @@ aegis/
   docs/                 Project definitions, technical baseline, and phase scope
   aegis-master-kit/     Master constitution and top-level organization architecture
   aegis-router/         Python implementation of a local MCP-style message router
+  aegis-runtime/        Demo/runtime implementations that execute master-kit contracts
   examples/             Demo business skeleton showing how code + three libraries may coexist
 ```
 

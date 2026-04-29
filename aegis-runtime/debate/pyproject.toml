@@ -1,0 +1,23 @@
+[project]
+name = "aegis-debate-runtime"
+version = "0.1.0"
+description = "Demo runtime for the Aegis Debate Department contract."
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+authors = [{name = "Aegis Project"}]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+aegis-debate-demo = "aegis_debate_runtime.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "contract: runtime contract verification tests for Debate Department demo behavior",
+]

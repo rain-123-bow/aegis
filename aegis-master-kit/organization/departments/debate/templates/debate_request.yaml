@@ -1,0 +1,21 @@
+request_id: REQ-0000
+request_source: master # master|execution
+question: "What decision requires adversarial reasoning?"
+decision_needed: "What should the requester do after debate?"
+context:
+  summary: "Minimal background required to form stances."
+  current_scope: "Project/module/situation scope."
+constraints:
+  - "Relevant contract, resource, safety, ownership, or schedule constraint."
+known_options:
+  - "Optional candidate option A."
+  - "Optional candidate option B."
+evidence:
+  - type: code|log|experiment|document|conversation|observation
+    ref: "Reference path or identifier."
+    summary: "What this evidence says."
+    relevance: "Why it matters."
+forbidden_moves:
+  - "Do not violate existing top-level route topology."
+expected_output: route_decision # route_decision|causal_proposal|conflict_surface|evidence_gap_report
+urgency: normal

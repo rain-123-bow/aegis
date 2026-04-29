@@ -1,0 +1,32 @@
+package: debate_department_contract
+version: v0.1-demo-contract
+scope: aegis-master-kit/organization/departments/debate
+contains_runtime_code: false
+purpose: Define the Debate Department internal contract before runtime/demo implementation.
+files:
+  - README.md
+  - DEBATE_DEPARTMENT_CONTRACT.md
+  - DEBATE_LEADER_CONTRACT.md
+  - DEBATE_WORKER_CONTRACT.md
+  - DEBATE_RUN_LIFECYCLE.md
+  - INTERNAL_TOPOLOGY_CONTRACT.md
+  - ADJUDICATION_AND_CAUSAL_OUTPUT_RULES.md
+  - CAUSAL_STRUCTURE_RATIONALE.md
+  - schemas/debate_request.schema.yaml
+  - schemas/stance_packet.schema.yaml
+  - schemas/worker_turn.schema.yaml
+  - schemas/leader_final_report.schema.yaml
+  - templates/debate_request.yaml
+  - templates/stance_packet.yaml
+  - templates/worker_prompt.md
+  - templates/leader_final_report.md
+  - tests/DEBATE_DEPARTMENT_CONSTRAINT_TESTS.md
+key_invariants:
+  - Debate Leader is the only external department boundary.
+  - Workers are one-run stance-bound temporary agents.
+  - Debate requires at least two defensible independent stances.
+  - Internal communication is leader-mediated round-robin broadcast.
+  - Leader is adjudicator and must prevent infinite debate.
+  - Final output must preserve causal structure, not only conclusions.
+  - Worker resources are released after final report generation.
+  - Debate output is a causal candidate, not automatic global causal truth.
