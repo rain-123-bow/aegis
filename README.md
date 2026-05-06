@@ -106,6 +106,13 @@ The current prototype has closed the following demo-level mechanisms:
     - `execution -> master`.
 11. Execution Leader final `execution_causal_chain` output as a `causal_candidate`.
 12. Test Department contract package with strict evidence-state result semantics.
+13. Test Department deterministic runtime demo.
+14. Test router-integrated closure across:
+    - `execution -> test`;
+    - `test -> execution`;
+    - `test -> final_review`.
+15. Test result retention of reproducibility set and artifact manifest.
+16. Test result output as scoped evidence, not global causal truth.
 
 This is demo closure, not production closure.
 
@@ -117,7 +124,7 @@ Phase 1 validates the following chain:
 Developer -> Codex Master -> aegis-master-kit -> top-level departments -> department leaders -> aegis-router communication
 ```
 
-The Debate Department and Execution Department have demo-level closures. The Test Department currently has contract-only closure; Test runtime is still deferred.
+The Debate, Execution, and Test Departments have demo-level closures. The Test Department closure is deterministic demo infrastructure only; it is not production Test closure.
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
 
@@ -250,6 +257,52 @@ Execution -> Debate -> Execution
 
 The Debate handoff demo selects `PLAN_B` and binds Debate's causal candidate into the final Execution causal chain.
 
+## Test Department
+
+The Test Department is responsible for converting integrated implementation candidates into reproducible evidence and scoped test conclusions.
+
+External boundary:
+
+```text
+Execution / Final Review <-> Test Leader
+```
+
+Internal demo structure:
+
+```text
+Test Leader
+  -> implementation candidate intake
+  -> contract/context check
+  -> deterministic test plan generation
+  -> one Test Worker per accepted route
+  -> route-level evidence production
+  -> result aggregation by evidence state
+  -> failed/inconclusive/ordinary blocked feedback to Execution Leader
+  -> passed/scoped-pass/final-governance blocked material to Final Review
+  -> reproducibility set and artifact manifest retention
+```
+
+Key rules:
+
+- The Test Leader is the only external department boundary.
+- Test Workers are route-scoped internal workers, not top-level Master-route agents.
+- Test owns evidence production and scoped test conclusions, not implementation modification.
+- Test may provide owner hints, but Execution Leader owns rework assignment.
+- Proven candidate failure with ambiguous owner remains `failed`.
+- Missing, unstable, or insufficient evidence becomes `inconclusive` or `blocked`.
+- Governance or policy bypass becomes `blocked` with `blocker_kind: governance`.
+- Passed or scoped-pass results go to Final Review, not directly to Master.
+- Test output is evidence/scoped conclusion, not global causal truth.
+
+The current Test runtime demo validates:
+
+```text
+Execution -> Test -> Execution
+Execution -> Test -> Final Review
+```
+
+The runtime uses request-provided candidate snapshots and in-process route workers. It does not perform production git checkout, real CI, real environment provisioning, or nested-Codex Test Worker orchestration.
+
 ## Quick validation
 
 From repository root on Windows PowerShell.
@@ -282,6 +335,20 @@ py -3.13 -m venv .venv-execution-runtime
 .\.venv-execution-runtime\Scripts\python.exe -m aegis_execution_runtime.cli --request .\aegis-runtime\execution\examples\demo_request.json
 ```
 
+### Test runtime
+
+```powershell
+py -3.13 -m venv .venv-test-runtime
+.\.venv-test-runtime\Scripts\python.exe -m pip install -U pip
+.\.venv-test-runtime\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-test-runtime\Scripts\python.exe -m pip install -e ".\aegis-runtime\test[dev]"
+
+.\.venv-test-runtime\Scripts\python.exe -m pytest .\aegis-runtime\test
+.\.venv-test-runtime\Scripts\python.exe -m pytest .\aegis-runtime\test\tests\test_router_integrated_test_closure.py -vv
+.\.venv-test-runtime\Scripts\python.exe -m aegis_test_runtime.cli --request .\aegis-runtime\test\examples\demo_request_pass.json
+.\.venv-test-runtime\Scripts\python.exe -m aegis_test_runtime.cli --request .\aegis-runtime\test\examples\demo_request_failure.json
+```
+
 Before committing local changes:
 
 ```powershell
@@ -289,7 +356,7 @@ git diff --check
 git status --short
 ```
 
-Do not commit generated files such as virtual environments, runtime state, mailbucket folders, cache directories, generated keys, or generated secrets.
+Do not commit generated files such as virtual environments, runtime state, mailbucket folders, cache directories, generated keys, generated secrets, or runtime artifacts.
 
 ## Verification reports
 
@@ -302,6 +369,8 @@ runtime_test_reports/PHASE_11_DEBATE_ROUTER_INTEGRATED_CLOSURE_REPORT.md
 runtime_test_reports/PHASE_12_DEBATE_CAUSAL_CHAIN_CLOSURE_REPORT.md
 runtime_test_reports/PHASE_13_EXECUTION_RUNTIME_DEMO_IMPLEMENTATION_REPORT.md
 runtime_test_reports/PHASE_14_EXECUTION_DEBATE_HANDOFF_CLOSURE_REPORT.md
+runtime_test_reports/PHASE_15_TEST_RUNTIME_DEMO_IMPLEMENTATION_REPORT.md
+runtime_test_reports/PHASE_15_TEST_RUNTIME_DEMO_LOCAL_VERIFICATION_REPORT.md
 ```
 
 Current demo closure point:
@@ -315,7 +384,11 @@ router-integrated communication closure
 + Execution Test feedback/rework closure
 + Execution Debate handoff closure
 + Execution final causal-chain output closure
-+ Test Department contract-only boundary and strict evidence-state semantics
++ Test Department strict evidence-state semantics closure
++ Test deterministic route-worker evidence closure
++ Test failed-feedback-to-Execution closure
++ Test passed-result-to-Final-Review closure
++ Test reproducibility-set and artifact-manifest retention closure
 ```
 
 ## Production hardening not yet included
@@ -335,7 +408,7 @@ Deferred production topics include:
 - JSON store locking;
 - real git branch/worktree orchestration;
 - real nested-Codex multi-agent process orchestration;
-- real Test Department runtime;
+- production Test Department runtime with real git checkout, CI, environment provisioning, and external artifact backend;
 - real Final Review Department runtime;
 - real Archive / Knowledge / Causal admission;
 - real global causal merge;
