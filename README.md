@@ -95,6 +95,16 @@ The current prototype has closed the following demo-level mechanisms:
 5. Debate Department contract package.
 6. Debate Department router-integrated runtime demo.
 7. Debate Leader explicit causal-chain output.
+8. Execution Department contract package.
+9. Execution Department deterministic runtime demo.
+10. Execution router-integrated closure across:
+    - `master -> execution`;
+    - `execution -> test`;
+    - `test -> execution`;
+    - `execution -> debate`;
+    - `debate -> execution`;
+    - `execution -> master`.
+11. Execution Leader final `execution_causal_chain` output as a `causal_candidate`.
 
 This is demo closure, not production closure.
 
@@ -106,9 +116,9 @@ Phase 1 validates the following chain:
 Developer -> Codex Master -> aegis-master-kit -> top-level departments -> department leaders -> aegis-router communication
 ```
 
-The first top-level department implemented at demo level is the Debate Department.
+The Debate Department and Execution Department have demo-level closures.
 
-Phase 1 does **not** implement a full autonomous software company, a full causal database, or automatic code submission.
+Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
 
 ## Aegis Router
 
@@ -167,7 +177,7 @@ Key rules:
 - The final report must contain `causal_chain`, not only a conclusion summary.
 - Debate output is a `causal_candidate`, not global causal truth.
 
-The current router-integrated demo topic selects:
+The current router-integrated Debate demo topic selects:
 
 ```text
 S2 = leader-mediated round-robin broadcast
@@ -182,9 +192,68 @@ S3 = independent workers with final synthesis only
 
 The result is returned to Master through the router/mailbucket path with a persisted `causal_chain` containing nodes, edges, selected path, rejected paths, and invalidation entrypoints.
 
+## Execution Department
+
+The Execution Department is responsible for turning admitted executable work into traceable implementation candidates.
+
+External boundary:
+
+```text
+Master / Debate / Test <-> Execution Leader
+```
+
+Internal demo structure:
+
+```text
+Execution Leader
+  -> contract/context check
+  -> plan selection or Debate request
+  -> objective subtask split
+  -> Execution Groups
+  -> Front Agent implementation
+  -> Back Agent review
+  -> Leader-owned integration branch/workspace
+  -> Test handoff
+  -> Test feedback mapping
+  -> rework when needed
+  -> final execution_causal_chain
+  -> cleanup/release of active groups after success
+```
+
+Key rules:
+
+- The Execution Leader is the only external department boundary.
+- Execution Groups are internal responsibility units, not top-level Master-route agents.
+- A task may be split only when independence, contracts, ownership, local validation, and feedback mapping are objectively justified.
+- Each independent subtask maps to one Execution Group.
+- Each Execution Group has a Front Agent and a Back Agent.
+- The Back Agent has blocking review authority.
+- Group branches/workspaces must remain traceable to task, subtask, group, branch, and touched files.
+- The Leader owns integration, not the individual groups.
+- Test feedback is mandatory whether it passes or fails.
+- Failure feedback must be evidence-backed and mapped before rework.
+- Success feedback allows active group release only after responsibility records and causal output are preserved.
+- Execution output is a `causal_candidate`, not global causal truth.
+
+The current Execution runtime demo validates:
+
+```text
+Master -> Execution -> Test -> Execution -> Master
+```
+
+It also validates the conditional handoff:
+
+```text
+Execution -> Debate -> Execution
+```
+
+The Debate handoff demo selects `PLAN_B` and binds Debate's causal candidate into the final Execution causal chain.
+
 ## Quick validation
 
-From repository root on Windows PowerShell:
+From repository root on Windows PowerShell.
+
+### Debate runtime
 
 ```powershell
 py -3.13 -m venv .venv-debate-runtime
@@ -196,6 +265,20 @@ py -3.13 -m venv .venv-debate-runtime
 .\.venv-debate-runtime\Scripts\python.exe -m pytest .\aegis-runtime\debate
 .\.venv-debate-runtime\Scripts\python.exe -m pytest .\aegis-runtime\debate\tests\test_router_integrated_debate_closure.py -vv
 .\.venv-debate-runtime\Scripts\python.exe -m aegis_debate_runtime.cli --request .\aegis-runtime\debate\examples\demo_request.json
+```
+
+### Execution runtime
+
+```powershell
+py -3.13 -m venv .venv-execution-runtime
+.\.venv-execution-runtime\Scripts\python.exe -m pip install -U pip
+.\.venv-execution-runtime\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-execution-runtime\Scripts\python.exe -m pip install -e ".\aegis-runtime\execution[dev]"
+
+.\.venv-execution-runtime\Scripts\python.exe -m pytest .\aegis-runtime\execution
+.\.venv-execution-runtime\Scripts\python.exe -m pytest .\aegis-runtime\execution\tests\test_router_integrated_execution_closure.py -vv
+.\.venv-execution-runtime\Scripts\python.exe -m pytest .\aegis-runtime\execution\tests\test_execution_debate_handoff_closure.py -vv
+.\.venv-execution-runtime\Scripts\python.exe -m aegis_execution_runtime.cli --request .\aegis-runtime\execution\examples\demo_request.json
 ```
 
 Before committing local changes:
@@ -216,15 +299,21 @@ runtime_test_reports/PHASE_9_COMMIT_GATE_READINESS_AUDIT_REPORT.md
 runtime_test_reports/PHASE_10_DEBATE_RUNTIME_DEMO_IMPLEMENTATION_REPORT.md
 runtime_test_reports/PHASE_11_DEBATE_ROUTER_INTEGRATED_CLOSURE_REPORT.md
 runtime_test_reports/PHASE_12_DEBATE_CAUSAL_CHAIN_CLOSURE_REPORT.md
+runtime_test_reports/PHASE_13_EXECUTION_RUNTIME_DEMO_IMPLEMENTATION_REPORT.md
+runtime_test_reports/PHASE_14_EXECUTION_DEBATE_HANDOFF_CLOSURE_REPORT.md
 ```
 
-Phase 12 is the current Debate Department demo closure point:
+Current demo closure point:
 
 ```text
 router-integrated communication closure
-+ temporary worker lifecycle closure
-+ Leader adjudication closure
-+ explicit causal-chain output closure
++ Debate temporary worker lifecycle closure
++ Debate Leader adjudication closure
++ Debate explicit causal-chain output closure
++ Execution group responsibility closure
++ Execution Test feedback/rework closure
++ Execution Debate handoff closure
++ Execution final causal-chain output closure
 ```
 
 ## Production hardening not yet included
@@ -242,9 +331,14 @@ Deferred production topics include:
 - dynamic topology loading;
 - MCP caller/session binding;
 - JSON store locking;
+- real git branch/worktree orchestration;
+- real nested-Codex multi-agent process orchestration;
+- real Test Department runtime;
+- real Final Review Department runtime;
 - real Archive / Knowledge / Causal admission;
 - real global causal merge;
-- real nested-Codex multi-agent process orchestration.
+- production branch protection;
+- remote push / PR / merge / release.
 
 ## Responsibility boundary
 
