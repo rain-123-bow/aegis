@@ -1,0 +1,24 @@
+[project]
+name = "aegis-final-review-runtime"
+version = "0.1.0"
+description = "Demo runtime for the Aegis Final Review Department contract."
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+authors = [{name = "Aegis Project"}]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+aegis-final-review-demo = "aegis_final_review_runtime.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "contract: runtime contract verification tests for Final Review Department demo behavior",
+    "router: router-integrated Final Review closure tests",
+]

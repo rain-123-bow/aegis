@@ -1,0 +1,57 @@
+{
+  "final_review_input_package": {
+    "accepted_scope": [
+      "declared_scope"
+    ],
+    "assumptions": [
+      "demo input refs are durable"
+    ],
+    "blocked_scope": [
+      "compatibility_scope"
+    ],
+    "debate_used": false,
+    "evidence_contradictions": [],
+    "execution_defects": [],
+    "final_code_ref": "candidate:final",
+    "governance_blockers": [],
+    "implementation_candidate_ref": "candidate:final",
+    "known_limits": [
+      "compatibility scope not tested"
+    ],
+    "material_conditions": [
+      "deterministic demo candidate snapshot"
+    ],
+    "missing_evidence": [],
+    "object_mapping_evidence": [],
+    "reviewed_refs": {
+      "artifact_manifest_ref": "test:artifact-manifest",
+      "debate_refs": [],
+      "execution_causal_chain_ref": "exec:causal-candidate",
+      "execution_final_report_ref": "exec:final-report",
+      "reproducibility_set_ref": "test:reproducibility",
+      "test_evidence_refs": [
+        "test:evidence"
+      ],
+      "test_final_report_ref": "test:final-report",
+      "test_plan_ref": "test:plan",
+      "test_route_report_refs": [
+        "test:route-report"
+      ]
+    },
+    "task_scope": [
+      "declared_scope"
+    ],
+    "test_evidence_deficiencies": [],
+    "tested_candidate_ref": "candidate:final"
+  },
+  "request_id": "final-review-demo-scoped",
+  "resource_policy": {
+    "fallback_used": false,
+    "policy_ref": "policy:root-model-budget",
+    "reasoning_budget": "maximum",
+    "required_profile": "final_review_leader",
+    "resolved_profile": "final_review_leader",
+    "status": "satisfied"
+  },
+  "source": "test"
+}
