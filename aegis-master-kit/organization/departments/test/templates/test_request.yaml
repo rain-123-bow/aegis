@@ -1,0 +1,30 @@
+request_id: example-test-request-001
+source: execution
+objective: Validate the integrated implementation candidate against declared success criteria.
+scope: Example candidate validation scope.
+base_branch: v0.1.0-alpha
+integration_branch: execution/example/integration
+implementation_candidate_ref: artifact:implementation_candidate.json
+final_code_ref: branch:execution/example/integration
+changed_files:
+  - docs/example.md
+ownership_map:
+  docs/example.md: G1
+local_test_evidence:
+  - G1:local-test
+back_review_summaries:
+  - G1:back-review
+known_risks:
+  - Demo risk placeholder.
+expected_test_focus:
+  - Validate changed documentation exists and matches requested scope.
+success_criteria:
+  - Final code contains example documentation.
+forbidden_actions:
+  - modify implementation code
+  - assign rework directly to group
+  - send passed result directly to Master
+environment_constraints:
+  - local deterministic demo environment
+evidence_refs:
+  - execution-final-candidate

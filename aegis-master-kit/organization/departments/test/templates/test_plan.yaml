@@ -1,0 +1,48 @@
+plan_id: example-test-plan-001
+request_id: example-test-request-001
+implementation_candidate_ref: artifact:implementation_candidate.json
+final_code_ref: branch:execution/example/integration
+objective: Validate the integrated candidate.
+validation_scope:
+  - docs/example.md
+success_criteria_map:
+  criterion.final_code_contains_example_documentation: route.contract_docs
+changed_scope:
+  - docs/example.md
+known_risks:
+  - Demo risk placeholder.
+mandatory_routes:
+  - route.contract_docs
+optional_routes: []
+environment_assumptions:
+  - Repository checkout is available.
+artifact_policy: Keep route report and artifact manifest; large logs may be pruned after summary.
+pass_policy: All mandatory routes pass and validation scope is covered.
+failure_policy: Return evidence-backed test_feedback to Execution Leader.
+uncovered_scope_policy: Any uncovered scope must be explicit in final report.
+reproducibility_set_plan: Retain plan, routes, commands, environment, input refs, expected results, actual summary, and artifact manifest.
+routes:
+  - route_id: route.contract_docs
+    route_type: contract
+    mandatory: true
+    scope:
+      - docs/example.md
+    method: inspection
+    commands: []
+    inspection_steps:
+      - Verify docs/example.md exists in final_code_ref.
+      - Verify content satisfies declared success criteria.
+    environment_requirements:
+      - repository checkout
+    pass_fail_rules:
+      - Pass if the file exists and content matches expected scope.
+    evidence_requirements:
+      - final code file reference
+      - inspection summary
+    artifacts_expected:
+      - route.contract_docs.report.json
+    independence_reason: Single route owns documentation validation scope.
+    shared_state: []
+    isolation_rule: read-only checkout
+    order_dependency: none
+    worker_assignment: test_worker_route_contract_docs

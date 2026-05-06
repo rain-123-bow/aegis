@@ -1,0 +1,28 @@
+schema_id: test_plan_v1
+required:
+  - plan_id
+  - request_id
+  - implementation_candidate_ref
+  - final_code_ref
+  - objective
+  - validation_scope
+  - mandatory_routes
+  - pass_policy
+fields:
+  plan_id: string
+  request_id: string
+  implementation_candidate_ref: string
+  final_code_ref: string
+  objective: string
+  validation_scope: list[string]
+  success_criteria_map: map[criterion_id -> route_id|manual_review|not_testable_here]
+  changed_scope: list[string]
+  known_risks: list[string]
+  mandatory_routes: list[string]
+  optional_routes: list[string]
+  environment_assumptions: list[string]
+  artifact_policy: string
+  pass_policy: string
+  failure_policy: string
+  uncovered_scope_policy: string
+  reproducibility_set_plan: string

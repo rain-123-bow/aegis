@@ -1,0 +1,43 @@
+schema_id: test_worker_report_v1
+required:
+  - route_id
+  - worker_id
+  - route_result
+  - evidence_refs
+  - covered_scope
+  - why
+fields:
+  route_id: string
+  worker_id: string
+  route_scope: list[string]
+  commands_run: list[object]
+  inspection_steps_run: list[string]
+  logs: list[string]
+  artifacts: list[string]
+  environment: object
+  covered_scope: list[string]
+  uncovered_scope: list[string]
+  observations: list[string]
+  route_result: passed|failed|inconclusive|blocked
+  failure_signatures: list[string]
+  evidence_refs: list[string]
+  test_data_refs: list[string]
+  owner_hint: object
+  blocker_kind: environment|dependency|handoff|candidate_material|governance|policy|unknown
+  blocker_scope: string
+  why: string
+  assumptions: list[string]
+  material_conditions: list[string]
+invalid_if:
+  - route_result == passed and mandatory_assigned_checks_skipped
+  - route_result == failed and evidence_refs is empty
+  - route_result == failed and failure_signatures is empty
+  - route_result == failed and commands_run is empty and inspection_steps_run is empty
+  - route_result == inconclusive and clear candidate failure evidence exists
+  - route_result == blocked and blocker_kind is empty
+  - route_scope_changed_without_leader_approval
+  - route_result == passed and uncovered_scope contains mandatory assigned scope
+owner_hint_semantics:
+  - owner_hint is advisory evidence only.
+  - Test Worker must not assign Execution rework.
+  - Ambiguous owner does not change a proven failure into inconclusive.

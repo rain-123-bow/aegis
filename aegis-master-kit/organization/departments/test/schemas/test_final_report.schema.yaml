@@ -1,0 +1,49 @@
+schema_id: test_final_report_v1
+required:
+  - test_result_id
+  - request_id
+  - result
+  - test_plan_ref
+  - route_reports
+  - evidence_refs
+  - reproducibility_set_ref
+fields:
+  test_result_id: string
+  request_id: string
+  result: passed|passed_with_scope_limit|failed|inconclusive|blocked|request_more_context
+  feedback_kind: success|failure|inconclusive|blocked|missing_context|governance_blocker
+  final_code_ref: string
+  implementation_candidate_ref: string
+  test_plan_ref: string
+  route_reports: list[object]
+  test_data_refs: list[string]
+  evidence_refs: list[string]
+  coverage_summary: object
+  covered_scope: list[string]
+  uncovered_scope: list[string]
+  failure_signatures: list[string]
+  owner_hint: object
+  blocker_kind: environment|dependency|handoff|candidate_material|governance|policy|unknown
+  blocker_scope: string
+  requires_governance_review: boolean
+  required_next_action: string
+  known_limits: list[string]
+  assumptions: list[string]
+  material_conditions: list[string]
+  reproducibility_set_ref: string
+  next_route: execution|final_review
+  status: test_evidence_candidate
+causal_boundary:
+  - Test result is evidence and scoped conclusion only.
+  - It is not global causal truth.
+invalid_if:
+  - result == passed and uncovered_scope is not empty
+  - result == passed and any mandatory_route_result != passed
+  - result == passed_with_scope_limit and any mandatory_route_result in [failed, inconclusive, blocked]
+  - result == failed and evidence_refs is empty
+  - result == failed and failure_signatures is empty
+  - result == failed and owner_hint.owner_type is missing
+  - result == inconclusive and evidence proves mandatory candidate failure
+  - result == blocked and blocker_kind is empty
+  - blocker_kind == governance and requires_governance_review is not true
+  - next_route == master

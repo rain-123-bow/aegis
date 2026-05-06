@@ -1,0 +1,34 @@
+schema_id: test_request_v1
+required:
+  - request_id
+  - source
+  - objective
+  - scope
+  - implementation_candidate_ref
+  - final_code_ref
+  - success_criteria
+  - changed_files
+  - ownership_map
+fields:
+  request_id: string
+  source: execution
+  objective: string
+  scope: string
+  base_branch: string
+  integration_branch: string
+  implementation_candidate_ref: string
+  final_code_ref: string
+  changed_files: list[string]
+  ownership_map: map[path_or_module -> group_id|integration]
+  local_test_evidence: list[string]
+  back_review_summaries: list[string]
+  known_risks: list[string]
+  expected_test_focus: list[string]
+  success_criteria: list[string]
+  forbidden_actions: list[string]
+  environment_constraints: list[string]
+  evidence_refs: list[string]
+forbidden:
+  - direct_group_rework_assignment
+  - direct_master_success_handoff
+  - implementation_code_mutation

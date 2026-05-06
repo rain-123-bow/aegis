@@ -1,0 +1,42 @@
+department_id: test
+version: v0.1
+scope: department_contract_package
+status: contract_only
+external_role_id: test
+external_boundary: Test Leader
+runtime_package: aegis-runtime/test
+contracts:
+  department: TEST_DEPARTMENT_CONTRACT.md
+  leader: TEST_LEADER_CONTRACT.md
+  worker: TEST_WORKER_CONTRACT.md
+  plan_route_split: TEST_PLAN_AND_ROUTE_SPLIT_CONTRACT.md
+  evidence_retention: TEST_EVIDENCE_AND_RETENTION_CONTRACT.md
+  result_handoff: TEST_RESULT_AND_HANDOFF_CONTRACT.md
+schemas:
+  - schemas/test_request.schema.yaml
+  - schemas/test_plan.schema.yaml
+  - schemas/test_route.schema.yaml
+  - schemas/test_worker_report.schema.yaml
+  - schemas/test_final_report.schema.yaml
+templates:
+  - templates/test_request.yaml
+  - templates/test_plan.yaml
+  - templates/worker_prompt.md
+  - templates/test_final_report.md
+tests:
+  - tests/TEST_DEPARTMENT_CONSTRAINT_TESTS.md
+hard_rules:
+  - Do not treat Test as an Execution helper.
+  - Do not modify implementation code inside Test.
+  - Do not create Test Workers before the test plan and route split are justified.
+  - Do not let a Worker decide the whole candidate result.
+  - Do not send passed results directly to Master under the current topology.
+  - Do not assign rework directly to Execution Groups; send evidence to Execution Leader.
+  - Do not claim global causal truth from Test results.
+  - Do not discard the minimal reproducibility set.
+  - Do not downgrade proven candidate failure to inconclusive merely because owner responsibility is ambiguous.
+  - Do not report failed when evidence is missing, unstable, contradictory, or not reproducible enough.
+  - Do not report passed_with_scope_limit if any mandatory route failed, was blocked, or was inconclusive.
+  - Do not ask Execution to patch around governance or policy blockers.
+  - Report governance or policy blockers as blocked with blocker_kind governance.
+  - Do not route Test output directly to Master under the current topology.
