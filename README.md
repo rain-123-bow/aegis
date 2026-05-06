@@ -121,6 +121,9 @@ The current prototype has closed the following demo-level mechanisms:
 20. Final Review resource-policy gate with `blocked_resource_policy` precedence.
 21. Final Review output as recommendation to Master, not production release or global causal truth.
 22. Root model and reasoning-budget policy for Master and top-level department Leaders.
+23. Master top-level runtime demo for policy-bound nested-Codex Leader creation.
+24. Real nested-Codex creation proof for Debate, Execution, Test, and Final Review Leaders.
+25. Phase 17 proof audit with sha256 for all four real nested-Codex Leader proof files.
 
 This is demo closure, not production closure.
 
@@ -132,7 +135,7 @@ Phase 1 validates the following chain:
 Developer -> Codex Master -> aegis-master-kit -> top-level departments -> department leaders -> aegis-router communication
 ```
 
-The Debate, Execution, Test, and Final Review Departments have demo-level closures. The root model and reasoning-budget policy is locked for Master and top-level department Leaders in this phase. The Test and Final Review closures are deterministic demo infrastructure only; they are not production Test or Final Review closure.
+The Debate, Execution, Test, and Final Review Departments have demo-level closures. The root model and reasoning-budget policy is locked for Master and top-level department Leaders in this phase. Master can now bootstrap top-level Leaders through nested-Codex creation and audit their proof files. The Test and Final Review closures are deterministic demo infrastructure only; they are not production Test or Final Review closure.
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
 
@@ -382,6 +385,29 @@ Hard rules:
 - Master dynamic adjustment is deferred;
 - module-internal worker/front/back profiles are deferred.
 
+## Master top-level nested-Codex bootstrap
+
+The Master runtime can now create the four top-level department Leaders through nested-Codex and register them into the top-level Router domain:
+
+```text
+Master
+  -> Debate Leader
+  -> Execution Leader
+  -> Test Leader
+  -> Final Review Leader
+```
+
+The current Phase 17 proof verifies:
+
+- root policy parsing for Master and all top-level Leaders;
+- nested-Codex creation request construction with the locked model and reasoning budget;
+- real nested-Codex MCP creation for all four top-level Leaders;
+- Router registration for the created Leaders;
+- all 10 v1 top-level route checks, including `debate -> master`;
+- proof-file audit with sha256 for each real nested-Codex Leader proof.
+
+This is still demo closure. It does not create module-internal workers, does not enable Master dynamic model adjustment, and does not claim production Master runtime closure.
+
 ## Quick validation
 
 From repository root on Windows PowerShell.
@@ -443,6 +469,25 @@ py -3.13 -m venv .venv-final-review-runtime
 .\.venv-final-review-runtime\Scripts\python.exe -m aegis_final_review_runtime.cli --request .\aegis-runtime\final_review\examples\demo_request_scope_limit.json
 ```
 
+### Master top-level runtime
+
+```powershell
+py -3.13 -m venv .venv-master-runtime
+.\.venv-master-runtime\Scripts\python.exe -m pip install -U pip
+.\.venv-master-runtime\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-master-runtime\Scripts\python.exe -m pip install -e ".\aegis-runtime\master[dev]"
+
+.\.venv-master-runtime\Scripts\python.exe -m pytest .\aegis-runtime\master -vv
+.\.venv-master-runtime\Scripts\python.exe -m pytest .\aegis-runtime\master\tests\test_master_nested_codex_agent_proof_audit.py -vv
+
+.\.venv-master-runtime\Scripts\python.exe -m aegis_master_runtime.cli validate-recording `
+  --policy .\MODEL_REASONING_BUDGET_POLICY.yaml `
+  --router-state .\.aegis-master-runtime\router_state.json `
+  --output-dir .\.aegis-master-runtime
+```
+
+Real nested-Codex validation is performed through the available local MCP surface and audited through the proof files under `agents_test`. The stdio `validate-real` path remains available for a future standardized create-agent MCP tool name.
+
 Before committing local changes:
 
 ```powershell
@@ -450,7 +495,7 @@ git diff --check
 git status --short
 ```
 
-Do not commit generated files such as virtual environments, runtime state, mailbucket folders, cache directories, generated keys, generated secrets, or runtime artifacts.
+Do not commit generated files such as virtual environments, runtime state, mailbucket folders, cache directories, generated keys, generated secrets, proof directories, or runtime artifacts.
 
 ## Verification reports
 
@@ -467,6 +512,9 @@ runtime_test_reports/PHASE_15_TEST_RUNTIME_DEMO_IMPLEMENTATION_REPORT.md
 runtime_test_reports/PHASE_15_TEST_RUNTIME_DEMO_LOCAL_VERIFICATION_REPORT.md
 runtime_test_reports/PHASE_16_FINAL_REVIEW_RUNTIME_DEMO_IMPLEMENTATION_REPORT.md
 runtime_test_reports/PHASE_16_FINAL_REVIEW_RUNTIME_DEMO_LOCAL_VERIFICATION_REPORT.md
+runtime_test_reports/PHASE_17_MASTER_NESTED_CODEX_TOP_LEVEL_RUNTIME_IMPLEMENTATION_REPORT.md
+runtime_test_reports/PHASE_17_MASTER_NESTED_CODEX_TOP_LEVEL_RUNTIME_LOCAL_VERIFICATION_REPORT.md
+runtime_test_reports/PHASE_17_MASTER_NESTED_CODEX_AGENT_PROOF_AUDIT_REPORT.md
 ```
 
 Current demo closure point:
@@ -490,6 +538,9 @@ router-integrated communication closure
 + Final Review object-consistency and evidence-sufficiency closure
 + Final Review result-to-Master closure
 + Root static model/reasoning-budget policy for Master and top-level Leaders
++ Master nested-Codex top-level Leader creation closure
++ Master top-level Router registration and 10-edge communication closure
++ Four-Leader proof-file sha256 audit closure
 ```
 
 ## Production hardening not yet included
@@ -507,8 +558,10 @@ Deferred production topics include:
 - dynamic topology loading;
 - MCP caller/session binding;
 - JSON store locking;
+- real persistent nested-Codex session lifecycle;
+- standardized nested-Codex create-agent MCP tool name;
 - real git branch/worktree orchestration;
-- real nested-Codex multi-agent process orchestration;
+- real nested-Codex multi-agent process orchestration below top-level Leaders;
 - production Test Department runtime with real git checkout, CI, environment provisioning, and external artifact backend;
 - production Final Review runtime with real external model invocation, root resource-policy integration, and production artifact review backend;
 - Master-driven dynamic model and reasoning-budget adjustment;
