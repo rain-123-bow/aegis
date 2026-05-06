@@ -105,6 +105,7 @@ The current prototype has closed the following demo-level mechanisms:
     - `debate -> execution`;
     - `execution -> master`.
 11. Execution Leader final `execution_causal_chain` output as a `causal_candidate`.
+12. Test Department contract package with strict evidence-state result semantics.
 
 This is demo closure, not production closure.
 
@@ -116,7 +117,7 @@ Phase 1 validates the following chain:
 Developer -> Codex Master -> aegis-master-kit -> top-level departments -> department leaders -> aegis-router communication
 ```
 
-The Debate Department and Execution Department have demo-level closures.
+The Debate Department and Execution Department have demo-level closures. The Test Department currently has contract-only closure; Test runtime is still deferred.
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
 
@@ -314,6 +315,7 @@ router-integrated communication closure
 + Execution Test feedback/rework closure
 + Execution Debate handoff closure
 + Execution final causal-chain output closure
++ Test Department contract-only boundary and strict evidence-state semantics
 ```
 
 ## Production hardening not yet included
