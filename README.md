@@ -120,6 +120,7 @@ The current prototype has closed the following demo-level mechanisms:
     - `final_review -> master`.
 20. Final Review resource-policy gate with `blocked_resource_policy` precedence.
 21. Final Review output as recommendation to Master, not production release or global causal truth.
+22. Root model and reasoning-budget policy for Master and top-level department Leaders.
 
 This is demo closure, not production closure.
 
@@ -131,7 +132,7 @@ Phase 1 validates the following chain:
 Developer -> Codex Master -> aegis-master-kit -> top-level departments -> department leaders -> aegis-router communication
 ```
 
-The Debate, Execution, Test, and Final Review Departments have demo-level closures. The Test and Final Review closures are deterministic demo infrastructure only; they are not production Test or Final Review closure.
+The Debate, Execution, Test, and Final Review Departments have demo-level closures. The root model and reasoning-budget policy is locked for Master and top-level department Leaders in this phase. The Test and Final Review closures are deterministic demo infrastructure only; they are not production Test or Final Review closure.
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
 
@@ -355,6 +356,32 @@ Test -> Final Review -> Master
 
 The runtime is deterministic demo infrastructure. It does not call real external models, create root model/reasoning-budget policy files, perform production artifact review, or merge global causal truth.
 
+## Model and reasoning-budget policy
+
+Root policy file:
+
+```text
+MODEL_REASONING_BUDGET_POLICY.yaml
+```
+
+The current phase uses a locked static policy:
+
+```text
+Master                      -> gpt-5.5 / extra_high
+Debate Leader               -> gpt-5.5 / high
+Execution Leader            -> gpt-5.5 / high
+Test Leader                 -> gpt-5.5 / high
+Final Review Leader         -> gpt-5.5 / extra_high
+```
+
+Hard rules:
+
+- model and reasoning-budget selection is owned by the root policy;
+- agents must not self-select models or budgets;
+- fallback and silent downgrade are forbidden in the current phase;
+- Master dynamic adjustment is deferred;
+- module-internal worker/front/back profiles are deferred.
+
 ## Quick validation
 
 From repository root on Windows PowerShell.
@@ -462,6 +489,7 @@ router-integrated communication closure
 + Final Review resource-policy gate closure
 + Final Review object-consistency and evidence-sufficiency closure
 + Final Review result-to-Master closure
++ Root static model/reasoning-budget policy for Master and top-level Leaders
 ```
 
 ## Production hardening not yet included
@@ -483,7 +511,8 @@ Deferred production topics include:
 - real nested-Codex multi-agent process orchestration;
 - production Test Department runtime with real git checkout, CI, environment provisioning, and external artifact backend;
 - production Final Review runtime with real external model invocation, root resource-policy integration, and production artifact review backend;
-- root model and reasoning-budget policy file;
+- Master-driven dynamic model and reasoning-budget adjustment;
+- module-internal worker/front/back model profiles;
 - real Archive / Knowledge / Causal admission;
 - real global causal merge;
 - production branch protection;
