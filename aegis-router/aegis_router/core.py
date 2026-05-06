@@ -42,7 +42,7 @@ GOVERNANCE_MESSAGE_TYPES_BY_EDGE: dict[tuple[str, str], frozenset[str]] = {
     ("execution", "test"): frozenset({"implementation_candidate", "status_update"}),
     ("test", "final_review"): frozenset({"test_result", "status_update"}),
     ("final_review", "master"): frozenset({"final_review_result", "status_update"}),
-    ("test", "execution"): frozenset({"failure_feedback", "status_update"}),
+    ("test", "execution"): frozenset({"test_feedback", "failure_feedback", "status_update"}),
     ("execution", "debate"): frozenset({"adjudication_request", "status_update"}),
     ("debate", "execution"): frozenset({"adjudication_result", "status_update"}),
     ("execution", "master"): frozenset({"causal_fork_submission", "governance_blocker", "status_update"}),

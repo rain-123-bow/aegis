@@ -1,0 +1,108 @@
+{
+  "request_id": "execution-demo-001",
+  "sender": "master",
+  "objective": "Implement a demo feature by updating independent documentation and CLI fixture outputs.",
+  "scope": "Execution Department demo fixture project.",
+  "constraints": [
+    "contract-first execution",
+    "one Execution Group per independent subtask",
+    "Back Agent review is required",
+    "Test feedback must be processed whether pass or fail",
+    "final output remains causal_candidate"
+  ],
+  "applicable_contracts": [
+    "aegis-master-kit/organization/departments/execution/EXECUTION_DEPARTMENT_CONTRACT.md",
+    "aegis-master-kit/organization/departments/execution/EXECUTION_LEADER_CONTRACT.md",
+    "aegis-master-kit/organization/departments/execution/TASK_SPLIT_CONTRACT.md",
+    "aegis-master-kit/organization/departments/execution/TEST_FEEDBACK_AND_REWORK_CONTRACT.md"
+  ],
+  "success_criteria": [
+    "all independent group changes appear in the integration candidate",
+    "Back Agent accepts every group",
+    "simulated Test failure maps to original group and is reworked",
+    "simulated Test success releases active groups but preserves responsibility records",
+    "final report contains execution_causal_chain"
+  ],
+  "forbidden_actions": [
+    "remote push",
+    "main merge",
+    "release",
+    "global causal store mutation"
+  ],
+  "base_branch": "v0.1.0-alpha",
+  "evidence": [
+    {
+      "type": "contract",
+      "ref": "execution-demo-contract-fixture",
+      "relevance": "demo request defines deterministic execution closure"
+    }
+  ],
+  "candidate_plans": [
+    {
+      "plan_id": "P1",
+      "claim": "Use the direct split-integrate-test-feedback execution plan.",
+      "why": "Only one contract-valid plan remains after dominated alternatives are removed.",
+      "valid_under_contracts": true,
+      "dominated": false,
+      "strengths": ["traceable groups", "Back Agent review", "Test feedback mapping"],
+      "weaknesses": ["demo uses filesystem workspaces instead of production git branches"],
+      "evidence": ["execution-demo-plan-P1"],
+      "risk_if_wrong": "Runtime may look complete while production branch governance remains future work."
+    },
+    {
+      "plan_id": "P2",
+      "claim": "Let one worker directly edit all files without group split.",
+      "why": "This is simpler but loses group ownership.",
+      "valid_under_contracts": true,
+      "dominated": true,
+      "strengths": ["simple"],
+      "weaknesses": ["no independent responsibility mapping", "weak Test feedback attribution"],
+      "evidence": ["execution-demo-plan-P2"],
+      "risk_if_wrong": "Failures cannot be mapped to a responsible group."
+    }
+  ],
+  "subtasks": [
+    {
+      "subtask_id": "S1",
+      "responsibility": "Create the demo feature overview document.",
+      "owned_files_or_modules": ["docs/feature_overview.md"],
+      "input_contract": "documentation contract is local to docs/feature_overview.md",
+      "output_contract": "document explains the demo feature objective",
+      "dependencies": [],
+      "independence_reason": "The overview document has no dependency on the CLI fixture output.",
+      "local_success_criteria": ["file exists", "contains feature objective"],
+      "expected_branch": "execution/execution-demo-001/G1/docs-overview",
+      "merge_risk": "low",
+      "feedback_mapping_rule": "docs/feature_overview.md -> G1",
+      "file_changes": [
+        {
+          "path": "docs/feature_overview.md",
+          "content": "# Feature overview\n\nThis demo feature proves Execution Group ownership and Back Agent review.\n",
+          "change_type": "add",
+          "why_changed": "G1 owns the overview document."
+        }
+      ]
+    },
+    {
+      "subtask_id": "S2",
+      "responsibility": "Create the CLI fixture output document.",
+      "owned_files_or_modules": ["fixtures/cli_output.txt"],
+      "input_contract": "fixture output is independent after the demo output shape is fixed",
+      "output_contract": "fixture captures deterministic CLI output for demo validation",
+      "dependencies": ["S1"],
+      "independence_reason": "The fixture path is distinct; dependency only means S1 output shape is conceptually fixed before S2 starts.",
+      "local_success_criteria": ["file exists", "contains deterministic fixture output"],
+      "expected_branch": "execution/execution-demo-001/G2/cli-fixture",
+      "merge_risk": "low",
+      "feedback_mapping_rule": "fixtures/cli_output.txt and REWORK_NOTES.md -> G2",
+      "file_changes": [
+        {
+          "path": "fixtures/cli_output.txt",
+          "content": "run_id=execution-demo-001\nstatus=initial-candidate\n",
+          "change_type": "add",
+          "why_changed": "G2 owns the fixture output."
+        }
+      ]
+    }
+  ]
+}

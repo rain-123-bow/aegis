@@ -75,6 +75,7 @@ def _assert_no_business_store_mutation(router: Router) -> None:
         ("execution", "debate", "adjudication_request"),
         ("debate", "execution", "adjudication_result"),
         ("debate", "master", "debate_result"),
+        ("test", "execution", "test_feedback"),
         ("test", "execution", "failure_feedback"),
         ("test", "final_review", "test_result"),
         ("final_review", "master", "final_review_result"),
@@ -132,6 +133,14 @@ def test_contract_failure_feedback_requires_structural_evidence_reference(tmp_pa
 
     with pytest.raises(InvalidRequestError):
         router.send_message("test", "execution", "failure_feedback", payload)
+
+
+def test_contract_test_feedback_requires_structural_evidence_reference(tmp_path):
+    router = _top_level_router(tmp_path)
+    payload = _route_envelope("test", "execution", "test_feedback", path="")
+
+    with pytest.raises(InvalidRequestError):
+        router.send_message("test", "execution", "test_feedback", payload)
 
 
 def test_contract_invalid_governance_type_on_valid_edge_is_rejected(tmp_path):

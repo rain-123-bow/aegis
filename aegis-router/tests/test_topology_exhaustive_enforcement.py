@@ -35,7 +35,7 @@ GOVERNANCE_TYPES_BY_EDGE = {
     ("execution", "test"): {"implementation_candidate", "status_update"},
     ("test", "final_review"): {"test_result", "status_update"},
     ("final_review", "master"): {"final_review_result", "status_update"},
-    ("test", "execution"): {"failure_feedback", "status_update"},
+    ("test", "execution"): {"test_feedback", "failure_feedback", "status_update"},
     ("execution", "debate"): {"adjudication_request", "status_update"},
     ("debate", "execution"): {"adjudication_result", "status_update"},
     ("execution", "master"): {"causal_fork_submission", "governance_blocker", "status_update"},
