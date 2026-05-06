@@ -1,0 +1,43 @@
+schema_id: final_review_input_package_v1
+required:
+  - task_scope
+  - final_code_ref
+  - implementation_candidate_ref
+  - tested_candidate_ref
+  - execution_final_report_ref
+  - execution_causal_chain_ref
+  - test_final_report_ref
+  - test_plan_ref
+  - test_route_report_refs
+  - test_evidence_refs
+  - reproducibility_set_ref
+  - artifact_manifest_ref
+fields:
+  task_scope: string
+  final_code_ref: string
+  implementation_candidate_ref: string
+  tested_candidate_ref: string
+  execution_final_report_ref: string
+  execution_causal_chain_ref: string
+  test_final_report_ref: string
+  test_plan_ref: string
+  test_route_report_refs: list[string]
+  test_evidence_refs: list[string]
+  reproducibility_set_ref: string
+  artifact_manifest_ref: string
+  coverage_summary: object
+  known_limits: list[string]
+  uncovered_scope: list[string]
+  material_conditions: list[string]
+  assumptions: list[string]
+  debate_refs: list[string]
+  governance_blockers: list[string]
+  resource_policy_ref: string
+invalid_if:
+  - final_code_ref is empty
+  - implementation_candidate_ref is empty
+  - tested_candidate_ref is empty
+  - final_code_ref materially differs from tested_candidate_ref without explicit mapping
+  - test_evidence_refs is empty
+  - reproducibility_set_ref is empty
+  - artifact_manifest_ref is empty

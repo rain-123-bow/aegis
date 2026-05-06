@@ -1,0 +1,50 @@
+schema_id: final_review_result_v1
+required:
+  - final_review_result_id
+  - request_id
+  - decision
+  - target
+  - why
+  - reviewed_refs
+  - resource_policy
+  - causal_boundary
+  - recommended_master_action
+fields:
+  final_review_result_id: string
+  request_id: string
+  decision: accept_for_master|accept_for_master_with_scope_limit|reject_to_execution_via_master|request_test_expansion_via_master|request_more_evidence_via_master|governance_blocker_to_master|blocked_resource_policy
+  target: master
+  why: string
+  final_code_ref: string
+  implementation_candidate_ref: string
+  tested_candidate_ref: string
+  reviewed_refs: object
+  accepted_scope: list[string]
+  blocked_scope: list[string]
+  known_limits: list[string]
+  missing_evidence: list[string]
+  governance_blockers: list[string]
+  resource_policy: object
+  causal_boundary: string
+  recommended_master_action: string
+  status: final_review_recommendation
+invalid_if:
+  - target != master
+  - decision == accept_for_master and known_limits is not empty
+  - decision == accept_for_master and blocked_scope is not empty
+  - decision == accept_for_master and missing_evidence is not empty
+  - decision == accept_for_master and governance_blockers is not empty
+  - decision == accept_for_master and resource_policy.status != satisfied
+  - decision == accept_for_master and final_code_ref materially differs from tested_candidate_ref
+  - decision == accept_for_master_with_scope_limit and known_limits is empty and blocked_scope is empty
+  - decision == accept_for_master_with_scope_limit and resource_policy.status != satisfied
+  - decision != blocked_resource_policy and resource_policy.status in [missing, unavailable, insufficient, fallback_forbidden]
+  - decision == blocked_resource_policy and resource_policy.status == satisfied
+  - direct_execution_or_test_route_present
+  - claims_global_causal_truth
+notes:
+  - Resource policy failure has highest decision precedence.
+  - known_limits are limiting acceptance constraints.
+  - material_conditions are contextual applicability conditions and are not a substitute for known_limits.
+  - accept_for_master requires no limiting known_limits.
+  - normative examples must include all required fields.

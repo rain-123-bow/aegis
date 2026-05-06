@@ -1,0 +1,47 @@
+department_id: final_review
+version: v0.1
+scope: department_contract_package
+status: contract_only
+external_role_id: final_review
+external_boundary: Final Review Leader
+runtime_package: aegis-runtime/final_review
+contains_runtime_code: false
+model_policy_file_created_by_this_package: false
+contracts:
+  department: FINAL_REVIEW_DEPARTMENT_CONTRACT.md
+  leader: FINAL_REVIEW_LEADER_CONTRACT.md
+  input_package: FINAL_REVIEW_INPUT_PACKAGE_CONTRACT.md
+  whole_chain_consistency: WHOLE_CHAIN_CONSISTENCY_REVIEW_CONTRACT.md
+  result_handoff: FINAL_REVIEW_RESULT_AND_HANDOFF_CONTRACT.md
+  resource_policy_reference: RESOURCE_POLICY_REFERENCE_CONTRACT.md
+schemas:
+  - schemas/final_review_request.schema.yaml
+  - schemas/final_review_input_package.schema.yaml
+  - schemas/final_review_result.schema.yaml
+templates:
+  - templates/final_review_request.yaml
+  - templates/final_review_result.md
+tests:
+  - tests/FINAL_REVIEW_DEPARTMENT_CONSTRAINT_TESTS.md
+hard_rules:
+  - Use exactly one Final Review Leader.
+  - Do not create internal Final Review Workers.
+  - Do not parallelize final review across agents.
+  - Do not modify implementation code.
+  - Do not run or replace Test routes.
+  - Do not assign Execution Group rework.
+  - Do not send Final Review output directly to Execution or Test.
+  - Return only to Master under the current topology.
+  - Do not merge global causal truth.
+  - Do not hide uncovered scope or known limits.
+  - Do not accept when final_code_ref, implementation_candidate_ref, and tested_candidate_ref are inconsistent.
+  - Do not accept when required evidence is missing, stale, contradictory, or not reproducible.
+  - Resolve model and reasoning budget from the future root resource policy; do not hard-code concrete model names here.
+  - If required review resource policy cannot be satisfied, return blocked_resource_policy.
+  - Do not return accept_for_master with non-empty known_limits, blocked_scope, missing_evidence, or governance_blockers.
+  - Do not confuse material_conditions with limiting known_limits.
+  - Resource policy failure has highest precedence and must return blocked_resource_policy.
+  - Do not continue whole-chain review when final_review_leader resource policy is missing, unavailable, insufficient, or fallback is forbidden.
+  - Normative final_review_result examples must include all required fields.
+  - External boundary is Final Review Leader; route edges are allowed communication paths.
+  - Do not claim production Final Review runtime closure.
