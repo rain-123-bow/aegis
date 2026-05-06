@@ -11,7 +11,6 @@ It is demo closure work, not production closure.
 ```text
 aegis-runtime/final_review/
 runtime_test_reports/PHASE_16_FINAL_REVIEW_RUNTIME_DEMO_IMPLEMENTATION_REPORT.md
-PATCH_USAGE_FINAL_REVIEW_RUNTIME.md
 ```
 
 ## Boundary
