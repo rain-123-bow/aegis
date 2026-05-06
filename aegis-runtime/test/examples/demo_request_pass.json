@@ -1,0 +1,51 @@
+{
+  "back_review_summaries": [
+    "G1:back-review",
+    "G2:back-review"
+  ],
+  "base_branch": "v0.1.0-alpha",
+  "candidate_files": {
+    "docs/execution_overview.md": "# Execution overview\n\nExecution demo overview.\n",
+    "fixtures/execution_output.txt": "status=reworked-candidate\nfinal summary: ready for final review\n"
+  },
+  "changed_files": [
+    "docs/execution_overview.md",
+    "fixtures/execution_output.txt"
+  ],
+  "evidence_refs": [
+    "execution-final-candidate"
+  ],
+  "expected_test_focus": [
+    "overview exists",
+    "fixture output includes final summary"
+  ],
+  "final_code_ref": "branch:execution/router-demo/integration",
+  "forbidden_actions": [
+    "remote push",
+    "main merge",
+    "release",
+    "bypass_branch_protection"
+  ],
+  "implementation_candidate_ref": "artifact:implementation_candidate.json",
+  "integration_branch": "execution/router-demo/integration",
+  "known_risks": [
+    "fixture output may miss final summary"
+  ],
+  "local_test_evidence": [
+    "G1:local-test",
+    "G2:local-test"
+  ],
+  "objective": "Validate the integrated execution demo candidate.",
+  "ownership_map": {
+    "docs/execution_overview.md": "G1",
+    "fixtures/execution_output.txt": "G2"
+  },
+  "request_id": "test-runtime-demo-pass-001",
+  "requested_actions": [],
+  "scope": "docs and fixture output",
+  "source": "execution",
+  "success_criteria": [
+    "overview exists",
+    "fixture output includes final summary"
+  ]
+}
