@@ -113,6 +113,13 @@ The current prototype has closed the following demo-level mechanisms:
     - `test -> final_review`.
 15. Test result retention of reproducibility set and artifact manifest.
 16. Test result output as scoped evidence, not global causal truth.
+17. Final Review Department contract package with single-Leader whole-chain review semantics.
+18. Final Review Department deterministic runtime demo.
+19. Final Review router-integrated closure across:
+    - `test -> final_review`;
+    - `final_review -> master`.
+20. Final Review resource-policy gate with `blocked_resource_policy` precedence.
+21. Final Review output as recommendation to Master, not production release or global causal truth.
 
 This is demo closure, not production closure.
 
@@ -124,7 +131,7 @@ Phase 1 validates the following chain:
 Developer -> Codex Master -> aegis-master-kit -> top-level departments -> department leaders -> aegis-router communication
 ```
 
-The Debate, Execution, and Test Departments have demo-level closures. The Test Department closure is deterministic demo infrastructure only; it is not production Test closure.
+The Debate, Execution, Test, and Final Review Departments have demo-level closures. The Test and Final Review closures are deterministic demo infrastructure only; they are not production Test or Final Review closure.
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
 
@@ -303,6 +310,51 @@ Execution -> Test -> Final Review
 
 The runtime uses request-provided candidate snapshots and in-process route workers. It does not perform production git checkout, real CI, real environment provisioning, or nested-Codex Test Worker orchestration.
 
+## Final Review Department
+
+The Final Review Department is responsible for single-Leader whole-chain consistency review before results return to Master.
+
+External boundary:
+
+```text
+Test / Master <-> Final Review Leader
+```
+
+Internal demo structure:
+
+```text
+Final Review Leader
+  -> final review package intake from Test
+  -> resource-policy gate
+  -> single-subject whole-chain review
+  -> object consistency check
+  -> Execution/Test/Debate reference completeness check
+  -> evidence, scope, and governance review
+  -> final_review_result generation
+  -> final_review_result handoff to Master
+```
+
+Key rules:
+
+- The Final Review Leader is the only external department boundary.
+- Final Review has no internal workers in v0.1.
+- Parallel reviewer fanout is forbidden.
+- Final Review reviews evidence and references; it does not modify code or run tests.
+- Final Review may recommend Execution rework or Test expansion only through Master.
+- Resource-policy failure returns `blocked_resource_policy` before substantive review.
+- `accept_for_master` requires no `known_limits`, `blocked_scope`, or `missing_evidence`.
+- `accept_for_master_with_scope_limit` requires explicit accepted limits.
+- Final Review returns only to Master under the current topology.
+- Final Review output is a recommendation, not a release action or global causal truth.
+
+The current Final Review runtime demo validates:
+
+```text
+Test -> Final Review -> Master
+```
+
+The runtime is deterministic demo infrastructure. It does not call real external models, create root model/reasoning-budget policy files, perform production artifact review, or merge global causal truth.
+
 ## Quick validation
 
 From repository root on Windows PowerShell.
@@ -349,6 +401,21 @@ py -3.13 -m venv .venv-test-runtime
 .\.venv-test-runtime\Scripts\python.exe -m aegis_test_runtime.cli --request .\aegis-runtime\test\examples\demo_request_failure.json
 ```
 
+### Final Review runtime
+
+```powershell
+py -3.13 -m venv .venv-final-review-runtime
+.\.venv-final-review-runtime\Scripts\python.exe -m pip install -U pip
+.\.venv-final-review-runtime\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-final-review-runtime\Scripts\python.exe -m pip install -e ".\aegis-runtime\final_review[dev]"
+
+.\.venv-final-review-runtime\Scripts\python.exe -m pytest .\aegis-runtime\final_review
+.\.venv-final-review-runtime\Scripts\python.exe -m pytest .\aegis-runtime\final_review\tests\test_router_integrated_final_review_closure.py -vv
+.\.venv-final-review-runtime\Scripts\python.exe -m aegis_final_review_runtime.cli --request .\aegis-runtime\final_review\examples\demo_request_accept.json
+.\.venv-final-review-runtime\Scripts\python.exe -m aegis_final_review_runtime.cli --request .\aegis-runtime\final_review\examples\demo_request_blocked_resource.json
+.\.venv-final-review-runtime\Scripts\python.exe -m aegis_final_review_runtime.cli --request .\aegis-runtime\final_review\examples\demo_request_scope_limit.json
+```
+
 Before committing local changes:
 
 ```powershell
@@ -371,6 +438,8 @@ runtime_test_reports/PHASE_13_EXECUTION_RUNTIME_DEMO_IMPLEMENTATION_REPORT.md
 runtime_test_reports/PHASE_14_EXECUTION_DEBATE_HANDOFF_CLOSURE_REPORT.md
 runtime_test_reports/PHASE_15_TEST_RUNTIME_DEMO_IMPLEMENTATION_REPORT.md
 runtime_test_reports/PHASE_15_TEST_RUNTIME_DEMO_LOCAL_VERIFICATION_REPORT.md
+runtime_test_reports/PHASE_16_FINAL_REVIEW_RUNTIME_DEMO_IMPLEMENTATION_REPORT.md
+runtime_test_reports/PHASE_16_FINAL_REVIEW_RUNTIME_DEMO_LOCAL_VERIFICATION_REPORT.md
 ```
 
 Current demo closure point:
@@ -389,6 +458,10 @@ router-integrated communication closure
 + Test failed-feedback-to-Execution closure
 + Test passed-result-to-Final-Review closure
 + Test reproducibility-set and artifact-manifest retention closure
++ Final Review single-Leader whole-chain review closure
++ Final Review resource-policy gate closure
++ Final Review object-consistency and evidence-sufficiency closure
++ Final Review result-to-Master closure
 ```
 
 ## Production hardening not yet included
@@ -409,7 +482,8 @@ Deferred production topics include:
 - real git branch/worktree orchestration;
 - real nested-Codex multi-agent process orchestration;
 - production Test Department runtime with real git checkout, CI, environment provisioning, and external artifact backend;
-- real Final Review Department runtime;
+- production Final Review runtime with real external model invocation, root resource-policy integration, and production artifact review backend;
+- root model and reasoning-budget policy file;
 - real Archive / Knowledge / Causal admission;
 - real global causal merge;
 - production branch protection;
