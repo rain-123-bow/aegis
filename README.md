@@ -124,8 +124,23 @@ The current prototype has closed the following demo-level mechanisms:
 23. Master top-level runtime demo for policy-bound nested-Codex Leader creation.
 24. Real nested-Codex creation proof for Debate, Execution, Test, and Final Review Leaders.
 25. Phase 17 proof audit with sha256 for all four real nested-Codex Leader proof files.
+26. Debate Worker profile is now explicitly locked as `gpt-5.5 / high` with fallback and silent downgrade forbidden.
+27. Phase 18 real Debate Worker acceptance:
+    - Master creates only the Debate Leader for the acceptance run;
+    - Debate Leader creates one real nested-Codex Debate Worker per valid stance;
+    - Debate Workers are request-scoped, stance-bound, and department-local;
+    - each Worker preserves local causal state, route priority, and expand priority;
+    - Debate Leader preserves adjudicator causal state, route priority, and expand priority;
+    - causal equipoise is preserved and marked with `developer_decision_required: true`;
+    - final Debate output is delivered as a complete mailbucket causal package;
+    - strict proof audit fails on missing Worker proof;
+    - mailbucket proof copies are byte-identical to source proof files.
+28. Phase 18 Debate runtime test closure:
+    - targeted proof-audit tests passed;
+    - targeted mailbucket-package tests passed;
+    - full Debate runtime suite passed with 23 tests.
 
-This is demo closure, not production closure.
+This is demo/acceptance closure, not production closure.
 
 ## Phase-1 scope
 
@@ -135,7 +150,17 @@ Phase 1 validates the following chain:
 Developer -> Codex Master -> aegis-master-kit -> top-level departments -> department leaders -> aegis-router communication
 ```
 
-The Debate, Execution, Test, and Final Review Departments have demo-level closures. The root model and reasoning-budget policy is locked for Master and top-level department Leaders in this phase. Master can now bootstrap top-level Leaders through nested-Codex creation and audit their proof files. The Test and Final Review closures are deterministic demo infrastructure only; they are not production Test or Final Review closure.
+The Debate, Execution, Test, and Final Review Departments have demo-level closures. The root model and reasoning-budget policy is locked for Master and top-level department Leaders. Master can bootstrap top-level Leaders through nested-Codex creation and audit their proof files.
+
+Phase 18 adds strict Debate Worker acceptance below the Debate Leader:
+
+```text
+Master
+  -> Debate Leader
+      -> real nested-Codex Debate Worker per valid stance
+      -> complete Debate causal package
+  -> Master receives package through router/mailbucket boundary
+```
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
 
@@ -174,42 +199,71 @@ External boundary:
 Master / Execution <-> Debate Leader
 ```
 
-Internal demo structure:
+Internal shape in the current phase:
 
 ```text
 Debate Leader
-  -> temporary request-scoped workers
+  -> Debate Worker per valid stance
   -> leader-mediated round-robin broadcast
-  -> adjudication
-  -> explicit causal_chain
+  -> adjudication by causal strength
+  -> complete causal package
   -> cleanup
 ```
 
 Key rules:
 
 - The Debate Leader is the only external department boundary.
-- Debate Workers are temporary and request-scoped.
-- Each worker is bound to one stance.
-- Workers do not become top-level Master-route agents.
-- The internal default communication model is leader-mediated round-robin broadcast, not full-mesh chat.
+- Debate Workers are temporary, request-scoped, and stance-bound.
+- Master must not create Debate Workers directly.
+- Each valid stance maps to one Debate Worker.
+- Debate Workers do not become top-level Master-route agents.
+- Independent evidence-collector, scope-checker, researcher, or persistent expert roles are forbidden in the current Debate Department shape.
+- Each Worker owns the complete personal work for its stance: information collection inside allowed evidence boundaries, defense, attack, answers, scope narrowing, causal concession, and local causal-state maintenance.
+- Each Worker must preserve `worker_local_causal_state`, `route_priority`, and `expand_priority`.
+- The Worker local causal state has higher authority for later turns than compressed transcript context.
+- The Leader maintains `adjudicator_causal_state`, `route_priority`, and `expand_priority` during the run.
 - The Leader adjudicates by causal strength, not vote count.
-- The final report must contain `causal_chain`, not only a conclusion summary.
+- The Leader must stop endless debate when evidence, scope, risk, or no-new-causal-information conditions justify stopping.
+- Causal equipoise must not be collapsed into a fake winner. It must be preserved and handed to Master with `developer_decision_required: true`.
 - Debate output is a `causal_candidate`, not global causal truth.
 
-The current router-integrated Debate demo topic selects:
+Phase 18 strict real-worker acceptance adds:
 
 ```text
-S2 = leader-mediated round-robin broadcast
+Debate Worker -> gpt-5.5 / high
+fallback       -> forbidden
+silent downgrade -> forbidden
+medium worker  -> forbidden
 ```
 
-It rejects:
+Real acceptance requires:
+
+- one real nested-Codex Debate Worker per valid stance;
+- proof file for every Worker;
+- strict proof audit with missing proof as failure, not skip;
+- complete mailbucket package containing:
+  - `README.md`;
+  - `final_report.json`;
+  - `adjudicator_causal_state.json`;
+  - `worker_states/*.json`;
+  - `worker_proofs/*_proof.json`;
+  - `transcript_digest.json`;
+  - `evidence_manifest.json`.
+
+The current Phase 18 acceptance topic selected:
 
 ```text
-S1 = full-mesh asynchronous worker chat
-S3 = independent workers with final synthesis only
+S1 = strict real Worker acceptance
 ```
 
-The result is returned to Master through the router/mailbucket path with a persisted `causal_chain` containing nodes, edges, selected path, rejected paths, and invalidation entrypoints.
+It scoped, but did not select as the acceptance path:
+
+```text
+S2 = hybrid fallback for velocity
+S3 = defer real Worker acceptance
+```
+
+`developer_decision_required` was `false` for that run because the real Worker proof set existed and strict audit passed.
 
 ## Execution Department
 
@@ -372,6 +426,7 @@ The current phase uses a locked static policy:
 ```text
 Master                      -> gpt-5.5 / extra_high
 Debate Leader               -> gpt-5.5 / high
+Debate Worker               -> gpt-5.5 / high
 Execution Leader            -> gpt-5.5 / high
 Test Leader                 -> gpt-5.5 / high
 Final Review Leader         -> gpt-5.5 / extra_high
@@ -383,11 +438,12 @@ Hard rules:
 - agents must not self-select models or budgets;
 - fallback and silent downgrade are forbidden in the current phase;
 - Master dynamic adjustment is deferred;
-- module-internal worker/front/back profiles are deferred.
+- Execution Front/Back and Test Worker profiles are deferred;
+- Debate Worker is no longer deferred after Phase 18.
 
 ## Master top-level nested-Codex bootstrap
 
-The Master runtime can now create the four top-level department Leaders through nested-Codex and register them into the top-level Router domain:
+The Master runtime can create the four top-level department Leaders through nested-Codex and register them into the top-level Router domain:
 
 ```text
 Master
@@ -397,7 +453,7 @@ Master
   -> Final Review Leader
 ```
 
-The current Phase 17 proof verifies:
+Phase 17 proof verifies:
 
 - root policy parsing for Master and all top-level Leaders;
 - nested-Codex creation request construction with the locked model and reasoning budget;
@@ -406,24 +462,41 @@ The current Phase 17 proof verifies:
 - all 10 v1 top-level route checks, including `debate -> master`;
 - proof-file audit with sha256 for each real nested-Codex Leader proof.
 
-This is still demo closure. It does not create module-internal workers, does not enable Master dynamic model adjustment, and does not claim production Master runtime closure.
+Phase 18 Debate acceptance intentionally used a narrower top-level creation scope: Master created only the Debate Leader, and the Debate Leader created the request-scoped Debate Workers.
+
+This is still demo/acceptance closure. It does not claim production Master runtime closure or production nested-Codex process supervision.
 
 ## Quick validation
 
 From repository root on Windows PowerShell.
 
-### Debate runtime
+### Debate runtime and real-worker tooling
 
 ```powershell
-py -3.13 -m venv .venv-debate-runtime
-.\.venv-debate-runtime\Scripts\python.exe -m pip install -U pip
-.\.venv-debate-runtime\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
-.\.venv-debate-runtime\Scripts\python.exe -m pip install -e ".\aegis-runtime\debate[dev]"
+py -3.13 -m venv .venv-debate-real-worker
+.\.venv-debate-real-worker\Scripts\python.exe -m pip install -U pip
+.\.venv-debate-real-worker\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-debate-real-worker\Scripts\python.exe -m pip install -e ".\aegis-runtime\debate[dev]"
 
-.\.venv-debate-runtime\Scripts\python.exe -m pytest .\aegis-router
-.\.venv-debate-runtime\Scripts\python.exe -m pytest .\aegis-runtime\debate
-.\.venv-debate-runtime\Scripts\python.exe -m pytest .\aegis-runtime\debate\tests\test_router_integrated_debate_closure.py -vv
-.\.venv-debate-runtime\Scripts\python.exe -m aegis_debate_runtime.cli --request .\aegis-runtime\debate\examples\demo_request.json
+.\.venv-debate-real-worker\Scripts\python.exe -m pytest .\aegis-runtime\debate -vv
+```
+
+Strict real-worker utility flow:
+
+```powershell
+.\.venv-debate-real-worker\Scripts\python.exe -m aegis_debate_runtime.real_worker_cli prepare-requests `
+  --policy .\MODEL_REASONING_BUDGET_POLICY.yaml `
+  --request .\aegis-runtime\debate\examples\demo_request.json `
+  --output-dir .\.aegis-debate-real-worker
+
+# Real creation requires a concrete nested-Codex/Codex MCP create-agent surface.
+# If the available surface is a current-session MCP tool, create workers there
+# and then run strict proof audit after proof files are written.
+
+.\.venv-debate-real-worker\Scripts\python.exe -m aegis_debate_runtime.real_worker_cli audit-proofs `
+  --expected .\.aegis-debate-real-worker\expected_worker_proofs.json `
+  --proof-dir .\.aegis-debate-real-worker\worker_proofs `
+  --output .\.aegis-debate-real-worker\worker_proof_audit_summary.json
 ```
 
 ### Execution runtime
@@ -486,7 +559,7 @@ py -3.13 -m venv .venv-master-runtime
   --output-dir .\.aegis-master-runtime
 ```
 
-Real nested-Codex validation is performed through the available local MCP surface and audited through the proof files under `agents_test`. The stdio `validate-real` path remains available for a future standardized create-agent MCP tool name.
+Real nested-Codex validation is performed through the available local MCP surface and audited through proof files. The stdio `validate-real` path remains available for a future standardized create-agent MCP tool name.
 
 Before committing local changes:
 
@@ -515,15 +588,24 @@ runtime_test_reports/PHASE_16_FINAL_REVIEW_RUNTIME_DEMO_LOCAL_VERIFICATION_REPOR
 runtime_test_reports/PHASE_17_MASTER_NESTED_CODEX_TOP_LEVEL_RUNTIME_IMPLEMENTATION_REPORT.md
 runtime_test_reports/PHASE_17_MASTER_NESTED_CODEX_TOP_LEVEL_RUNTIME_LOCAL_VERIFICATION_REPORT.md
 runtime_test_reports/PHASE_17_MASTER_NESTED_CODEX_AGENT_PROOF_AUDIT_REPORT.md
+runtime_test_reports/PHASE_18_DEBATE_REAL_NESTED_CODEX_WORKER_PATCH_PLAN.md
+runtime_test_reports/PHASE_18_DEBATE_REAL_NESTED_CODEX_FULL_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_18_DEBATE_REAL_WORKER_POST_ACCEPTANCE_FIX_REPORT.md
 ```
 
-Current demo closure point:
+Current demo/acceptance closure point:
 
 ```text
 router-integrated communication closure
 + Debate temporary worker lifecycle closure
 + Debate Leader adjudication closure
 + Debate explicit causal-chain output closure
++ Debate Worker gpt-5.5/high model-policy closure
++ Debate Worker local causal-state and priority contract closure
++ Debate Leader adjudicator causal-state and priority contract closure
++ Debate real nested-Codex Worker proof-audit acceptance closure
++ Debate result mailbucket causal-package closure
++ Debate proof byte-identical mailbucket-copy closure
 + Execution group responsibility closure
 + Execution Test feedback/rework closure
 + Execution Debate handoff closure
@@ -537,7 +619,7 @@ router-integrated communication closure
 + Final Review resource-policy gate closure
 + Final Review object-consistency and evidence-sufficiency closure
 + Final Review result-to-Master closure
-+ Root static model/reasoning-budget policy for Master and top-level Leaders
++ Root static model/reasoning-budget policy for Master, top-level Leaders, and Debate Workers
 + Master nested-Codex top-level Leader creation closure
 + Master top-level Router registration and 10-edge communication closure
 + Four-Leader proof-file sha256 audit closure
@@ -561,11 +643,12 @@ Deferred production topics include:
 - real persistent nested-Codex session lifecycle;
 - standardized nested-Codex create-agent MCP tool name;
 - real git branch/worktree orchestration;
-- real nested-Codex multi-agent process orchestration below top-level Leaders;
+- real nested-Codex multi-agent process orchestration below non-Debate top-level Leaders;
+- production Debate Worker supervision, restart/recovery, and lifecycle management;
 - production Test Department runtime with real git checkout, CI, environment provisioning, and external artifact backend;
 - production Final Review runtime with real external model invocation, root resource-policy integration, and production artifact review backend;
 - Master-driven dynamic model and reasoning-budget adjustment;
-- module-internal worker/front/back model profiles;
+- Execution Front/Back and Test Worker model profiles;
 - real Archive / Knowledge / Causal admission;
 - real global causal merge;
 - production branch protection;
