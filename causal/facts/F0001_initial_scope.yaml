@@ -1,0 +1,21 @@
+id: F0001
+status: active
+confidence: high
+statement: >
+  The initial sandbox should stay small and deterministic because its primary purpose is Execution Department validation, not business feature richness.
+why: >
+  A small deterministic domain lets Execution Leader, Front Agent, Back Agent, Test Department, and Final Review attribute changes and failures without unrelated domain complexity.
+evidence:
+  - type: repository
+    ref: README.md
+    relevance: Sandbox purpose and current functional scope.
+scope: aegis-execution-sandbox initial Python project
+assumptions:
+  - The next Aegis phase tests execution responsibility, review, and traceability rather than product-market functionality.
+depends_on:
+  - K0001
+invalidates: []
+supersedes: []
+invalidation_conditions:
+  - A later phase requires complex multi-module or cross-language execution tests.
+updated_at: 2026-05-07
