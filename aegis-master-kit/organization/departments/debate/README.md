@@ -83,6 +83,11 @@ This is a hard department rule.
 - `DEBATE_RUN_LIFECYCLE.md` — request-scoped lifecycle.
 - `INTERNAL_TOPOLOGY_CONTRACT.md` — leader-mediated round-robin broadcast topology.
 - `ADJUDICATION_AND_CAUSAL_OUTPUT_RULES.md` — adjudication and final causal output requirements.
+
+- `DEBATE_WORKER_CAUSAL_STATE_CONTRACT.md` — worker-local causal state and route/expand priority contract.
+- `DEBATE_ADJUDICATOR_CAUSAL_STATE_CONTRACT.md` — Leader adjudicator causal state contract.
+- `DEBATE_RESULT_MAILBUCKET_PACKAGE_CONTRACT.md` — final Debate causal package delivery contract.
+
 - `CAUSAL_STRUCTURE_RATIONALE.md` — first-principles reason for preserving causal structure instead of conclusions.
 - `schemas/` — machine-readable contract shapes.
 - `templates/` — authoring templates.

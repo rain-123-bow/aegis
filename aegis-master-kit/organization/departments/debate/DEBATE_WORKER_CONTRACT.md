@@ -20,6 +20,62 @@ The worker must defend that stance in good faith.
 
 The worker may refine the stance, narrow its scope, or concede defeat, but it must not silently switch to a different stance.
 
+
+## 3.1 Worker model policy
+
+A Debate Worker uses:
+
+```text
+gpt-5.5 / high
+```
+
+Medium Debate Workers, fallback, and silent downgrade are forbidden in the current phase.
+
+## 3.2 First-principles stance defense
+
+A Debate Worker must argue from:
+
+- first principles;
+- real material conditions;
+- evidence provided or lawfully collected inside allowed evidence boundaries;
+- explicit assumptions;
+- contract consistency;
+- risk if wrong;
+- scope validity.
+
+The worker must not introduce extra assumptions to save its stance.
+
+It must not concede merely because another worker speaks forcefully.
+
+It must not continue defending a stance after its core causal support has failed.
+
+## 3.3 Local causal state and priority
+
+Each Debate Worker must maintain its own local causal state during the run.
+
+The worker's local causal state has higher authority for its later turns than compressed transcript context.
+
+At minimum it must preserve:
+
+```yaml
+worker_local_causal_state:
+  stance_id: ...
+  claim: ...
+  why: ...
+  evidence: ...
+  scope: ...
+  assumptions: ...
+  depends_on: ...
+  rejected_attacks: ...
+  accepted_weaknesses: ...
+  scope_narrowing_history: ...
+  invalidation_conditions: ...
+  route_priority: A|B|C|D|E|F
+  expand_priority: A|B|C|D
+```
+
+The worker must update this state after each meaningful attack, answer, concession, or scope narrowing.
+
 ## 4. Required output per turn
 
 Every worker turn must include:

@@ -59,6 +59,22 @@ profiles:
       Debate Leader owns adversarial reasoning orchestration and adjudication.
       Worker-level debate profiles are intentionally deferred.
 
+
+  debate_worker:
+    role_id: debate_worker
+    model: gpt-5.5
+    reasoning_budget: high
+    fallback_allowed: false
+    dynamic_adjustment_allowed: false
+    notes: >
+      Debate Workers are request-scoped, stance-bound internal agents created by
+      the Debate Leader. Each Debate Worker owns the complete personal work for
+      its assigned stance: information collection within allowed evidence
+      boundaries, stance defense, attacks on competing stances, answers,
+      scope narrowing, causal-state maintenance, and explicit concession when
+      defeated. Medium reasoning budget is forbidden for Debate Workers in the
+      current phase.
+
   execution_leader:
     role_id: execution_leader
     model: gpt-5.5
@@ -94,7 +110,6 @@ profiles:
       and must not compensate for resource shortage by creating parallel workers.
 
 deferred_profiles:
-  - debate_worker
   - execution_front_agent
   - execution_back_agent
   - test_worker

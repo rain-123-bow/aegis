@@ -2,6 +2,7 @@
 
 from .leader import DebateLeaderRuntime
 from .models import DebateRequest, DebateRunResult, FinalReport, StancePacket, WorkerTurn
+from .causal_state import AdjudicatorCausalState, PriorityEntry, WorkerLocalCausalState
 
 __all__ = [
     "DebateLeaderRuntime",
@@ -10,4 +11,7 @@ __all__ = [
     "FinalReport",
     "StancePacket",
     "WorkerTurn",
+    "AdjudicatorCausalState",
+    "PriorityEntry",
+    "WorkerLocalCausalState",
 ]

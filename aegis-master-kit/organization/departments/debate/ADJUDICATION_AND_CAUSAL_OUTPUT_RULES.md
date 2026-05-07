@@ -82,6 +82,36 @@ Use only as a delivery or handoff status after a `stop_and_escalate_to_master` d
 
 It must not replace `stop_and_escalate_to_master` in `decision`, because it does not explain why escalation was required.
 
+
+## 4.1 Equipoise handling
+
+If multiple positions remain causally balanced after admissible debate pressure, the Leader must not choose arbitrarily.
+
+The Leader must preserve all balanced positions with their valid scopes, risks, assumptions, and transition conditions.
+
+The final report must include:
+
+```yaml
+developer_decision_required: true
+developer_decision_reason: causal_equipoise|project_direction_choice|value_tradeoff_not_resolvable_by_evidence
+balanced_positions:
+  - stance_id: ...
+    claim: ...
+    valid_scope: ...
+    risk_if_wrong: ...
+    why_not_resolved_by_debate: ...
+```
+
+This is a Master handoff condition. Master must not hide the equipoise or collapse it into a fake single winner.
+
+## 4.2 Adjudicator priority state
+
+The final report must include the Leader's adjudicator causal state with route priority and expand priority.
+
+Route priority answers whether a fact entered the current adjudication. Expand priority answers how deeply the fact was unfolded.
+
+The purpose is to prevent long-debate semantic compression from erasing why the Leader stopped, selected, rejected, scoped, or escalated.
+
 ## 5. Selected position requirement
 
 If selecting one position, the Leader must explain:
@@ -188,6 +218,25 @@ causal_result:
 `required_measurements` or `test_request` is required when `decision` is `stop_and_request_test`.
 
 `escalation` is required when `decision` is `stop_and_escalate_to_master`.
+
+
+## 9.1 Complete Debate causal package
+
+A completed Debate run must emit a complete Debate causal package suitable for router mailbucket delivery to Master.
+
+The package must contain:
+
+```text
+README.md
+final_report.json
+adjudicator_causal_state.json
+worker_states/<worker_id>.json
+worker_proofs/<worker_id>_proof.json
+transcript_digest.json
+evidence_manifest.json
+```
+
+The router must not interpret these files. It only carries the route envelope and mailbucket path. Master reads the package and decides whether to merge, request tests, escalate to developer, or reject.
 
 ## 10. No bare conclusion rule
 

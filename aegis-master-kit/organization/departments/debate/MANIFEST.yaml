@@ -11,6 +11,11 @@ files:
   - DEBATE_RUN_LIFECYCLE.md
   - INTERNAL_TOPOLOGY_CONTRACT.md
   - ADJUDICATION_AND_CAUSAL_OUTPUT_RULES.md
+
+  - DEBATE_WORKER_CAUSAL_STATE_CONTRACT.md
+  - DEBATE_ADJUDICATOR_CAUSAL_STATE_CONTRACT.md
+  - DEBATE_RESULT_MAILBUCKET_PACKAGE_CONTRACT.md
+
   - CAUSAL_STRUCTURE_RATIONALE.md
   - schemas/debate_request.schema.yaml
   - schemas/stance_packet.schema.yaml
@@ -30,3 +35,8 @@ key_invariants:
   - Final output must preserve causal structure, not only conclusions.
   - Worker resources are released after final report generation.
   - Debate output is a causal candidate, not automatic global causal truth.
+
+  - Debate Worker profile is gpt-5.5/high in the current phase.
+  - Real nested-Codex Worker proof is required for acceptance closure.
+  - Worker-local causal state and Leader adjudicator causal state must be retained.
+  - Causal equipoise requires developer decision instead of arbitrary selection.

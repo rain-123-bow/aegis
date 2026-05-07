@@ -50,6 +50,25 @@ Runtime implementations may use nested-codex or equivalent mechanisms to create 
 
 The Leader must record worker ids, stance ids, and lifecycle status.
 
+
+### 5.1 Real nested-Codex Worker creation for acceptance
+
+For real acceptance, the Leader must create one real nested-Codex Debate Worker for each valid stance.
+
+The Leader must record for each worker:
+
+- run id;
+- worker id;
+- stance id;
+- model and reasoning budget requested from policy;
+- creation mechanism;
+- proof file path;
+- lifecycle status.
+
+The Leader must not ask the Master to create department-internal workers. Master sees the Debate Leader only. Worker creation is a Debate Leader responsibility.
+
+If a required real worker cannot be created, the run is blocked and no in-process worker may be used as fallback.
+
 ## 6. Internal topology creation
 
 The Leader creates a temporary department-local debate topology for the request.
@@ -97,6 +116,39 @@ The Leader must distinguish final decision labels:
 - `stop_and_request_test`: the decisive missing evidence is measurable by a concrete test, benchmark, experiment, log capture, or validation plan; `next_action.target` must be `test`.
 - `stop_and_escalate_to_master`: the remaining issue affects a Master-owned governance or project-direction boundary; `next_action.target` must be `master`.
 - `escalated`: handoff status only, not a final adjudication decision label.
+
+
+### 8.1 Adjudicator causal state
+
+The Leader must maintain an adjudicator causal state during the debate, not only after it ends.
+
+The state must track:
+
+- current selected candidate if any;
+- rejected candidates and why they are weaker;
+- scoped candidates and their valid scopes;
+- unresolved conflicts;
+- decisive evidence;
+- missing evidence;
+- risk ranking;
+- route priority;
+- expand priority;
+- stop reason.
+
+The Leader uses this state to prevent endless debate and to ensure that final adjudication is causally traceable.
+
+### 8.2 Equipoise and developer decision boundary
+
+If multiple positions remain causally balanced and cannot be resolved by evidence, contract, scope, or risk dominance, the Leader must not randomly choose one.
+
+The final report must set:
+
+```yaml
+developer_decision_required: true
+reason: causal_equipoise|project_direction_choice|value_tradeoff_not_resolvable_by_evidence
+```
+
+Master must hand such cases to the developer for direction selection.
 
 ## 9. Final causal report
 

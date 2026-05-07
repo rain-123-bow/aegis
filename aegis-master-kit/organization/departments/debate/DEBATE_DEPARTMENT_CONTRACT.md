@@ -61,6 +61,60 @@ The Department output must preserve a complete causal structure:
 - what condition changes would invalidate the decision;
 - what action should be taken next.
 
+
+### 3.8 Two-layer Debate shape
+
+The Debate Department has exactly two internal layers in the current phase:
+
+```text
+Debate Leader
+  -> Debate Worker per valid stance
+```
+
+The following role splits are forbidden unless a later contract version explicitly adds them:
+
+- independent evidence collector agent;
+- independent scope checker agent;
+- independent researcher agent;
+- persistent expert persona;
+- any worker not bound to exactly one stance.
+
+Information collection, defense, attack, answer, scope narrowing, and concession are duties of the stance-bound Debate Worker itself.
+
+### 3.9 Model and reasoning-budget policy
+
+All active Debate Department reasoning agents use the high profile in the current phase:
+
+```text
+Debate Leader  -> gpt-5.5 / high
+Debate Worker  -> gpt-5.5 / high
+```
+
+Medium Debate Workers, fallback, and silent downgrade are forbidden.
+
+### 3.10 Real nested-Codex worker acceptance
+
+In-process demo workers may be used only for deterministic unit tests.
+
+A Debate run cannot be accepted as real nested-Codex closure unless the Debate Leader creates real nested-Codex Debate Workers for every valid stance and each worker leaves an auditable proof file.
+
+If any required worker cannot be created, the Debate Leader must fail fast for that run. It must not silently replace the failed real worker with an in-process demo worker.
+
+### 3.11 Complete causal retention
+
+Every completed Debate run must preserve:
+
+- each worker's local causal state;
+- each worker's route priority and expand priority;
+- the adjudicator causal state maintained by the Debate Leader;
+- selected, rejected, scoped, and unresolved positions;
+- attacks, concessions, and scope-narrowing history;
+- evidence references and evidence gaps;
+- invalidation conditions;
+- developer decision requirement when causal equipoise remains.
+
+The final result must be delivered as a causal package, not a bare conclusion.
+
 ## 4. Accepted request classes
 
 The Department may accept a request when at least one condition is true:

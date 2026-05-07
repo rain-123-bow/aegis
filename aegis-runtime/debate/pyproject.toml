@@ -14,10 +14,12 @@ dev = [
 
 [project.scripts]
 aegis-debate-demo = "aegis_debate_runtime.cli:main"
+aegis-debate-real = "aegis_debate_runtime.real_worker_cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "contract: runtime contract verification tests for Debate Department demo behavior",
+    "real_mcp: strict real nested-codex Debate Worker proof audit tests",
 ]
