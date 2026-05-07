@@ -1,0 +1,11 @@
+id: K0001
+status: active
+scope: aegis-execution-sandbox
+statement: >
+  The sandbox is a Python package used as a safe target repository for Aegis Execution Department tests.
+evidence:
+  - type: repository
+    ref: README.md
+    relevance: Repository purpose statement.
+version_context: main-initialization
+updated_at: 2026-05-07
