@@ -84,7 +84,34 @@ profiles:
     notes: >
       Execution Leader owns planning, task split, group supervision,
       integration, test feedback routing, and execution causal reporting.
-      Front/Back agent profiles are intentionally deferred.
+      Execution Front and Back agent profiles are explicitly defined starting
+      in Phase 19B.
+
+  execution_front_agent:
+    role_id: execution_front_agent
+    model: gpt-5.5
+    reasoning_budget: high
+    fallback_allowed: false
+    dynamic_adjustment_allowed: false
+    notes: >
+      Execution Front Agents are request-scoped group-internal agents created
+      by the Execution Leader. A Front Agent implements its assigned group task,
+      runs local validation when available, preserves touched files and evidence,
+      and emits a group causal fork. Medium reasoning budget is forbidden for
+      Execution Front Agents in the current phase.
+
+  execution_back_agent:
+    role_id: execution_back_agent
+    model: gpt-5.5
+    reasoning_budget: high
+    fallback_allowed: false
+    dynamic_adjustment_allowed: false
+    notes: >
+      Execution Back Agents are request-scoped group-internal agents created
+      by the Execution Leader. A Back Agent independently reviews Front output,
+      local tests, diffs, contract compliance, and first-principles suitability.
+      Back Agents have blocking review authority. Medium reasoning budget is
+      forbidden for Execution Back Agents in the current phase.
 
   test_leader:
     role_id: test_leader
@@ -110,8 +137,6 @@ profiles:
       and must not compensate for resource shortage by creating parallel workers.
 
 deferred_profiles:
-  - execution_front_agent
-  - execution_back_agent
   - test_worker
 
 audit_requirements:

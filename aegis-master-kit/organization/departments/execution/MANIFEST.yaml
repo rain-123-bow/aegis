@@ -19,6 +19,8 @@ contracts:
   causal_chain: EXECUTION_CAUSAL_CHAIN_RULES.md
   execution_git_topology: EXECUTION_GIT_TOPOLOGY_CLOSURE_CONTRACT.md
   phase19a_acceptance: EXECUTION_19A_ACCEPTANCE_CONTRACT.md
+  real_front_back_agents: EXECUTION_REAL_FRONT_BACK_AGENT_CONTRACT.md
+  phase19b_acceptance: EXECUTION_19B_ACCEPTANCE_CONTRACT.md
 schemas:
   - schemas/execution_request.schema.yaml
   - schemas/subtask_split.schema.yaml
@@ -50,3 +52,8 @@ phase19a_notes:
   - Phase 19A validates real local git branch/workspace/integration topology.
   - Phase 19A does not claim real Front/Back Codex agent closure.
   - Remote push, PR, merge, release, and production lifecycle remain forbidden.
+
+phase19b_notes:
+  - Phase 19B validates real nested-Codex Execution Front/Back agent acceptance.
+  - Phase 19B reuses Phase 19A local git topology and sandbox repository boundaries.
+  - Phase 19B does not claim production branch governance, remote push, PR, release, or global causal merge.
