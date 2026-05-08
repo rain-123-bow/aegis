@@ -84,7 +84,7 @@ Runtime code must not be moved into `aegis-master-kit` unless the project intent
 
 Current branch: `v0.1.0-alpha`.
 
-The current prototype has closed the following demo-level mechanisms:
+The current prototype has closed the following demo/acceptance mechanisms:
 
 1. Top-level Master communication topology.
 2. Router-enforced directed communication.
@@ -124,7 +124,7 @@ The current prototype has closed the following demo-level mechanisms:
 23. Master top-level runtime demo for policy-bound nested-Codex Leader creation.
 24. Real nested-Codex creation proof for Debate, Execution, Test, and Final Review Leaders.
 25. Phase 17 proof audit with sha256 for all four real nested-Codex Leader proof files.
-26. Debate Worker profile is now explicitly locked as `gpt-5.5 / high` with fallback and silent downgrade forbidden.
+26. Debate Worker profile is explicitly locked as `gpt-5.5 / high` with fallback and silent downgrade forbidden.
 27. Phase 18 real Debate Worker acceptance:
     - Master creates only the Debate Leader for the acceptance run;
     - Debate Leader creates one real nested-Codex Debate Worker per valid stance;
@@ -151,6 +151,27 @@ The current prototype has closed the following demo-level mechanisms:
 30. Phase 19A Execution runtime test closure:
     - targeted git-topology tests passed;
     - full Execution runtime suite passed;
+    - sandbox integration-branch pytest passed.
+31. Execution Front and Back Agent profiles are explicitly locked as `gpt-5.5 / high` with fallback and silent downgrade forbidden.
+32. Phase 19B real Execution Front/Back Agent acceptance:
+    - Master creates only the Execution Leader;
+    - Execution Leader creates one real Front Agent and one real Back Agent per accepted Execution Group;
+    - Front/Back Agents are request-scoped, group-internal, and not top-level route agents;
+    - every Front/Back Agent leaves proof and output files;
+    - missing proof or missing output fails acceptance;
+    - Front output status is strictly `front_output_candidate`;
+    - Back review status is strictly `review_candidate`;
+    - Back Agents independently review Front output and have blocking authority;
+    - Leader integrates accepted Front/Back-reviewed group branches into a local integration branch;
+    - final handoff to Test remains a local candidate and not production merge.
+33. Phase 19B evidence clean-fix closure:
+    - Leader integration evidence is consistent with the final report;
+    - no `no integration` residue remains in Leader evidence;
+    - no `completed` status residue remains in Front/Back output evidence;
+    - proof audit passed for 4 agents;
+    - output audit passed for 4 agents;
+    - targeted Phase 19B tests passed;
+    - full Execution runtime tests passed;
     - sandbox integration-branch pytest passed.
 
 This is demo/acceptance closure, not production closure.
@@ -185,6 +206,19 @@ Master
       -> Leader-owned integration branch
       -> Test handoff package
   -> Test receives integration branch information
+```
+
+Phase 19B adds real Execution Front/Back Agent acceptance below the Execution Leader:
+
+```text
+Master
+  -> Execution Leader
+      -> Execution Group per accepted subtask
+          -> real nested-Codex Front Agent
+          -> real nested-Codex Back Agent
+      -> strict proof/output audit
+      -> Leader-owned local integration branch
+      -> Test handoff package
 ```
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
@@ -252,16 +286,7 @@ Key rules:
 - Causal equipoise must not be collapsed into a fake winner. It must be preserved and handed to Master with `developer_decision_required: true`.
 - Debate output is a `causal_candidate`, not global causal truth.
 
-Phase 18 strict real-worker acceptance adds:
-
-```text
-Debate Worker -> gpt-5.5 / high
-fallback       -> forbidden
-silent downgrade -> forbidden
-medium worker  -> forbidden
-```
-
-Real acceptance requires:
+Real Debate Worker acceptance requires:
 
 - one real nested-Codex Debate Worker per valid stance;
 - proof file for every Worker;
@@ -274,21 +299,6 @@ Real acceptance requires:
   - `worker_proofs/*_proof.json`;
   - `transcript_digest.json`;
   - `evidence_manifest.json`.
-
-The current Phase 18 acceptance topic selected:
-
-```text
-S1 = strict real Worker acceptance
-```
-
-It scoped, but did not select as the acceptance path:
-
-```text
-S2 = hybrid fallback for velocity
-S3 = defer real Worker acceptance
-```
-
-`developer_decision_required` was `false` for that run because the real Worker proof set existed and strict audit passed.
 
 ## Execution Department
 
@@ -325,7 +335,9 @@ Key rules:
 - A task may be split only when independence, contracts, ownership, local validation, and feedback mapping are objectively justified.
 - Each independent subtask maps to one Execution Group.
 - Each Execution Group has a Front Agent and a Back Agent.
-- The Back Agent has blocking review authority.
+- Front Agents implement their assigned group task, preserve touched files and evidence, run local validation when available, and emit a group causal fork.
+- Back Agents independently review Front output, local tests, diffs, contract compliance, and first-principles suitability.
+- Back Agents have blocking review authority.
 - Group branches/workspaces must remain traceable to task, subtask, group, branch, and touched files.
 - The Leader owns integration, not the individual groups.
 - Test feedback is mandatory whether it passes or fails.
@@ -378,25 +390,61 @@ Phase 19A must not be labeled:
 accepted_real_execution_agent_closure
 ```
 
-Phase 19A accepted the local topology run:
-
-```text
-base_branch: main
-integration_branch: aegis/phase19a/integration-001
-group_branches:
-  - aegis/phase19a/G1-doc-evidence
-  - aegis/phase19a/G2-test-evidence
-changed_files:
-  - docs/phase19a_execution_topology_note.md
-  - tests/test_phase19a_sandbox_integration.py
-```
-
 Known limits:
 
 - Front/Back agents are deterministic or deferred in Phase 19A.
 - The integration branch is a local Test handoff candidate only.
 - No remote push, PR, remote merge, release, or production sign-off is performed.
-- Real request-scoped Front/Back Codex agent acceptance is deferred to a later phase.
+- Real request-scoped Front/Back Codex agent acceptance is deferred to Phase 19B.
+
+### Phase 19B real Front/Back Agent acceptance
+
+Phase 19B validates real request-scoped Front/Back agent acceptance below the Execution Leader.
+
+The target business-code repository remains:
+
+```text
+rain-123-bow/aegis-execution-sandbox
+```
+
+Phase 19B proves:
+
+- Execution Front Agent profile is `gpt-5.5 / high`;
+- Execution Back Agent profile is `gpt-5.5 / high`;
+- Front/Back profiles are no longer deferred;
+- Execution Leader creates real Front/Back agents for each accepted Execution Group;
+- every Front/Back agent leaves an auditable proof file;
+- every Front/Back agent leaves an auditable output file;
+- Front output must use `status: front_output_candidate`;
+- Back review output must use `status: review_candidate`;
+- output audit rejects `completed` as an invalid Front/Back output status;
+- Back Agents review Front outputs and have blocking authority;
+- Leader-owned integration evidence is aligned with the final execution candidate;
+- the final integration branch remains a local Test handoff candidate.
+
+Phase 19B acceptance label:
+
+```text
+accepted_real_execution_front_back_agent_closure
+```
+
+Phase 19B must not be labeled:
+
+```text
+production_execution_lifecycle_closure
+```
+
+Known limits:
+
+- no persistent production agent supervision;
+- no restart/recovery lifecycle;
+- no remote branch governance;
+- no remote push;
+- no PR;
+- no remote merge;
+- no release;
+- no production sign-off;
+- no global causal merge.
 
 ## Test Department
 
@@ -504,6 +552,8 @@ Master                      -> gpt-5.5 / extra_high
 Debate Leader               -> gpt-5.5 / high
 Debate Worker               -> gpt-5.5 / high
 Execution Leader            -> gpt-5.5 / high
+Execution Front Agent       -> gpt-5.5 / high
+Execution Back Agent        -> gpt-5.5 / high
 Test Leader                 -> gpt-5.5 / high
 Final Review Leader         -> gpt-5.5 / extra_high
 ```
@@ -514,8 +564,9 @@ Hard rules:
 - agents must not self-select models or budgets;
 - fallback and silent downgrade are forbidden in the current phase;
 - Master dynamic adjustment is deferred;
-- Execution Front/Back and Test Worker profiles are deferred;
-- Debate Worker is no longer deferred after Phase 18.
+- Test Worker profile is deferred;
+- Debate Worker is no longer deferred after Phase 18;
+- Execution Front/Back profiles are no longer deferred after Phase 19B.
 
 ## Master top-level nested-Codex bootstrap
 
@@ -541,6 +592,8 @@ Phase 17 proof verifies:
 Phase 18 Debate acceptance intentionally used a narrower top-level creation scope: Master created only the Debate Leader, and the Debate Leader created the request-scoped Debate Workers.
 
 Phase 19A Execution acceptance uses the Execution Leader boundary to operate on a separate local sandbox repository and create local group/integration branches. It does not create real Front/Back Codex agents.
+
+Phase 19B Execution acceptance uses the Execution Leader boundary to create real request-scoped Front/Back Codex agents for sandbox Execution Groups. It still does not claim production branch governance or production agent lifecycle supervision.
 
 This is still demo/acceptance closure. It does not claim production Master runtime closure or production nested-Codex process supervision.
 
@@ -577,31 +630,54 @@ Strict real-worker utility flow:
   --output .\.aegis-debate-real-worker\worker_proof_audit_summary.json
 ```
 
-### Execution runtime and Phase 19A git topology
+### Execution runtime, Phase 19A, and Phase 19B
 
 ```powershell
-py -3.13 -m venv .venv-execution-phase19a
-.\.venv-execution-phase19a\Scripts\python.exe -m pip install -U pip
-.\.venv-execution-phase19a\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
-.\.venv-execution-phase19a\Scripts\python.exe -m pip install -e ".\aegis-runtime\execution[dev]"
+py -3.13 -m venv .venv-execution-phase19b
+.\.venv-execution-phase19b\Scripts\python.exe -m pip install -U pip
+.\.venv-execution-phase19b\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-execution-phase19b\Scripts\python.exe -m pip install -e ".\aegis-runtime\execution[dev]"
 
-.\.venv-execution-phase19a\Scripts\python.exe -m pytest .\aegis-runtime\execution\tests\test_execution_git_topology_closure.py -vv
-.\.venv-execution-phase19a\Scripts\python.exe -m pytest .\aegis-runtime\execution -vv
+.\.venv-execution-phase19b\Scripts\python.exe -m pytest .\aegis-runtime\execution\tests\test_execution_git_topology_closure.py -vv
+.\.venv-execution-phase19b\Scripts\python.exe -m pytest .\aegis-runtime\execution\tests\test_execution_real_front_back_agent_acceptance.py -vv
+.\.venv-execution-phase19b\Scripts\python.exe -m pytest .\aegis-runtime\execution -vv
 ```
 
-Phase 19A local sandbox run requires a clean local clone of:
+Phase 19A/19B sandbox runs require a clean local clone of:
 
 ```text
 C:\Users\playm\Documents\self-git\aegis-execution-sandbox
 git@github.com:rain-123-bow/aegis-execution-sandbox.git
 ```
 
-Example CLI shape:
+Phase 19A local git topology CLI shape:
 
 ```powershell
-.\.venv-execution-phase19a\Scripts\python.exe -m aegis_execution_runtime.git_topology_cli run `
+.\.venv-execution-phase19b\Scripts\python.exe -m aegis_execution_runtime.git_topology_cli run `
   --request .\.aegis-phase19a-execution-test\inputs\phase19a_execution_git_topology_request.json `
   --output-dir .\.aegis-phase19a-execution-test\outputs
+```
+
+Phase 19B real Front/Back request/audit CLI shape:
+
+```powershell
+.\.venv-execution-phase19b\Scripts\python.exe -m aegis_execution_runtime.real_agent_cli prepare-requests `
+  --policy .\MODEL_REASONING_BUDGET_POLICY.yaml `
+  --execution-package .\.aegis-phase19b-execution-test\inputs\phase19b_execution_package.json `
+  --run-id phase19b-execution-real-agents-001 `
+  --output-dir .\.aegis-phase19b-execution-test\prepared `
+  --proof-dir .\.aegis-phase19b-execution-test\agent_proofs `
+  --agent-output-dir .\.aegis-phase19b-execution-test\agent_outputs
+
+.\.venv-execution-phase19b\Scripts\python.exe -m aegis_execution_runtime.real_agent_cli audit-proofs `
+  --expected .\.aegis-phase19b-execution-test\prepared\expected_execution_agent_proofs.json `
+  --proof-dir .\.aegis-phase19b-execution-test\agent_proofs `
+  --output .\.aegis-phase19b-execution-test\agent_proof_audit_summary.json
+
+.\.venv-execution-phase19b\Scripts\python.exe -m aegis_execution_runtime.real_agent_cli audit-outputs `
+  --expected .\.aegis-phase19b-execution-test\prepared\expected_execution_agent_outputs.json `
+  --agent-output-dir .\.aegis-phase19b-execution-test\agent_outputs `
+  --output .\.aegis-phase19b-execution-test\agent_output_audit_summary.json
 ```
 
 ### Test runtime
@@ -684,6 +760,10 @@ runtime_test_reports/PHASE_18_DEBATE_REAL_NESTED_CODEX_FULL_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_18_DEBATE_REAL_WORKER_POST_ACCEPTANCE_FIX_REPORT.md
 runtime_test_reports/PHASE_19A_EXECUTION_GIT_TOPOLOGY_PATCH_PLAN.md
 runtime_test_reports/PHASE_19A_EXECUTION_GIT_TOPOLOGY_FULL_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_19B_EXECUTION_REAL_FRONT_BACK_AGENT_PATCH_PLAN.md
+runtime_test_reports/PHASE_19B_EXECUTION_REAL_FRONT_BACK_AGENT_FULL_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_19B_EXECUTION_REAL_FRONT_BACK_AGENT_POST_ACCEPTANCE_FIX_REPORT.md
+runtime_test_reports/PHASE_19B_EXECUTION_REAL_FRONT_BACK_AGENT_EVIDENCE_CLEAN_FIX_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -707,6 +787,11 @@ router-integrated communication closure
 + Execution Phase 19A local group-branch topology closure
 + Execution Phase 19A Leader-owned integration-branch closure
 + Execution Phase 19A Test handoff package closure
++ Execution Front/Back gpt-5.5/high model-policy closure
++ Execution Phase 19B real Front/Back proof-audit closure
++ Execution Phase 19B real Front/Back output-audit closure
++ Execution Phase 19B Leader-owned integration evidence closure
++ Execution Phase 19B sandbox pytest closure
 + Test Department strict evidence-state semantics closure
 + Test deterministic route-worker evidence closure
 + Test failed-feedback-to-Execution closure
@@ -716,7 +801,7 @@ router-integrated communication closure
 + Final Review resource-policy gate closure
 + Final Review object-consistency and evidence-sufficiency closure
 + Final Review result-to-Master closure
-+ Root static model/reasoning-budget policy for Master, top-level Leaders, and Debate Workers
++ Root static model/reasoning-budget policy for Master, top-level Leaders, Debate Workers, and Execution Front/Back agents
 + Master nested-Codex top-level Leader creation closure
 + Master top-level Router registration and 10-edge communication closure
 + Four-Leader proof-file sha256 audit closure
@@ -739,15 +824,14 @@ Deferred production topics include:
 - JSON store locking;
 - real persistent nested-Codex session lifecycle;
 - standardized nested-Codex create-agent MCP tool name;
-- real git branch/worktree orchestration beyond local Phase 19A topology validation;
-- real nested-Codex multi-agent process orchestration below non-Debate top-level Leaders;
+- real git branch/worktree orchestration beyond local Phase 19A/19B topology validation;
+- production real Front/Back worker supervision, restart/recovery, and lifecycle management;
+- remote Execution branch governance;
 - production Debate Worker supervision, restart/recovery, and lifecycle management;
-- real Execution Front/Back Codex agent acceptance;
-- production Execution branch/worktree supervision, rollback, and remote branch governance;
 - production Test Department runtime with real git checkout, CI, environment provisioning, and external artifact backend;
 - production Final Review runtime with real external model invocation, root resource-policy integration, and production artifact review backend;
 - Master-driven dynamic model and reasoning-budget adjustment;
-- Execution Front/Back and Test Worker model profiles;
+- Test Worker model profile;
 - real Archive / Knowledge / Causal admission;
 - real global causal merge;
 - production branch protection;
