@@ -139,6 +139,19 @@ The current prototype has closed the following demo-level mechanisms:
     - targeted proof-audit tests passed;
     - targeted mailbucket-package tests passed;
     - full Debate runtime suite passed with 23 tests.
+29. Phase 19A Execution git topology acceptance:
+    - the target business-code repo is `rain-123-bow/aegis-execution-sandbox`;
+    - Execution Leader validates a real local sandbox clone;
+    - Execution Leader validates split boundaries before group branch creation;
+    - one local group branch is created per accepted independent subtask;
+    - Leader integrates group branches into a Leader-owned integration branch;
+    - a Test handoff package is produced with integration branch, commit, changed files, and group responsibility mapping;
+    - no remote push, PR, production merge, release, or sign-off is performed;
+    - this does not claim real Front/Back Codex agent closure.
+30. Phase 19A Execution runtime test closure:
+    - targeted git-topology tests passed;
+    - full Execution runtime suite passed;
+    - sandbox integration-branch pytest passed.
 
 This is demo/acceptance closure, not production closure.
 
@@ -160,6 +173,18 @@ Master
       -> real nested-Codex Debate Worker per valid stance
       -> complete Debate causal package
   -> Master receives package through router/mailbucket boundary
+```
+
+Phase 19A adds local Execution git-topology acceptance below the Execution Leader:
+
+```text
+Master
+  -> Execution Leader
+      -> target sandbox local clone
+      -> one local group branch per accepted subtask
+      -> Leader-owned integration branch
+      -> Test handoff package
+  -> Test receives integration branch information
 ```
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
@@ -275,7 +300,7 @@ External boundary:
 Master / Debate / Test <-> Execution Leader
 ```
 
-Internal demo structure:
+Internal structure:
 
 ```text
 Execution Leader
@@ -305,7 +330,7 @@ Key rules:
 - The Leader owns integration, not the individual groups.
 - Test feedback is mandatory whether it passes or fails.
 - Failure feedback must be evidence-backed and mapped before rework.
-- Success feedback allows active group release only after responsibility records and causal output are preserved.
+- Success feedback allows the Leader to release active groups only after responsibility records and causal output are preserved.
 - Execution output is a `causal_candidate`, not global causal truth.
 
 The current Execution runtime demo validates:
@@ -321,6 +346,57 @@ Execution -> Debate -> Execution
 ```
 
 The Debate handoff demo selects `PLAN_B` and binds Debate's causal candidate into the final Execution causal chain.
+
+### Phase 19A git topology acceptance
+
+Phase 19A validates local git topology and Leader-owned integration on a separate target business-code repository:
+
+```text
+rain-123-bow/aegis-execution-sandbox
+```
+
+Phase 19A proves:
+
+- Execution Leader can operate on a real local target repository clone;
+- the target repository must be clean before execution;
+- invalid splits are rejected before group branches are created;
+- one local group branch is created per accepted independent subtask;
+- the Leader owns the integration branch;
+- group branches are merged into the integration branch;
+- integration changed files are preserved;
+- a Test handoff package is emitted.
+
+Phase 19A acceptance label:
+
+```text
+accepted_execution_git_topology_closure
+```
+
+Phase 19A must not be labeled:
+
+```text
+accepted_real_execution_agent_closure
+```
+
+Phase 19A accepted the local topology run:
+
+```text
+base_branch: main
+integration_branch: aegis/phase19a/integration-001
+group_branches:
+  - aegis/phase19a/G1-doc-evidence
+  - aegis/phase19a/G2-test-evidence
+changed_files:
+  - docs/phase19a_execution_topology_note.md
+  - tests/test_phase19a_sandbox_integration.py
+```
+
+Known limits:
+
+- Front/Back agents are deterministic or deferred in Phase 19A.
+- The integration branch is a local Test handoff candidate only.
+- No remote push, PR, remote merge, release, or production sign-off is performed.
+- Real request-scoped Front/Back Codex agent acceptance is deferred to a later phase.
 
 ## Test Department
 
@@ -464,6 +540,8 @@ Phase 17 proof verifies:
 
 Phase 18 Debate acceptance intentionally used a narrower top-level creation scope: Master created only the Debate Leader, and the Debate Leader created the request-scoped Debate Workers.
 
+Phase 19A Execution acceptance uses the Execution Leader boundary to operate on a separate local sandbox repository and create local group/integration branches. It does not create real Front/Back Codex agents.
+
 This is still demo/acceptance closure. It does not claim production Master runtime closure or production nested-Codex process supervision.
 
 ## Quick validation
@@ -499,18 +577,31 @@ Strict real-worker utility flow:
   --output .\.aegis-debate-real-worker\worker_proof_audit_summary.json
 ```
 
-### Execution runtime
+### Execution runtime and Phase 19A git topology
 
 ```powershell
-py -3.13 -m venv .venv-execution-runtime
-.\.venv-execution-runtime\Scripts\python.exe -m pip install -U pip
-.\.venv-execution-runtime\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
-.\.venv-execution-runtime\Scripts\python.exe -m pip install -e ".\aegis-runtime\execution[dev]"
+py -3.13 -m venv .venv-execution-phase19a
+.\.venv-execution-phase19a\Scripts\python.exe -m pip install -U pip
+.\.venv-execution-phase19a\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-execution-phase19a\Scripts\python.exe -m pip install -e ".\aegis-runtime\execution[dev]"
 
-.\.venv-execution-runtime\Scripts\python.exe -m pytest .\aegis-runtime\execution
-.\.venv-execution-runtime\Scripts\python.exe -m pytest .\aegis-runtime\execution\tests\test_router_integrated_execution_closure.py -vv
-.\.venv-execution-runtime\Scripts\python.exe -m pytest .\aegis-runtime\execution\tests\test_execution_debate_handoff_closure.py -vv
-.\.venv-execution-runtime\Scripts\python.exe -m aegis_execution_runtime.cli --request .\aegis-runtime\execution\examples\demo_request.json
+.\.venv-execution-phase19a\Scripts\python.exe -m pytest .\aegis-runtime\execution\tests\test_execution_git_topology_closure.py -vv
+.\.venv-execution-phase19a\Scripts\python.exe -m pytest .\aegis-runtime\execution -vv
+```
+
+Phase 19A local sandbox run requires a clean local clone of:
+
+```text
+C:\Users\playm\Documents\self-git\aegis-execution-sandbox
+git@github.com:rain-123-bow/aegis-execution-sandbox.git
+```
+
+Example CLI shape:
+
+```powershell
+.\.venv-execution-phase19a\Scripts\python.exe -m aegis_execution_runtime.git_topology_cli run `
+  --request .\.aegis-phase19a-execution-test\inputs\phase19a_execution_git_topology_request.json `
+  --output-dir .\.aegis-phase19a-execution-test\outputs
 ```
 
 ### Test runtime
@@ -591,6 +682,8 @@ runtime_test_reports/PHASE_17_MASTER_NESTED_CODEX_AGENT_PROOF_AUDIT_REPORT.md
 runtime_test_reports/PHASE_18_DEBATE_REAL_NESTED_CODEX_WORKER_PATCH_PLAN.md
 runtime_test_reports/PHASE_18_DEBATE_REAL_NESTED_CODEX_FULL_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_18_DEBATE_REAL_WORKER_POST_ACCEPTANCE_FIX_REPORT.md
+runtime_test_reports/PHASE_19A_EXECUTION_GIT_TOPOLOGY_PATCH_PLAN.md
+runtime_test_reports/PHASE_19A_EXECUTION_GIT_TOPOLOGY_FULL_ACCEPTANCE_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -610,6 +703,10 @@ router-integrated communication closure
 + Execution Test feedback/rework closure
 + Execution Debate handoff closure
 + Execution final causal-chain output closure
++ Execution Phase 19A target sandbox repository closure
++ Execution Phase 19A local group-branch topology closure
++ Execution Phase 19A Leader-owned integration-branch closure
++ Execution Phase 19A Test handoff package closure
 + Test Department strict evidence-state semantics closure
 + Test deterministic route-worker evidence closure
 + Test failed-feedback-to-Execution closure
@@ -642,9 +739,11 @@ Deferred production topics include:
 - JSON store locking;
 - real persistent nested-Codex session lifecycle;
 - standardized nested-Codex create-agent MCP tool name;
-- real git branch/worktree orchestration;
+- real git branch/worktree orchestration beyond local Phase 19A topology validation;
 - real nested-Codex multi-agent process orchestration below non-Debate top-level Leaders;
 - production Debate Worker supervision, restart/recovery, and lifecycle management;
+- real Execution Front/Back Codex agent acceptance;
+- production Execution branch/worktree supervision, rollback, and remote branch governance;
 - production Test Department runtime with real git checkout, CI, environment provisioning, and external artifact backend;
 - production Final Review runtime with real external model invocation, root resource-policy integration, and production artifact review backend;
 - Master-driven dynamic model and reasoning-budget adjustment;
