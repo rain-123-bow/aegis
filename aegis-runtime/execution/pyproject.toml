@@ -14,6 +14,7 @@ dev = [
 
 [project.scripts]
 aegis-execution-demo = "aegis_execution_runtime.cli:main"
+aegis-execution-git-topology = "aegis_execution_runtime.git_topology_cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

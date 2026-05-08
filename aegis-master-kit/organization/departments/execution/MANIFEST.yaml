@@ -17,6 +17,8 @@ contracts:
   integration_test_handoff: INTEGRATION_AND_TEST_HANDOFF_CONTRACT.md
   test_feedback_rework: TEST_FEEDBACK_AND_REWORK_CONTRACT.md
   causal_chain: EXECUTION_CAUSAL_CHAIN_RULES.md
+  execution_git_topology: EXECUTION_GIT_TOPOLOGY_CLOSURE_CONTRACT.md
+  phase19a_acceptance: EXECUTION_19A_ACCEPTANCE_CONTRACT.md
 schemas:
   - schemas/execution_request.schema.yaml
   - schemas/subtask_split.schema.yaml
@@ -43,3 +45,8 @@ hard_rules:
   - Do not treat Front Agent output as accepted without Back Agent review.
   - Do not release groups before Test success feedback and Leader final causal handoff.
   - Do not merge execution causal candidates into global causal truth.
+
+phase19a_notes:
+  - Phase 19A validates real local git branch/workspace/integration topology.
+  - Phase 19A does not claim real Front/Back Codex agent closure.
+  - Remote push, PR, merge, release, and production lifecycle remain forbidden.
