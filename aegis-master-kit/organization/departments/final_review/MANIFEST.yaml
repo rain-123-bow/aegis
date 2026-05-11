@@ -14,6 +14,7 @@ contracts:
   whole_chain_consistency: WHOLE_CHAIN_CONSISTENCY_REVIEW_CONTRACT.md
   result_handoff: FINAL_REVIEW_RESULT_AND_HANDOFF_CONTRACT.md
   resource_policy_reference: RESOURCE_POLICY_REFERENCE_CONTRACT.md
+  phase21a_handoff_validation: FINAL_REVIEW_21A_HANDOFF_VALIDATION_CONTRACT.md
 schemas:
   - schemas/final_review_request.schema.yaml
   - schemas/final_review_input_package.schema.yaml
