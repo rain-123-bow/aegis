@@ -12,6 +12,7 @@ contracts:
   plan_route_split: TEST_PLAN_AND_ROUTE_SPLIT_CONTRACT.md
   evidence_retention: TEST_EVIDENCE_AND_RETENTION_CONTRACT.md
   result_handoff: TEST_RESULT_AND_HANDOFF_CONTRACT.md
+  phase20a_handoff_validation: TEST_20A_HANDOFF_VALIDATION_CONTRACT.md
 schemas:
   - schemas/test_request.schema.yaml
   - schemas/test_plan.schema.yaml
@@ -40,3 +41,8 @@ hard_rules:
   - Do not ask Execution to patch around governance or policy blockers.
   - Report governance or policy blockers as blocked with blocker_kind governance.
   - Do not route Test output directly to Master under the current topology.
+
+phase20a_notes:
+  - Phase 20A validates Test Leader consumption of Execution Phase 19B handoff packages.
+  - Phase 20A runs real local tests against the sandbox integration branch.
+  - Phase 20A does not claim real Test Worker Codex agent closure or production CI closure.

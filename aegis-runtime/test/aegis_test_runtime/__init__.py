@@ -1,4 +1,5 @@
 from .leader import TestLeader
+from .handoff_validation import TestHandoffValidationError, run_test_handoff_validation
 from .models import (
     FinalTestReport,
     OwnerHint,
@@ -18,4 +19,6 @@ __all__ = [
     "TestRequest",
     "TestRoute",
     "TestWorkerReport",
+    "TestHandoffValidationError",
+    "run_test_handoff_validation",
 ]
