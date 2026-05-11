@@ -173,6 +173,22 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - targeted Phase 19B tests passed;
     - full Execution runtime tests passed;
     - sandbox integration-branch pytest passed.
+34. Phase 20A Test handoff validation acceptance:
+    - Test Leader consumes the Execution Phase 19B handoff package;
+    - Test Leader validates the handoff target, status, integration branch, integration commit, changed files, and group mapping;
+    - Test Leader checks out the sandbox integration branch `aegis/phase19b/integration-001`;
+    - Test Leader runs local sandbox pytest through the Test handoff-validation path;
+    - Test Leader preserves stdout/stderr, branch, commit, changed files, reproducibility set, and artifact manifest;
+    - final Test result is `passed`;
+    - next route is `final_review`;
+    - Test output remains scoped evidence / `causal_candidate`, not global causal truth;
+    - no real Test Worker Codex agent is created in Phase 20A;
+    - no source code modification, remote push, PR, remote merge, release, production sign-off, or global causal truth mutation is performed.
+35. Phase 20A Test runtime closure:
+    - targeted Phase 20A handoff-validation tests passed;
+    - full Test runtime suite passed;
+    - sandbox pytest passed through the Test Leader handoff-validation path;
+    - reproducibility set and artifact manifest were generated.
 
 This is demo/acceptance closure, not production closure.
 
@@ -219,6 +235,19 @@ Master
       -> strict proof/output audit
       -> Leader-owned local integration branch
       -> Test handoff package
+```
+
+Phase 20A adds Test handoff validation after Execution Phase 19B:
+
+```text
+Execution Phase 19B handoff package
+  -> Test Leader
+      -> validate handoff fields
+      -> checkout sandbox integration branch
+      -> run local pytest
+      -> preserve reproducibility set and artifact manifest
+      -> produce scoped final Test result
+  -> passed result routes to Final Review
 ```
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
@@ -492,6 +521,47 @@ Execution -> Test -> Final Review
 
 The runtime uses request-provided candidate snapshots and in-process route workers. It does not perform production git checkout, real CI, real environment provisioning, or nested-Codex Test Worker orchestration.
 
+### Phase 20A handoff validation acceptance
+
+Phase 20A validates Test Leader consumption of the Execution Phase 19B handoff package.
+
+The input is the local sandbox integration candidate:
+
+```text
+target repo: rain-123-bow/aegis-execution-sandbox
+integration branch: aegis/phase19b/integration-001
+handoff kind: execution_real_front_back_candidate
+```
+
+Phase 20A proves:
+
+- handoff target is `test`;
+- handoff status is `ready_for_test_department`;
+- the sandbox integration branch is checked out and validated;
+- the integration commit matches the expected commit;
+- sandbox pytest passes through the Test Leader handoff-validation path;
+- reproducibility set is generated;
+- artifact manifest is generated;
+- final Test result is `passed`;
+- next route is `final_review`;
+- Test does not modify implementation code;
+- no real Test Worker Codex agent is claimed;
+- no remote push, PR, remote merge, release, production sign-off, or global causal truth mutation occurs;
+- sandbox ending on `aegis/phase19b/integration-001` is expected, not failure.
+
+Phase 20A acceptance label:
+
+```text
+accepted_test_handoff_validation_closure
+```
+
+Phase 20A must not be labeled:
+
+```text
+accepted_real_test_worker_closure
+production_test_lifecycle_closure
+```
+
 ## Final Review Department
 
 The Final Review Department is responsible for single-Leader whole-chain consistency review before results return to Master.
@@ -694,6 +764,27 @@ py -3.13 -m venv .venv-test-runtime
 .\.venv-test-runtime\Scripts\python.exe -m aegis_test_runtime.cli --request .\aegis-runtime\test\examples\demo_request_failure.json
 ```
 
+### Test runtime and Phase 20A
+
+```powershell
+py -3.13 -m venv .venv-test-phase20a
+.\.venv-test-phase20a\Scripts\python.exe -m pip install -U pip
+.\.venv-test-phase20a\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-test-phase20a\Scripts\python.exe -m pip install -e ".\aegis-runtime\test[dev]"
+
+.\.venv-test-phase20a\Scripts\python.exe -m pytest .\aegis-runtime\test\tests\test_test_handoff_validation_closure.py -vv
+.\.venv-test-phase20a\Scripts\python.exe -m pytest .\aegis-runtime\test -vv
+```
+
+Phase 20A handoff validation CLI shape:
+
+```powershell
+.\.venv-test-phase20a\Scripts\python.exe -m aegis_test_runtime.handoff_validation_cli `
+  --handoff .\.aegis-phase20a-test-handoff-validation\inputs\phase20a_test_handoff_package.json `
+  --output-dir .\.aegis-phase20a-test-handoff-validation\outputs `
+  --test-command ".\.venv\Scripts\python.exe -m pytest -vv"
+```
+
 ### Final Review runtime
 
 ```powershell
@@ -764,6 +855,8 @@ runtime_test_reports/PHASE_19B_EXECUTION_REAL_FRONT_BACK_AGENT_PATCH_PLAN.md
 runtime_test_reports/PHASE_19B_EXECUTION_REAL_FRONT_BACK_AGENT_FULL_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_19B_EXECUTION_REAL_FRONT_BACK_AGENT_POST_ACCEPTANCE_FIX_REPORT.md
 runtime_test_reports/PHASE_19B_EXECUTION_REAL_FRONT_BACK_AGENT_EVIDENCE_CLEAN_FIX_REPORT.md
+runtime_test_reports/PHASE_20A_TEST_HANDOFF_VALIDATION_PATCH_PLAN.md
+runtime_test_reports/PHASE_20A_TEST_HANDOFF_VALIDATION_FULL_ACCEPTANCE_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -797,6 +890,10 @@ router-integrated communication closure
 + Test failed-feedback-to-Execution closure
 + Test passed-result-to-Final-Review closure
 + Test reproducibility-set and artifact-manifest retention closure
++ Test Phase 20A handoff validation closure
++ Test Phase 20A reproducibility-set closure
++ Test Phase 20A artifact-manifest closure
++ Test Phase 20A scoped final-test-result closure
 + Final Review single-Leader whole-chain review closure
 + Final Review resource-policy gate closure
 + Final Review object-consistency and evidence-sufficiency closure
@@ -827,8 +924,9 @@ Deferred production topics include:
 - real git branch/worktree orchestration beyond local Phase 19A/19B topology validation;
 - production real Front/Back worker supervision, restart/recovery, and lifecycle management;
 - remote Execution branch governance;
+- real Test Worker Codex agent acceptance;
 - production Debate Worker supervision, restart/recovery, and lifecycle management;
-- production Test Department runtime with real git checkout, CI, environment provisioning, and external artifact backend;
+- production Test CI, environment provisioning, and external artifact backend;
 - production Final Review runtime with real external model invocation, root resource-policy integration, and production artifact review backend;
 - Master-driven dynamic model and reasoning-budget adjustment;
 - Test Worker model profile;
