@@ -121,8 +121,21 @@ profiles:
     dynamic_adjustment_allowed: false
     notes: >
       Test Leader owns test plan design, route split, evidence aggregation,
-      failure feedback, and final test result handoff. Test worker profiles are
-      intentionally deferred.
+      failure feedback, and final test result handoff. Test Worker profiles are
+      explicitly defined starting in Phase 20B.
+
+  test_worker:
+    role_id: test_worker
+    model: gpt-5.5
+    reasoning_budget: high
+    fallback_allowed: false
+    dynamic_adjustment_allowed: false
+    notes: >
+      Test Workers are request-scoped, route-bound internal agents created by
+      the Test Leader. Each Test Worker runs or verifies its assigned validation
+      route, preserves command evidence and artifacts, and emits a scoped test
+      worker report. Medium reasoning budget is forbidden for Test Workers in
+      the current phase.
 
   final_review_leader:
     role_id: final_review_leader
@@ -136,8 +149,7 @@ profiles:
       return to Master. It must use the highest configured budget in this phase
       and must not compensate for resource shortage by creating parallel workers.
 
-deferred_profiles:
-  - test_worker
+deferred_profiles: []
 
 audit_requirements:
   required_fields:

@@ -13,6 +13,8 @@ contracts:
   evidence_retention: TEST_EVIDENCE_AND_RETENTION_CONTRACT.md
   result_handoff: TEST_RESULT_AND_HANDOFF_CONTRACT.md
   phase20a_handoff_validation: TEST_20A_HANDOFF_VALIDATION_CONTRACT.md
+  real_test_workers: TEST_REAL_WORKER_CONTRACT.md
+  phase20b_acceptance: TEST_20B_ACCEPTANCE_CONTRACT.md
 schemas:
   - schemas/test_request.schema.yaml
   - schemas/test_plan.schema.yaml
@@ -46,3 +48,8 @@ phase20a_notes:
   - Phase 20A validates Test Leader consumption of Execution Phase 19B handoff packages.
   - Phase 20A runs real local tests against the sandbox integration branch.
   - Phase 20A does not claim real Test Worker Codex agent closure or production CI closure.
+
+phase20b_notes:
+  - Phase 20B validates real nested-Codex Test Worker acceptance.
+  - Phase 20B reuses Phase 20A handoff validation and sandbox integration-branch boundaries.
+  - Phase 20B does not claim production CI, remote branch governance, PR, release, or global causal merge.
