@@ -15,6 +15,7 @@ contracts:
   result_handoff: FINAL_REVIEW_RESULT_AND_HANDOFF_CONTRACT.md
   resource_policy_reference: RESOURCE_POLICY_REFERENCE_CONTRACT.md
   phase21a_handoff_validation: FINAL_REVIEW_21A_HANDOFF_VALIDATION_CONTRACT.md
+  phase21b_real_leader_acceptance: FINAL_REVIEW_21B_REAL_LEADER_ACCEPTANCE_CONTRACT.md
 schemas:
   - schemas/final_review_request.schema.yaml
   - schemas/final_review_input_package.schema.yaml

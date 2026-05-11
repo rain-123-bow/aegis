@@ -15,6 +15,7 @@ dev = [
 [project.scripts]
 aegis-final-review-demo = "aegis_final_review_runtime.cli:main"
 aegis-final-review-phase21a = "aegis_final_review_runtime.phase21a_cli:main"
+aegis-final-review-real-leader = "aegis_final_review_runtime.real_leader_cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
