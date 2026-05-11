@@ -208,6 +208,26 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - full Final Review runtime suite passed with 23 tests;
     - canonical CLI against the real Phase 20B handoff package passed;
     - `git diff --check` passed.
+41. Phase 21B real Final Review Leader acceptance:
+    - Master creates exactly one real nested-Codex / Codex Final Review Leader;
+    - the Leader consumes Phase 21A summary and result material;
+    - the Leader writes a proof file before substantive review work;
+    - the Leader writes an output file containing a nested `final_review_result` recommendation;
+    - proof audit passed for 1 Leader;
+    - output audit passed for 1 Leader;
+    - final decision is `accept_for_master_with_scope_limit`;
+    - the output route remains `final_review -> master`;
+    - no Final Review Worker is created;
+    - no router/topology code is modified;
+    - no implementation/business code is modified;
+    - no Test routes are run or replaced by Final Review;
+    - no remote push, PR, merge, release, production sign-off, or global causal truth mutation is performed.
+42. Phase 21B Final Review runtime closure:
+    - targeted Phase 21B real-Leader tests passed with 15 tests;
+    - full Final Review runtime suite passed with 38 tests;
+    - `git diff --check` passed;
+    - real Leader proof/output audit passed;
+    - acceptance label is `accepted_real_final_review_leader_closure`.
 
 This is demo/acceptance closure, not production closure.
 
@@ -292,7 +312,18 @@ Test Phase 20B final_review handoff package
   -> Master recommendation boundary
 ```
 
-Phase 21A is not real Final Review Leader acceptance. Phase 21B is reserved for real nested-Codex Final Review Leader acceptance.
+Phase 21B adds real Final Review Leader acceptance after Phase 21A:
+
+```text
+Master
+  -> real nested-Codex / Codex Final Review Leader
+      -> proof file
+      -> output file
+      -> final_review_result recommendation
+  -> Master recommendation boundary
+```
+
+Phase 21B closes real Final Review Leader acceptance. It does not create Final Review Workers and does not claim production Final Review lifecycle closure.
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, production branch governance, production release review, or global causal truth merge.
 
@@ -422,8 +453,6 @@ It also validates the conditional handoff:
 ```text
 Execution -> Debate -> Execution
 ```
-
-The Debate handoff demo selects `PLAN_B` and binds Debate's causal candidate into the final Execution causal chain.
 
 ### Phase 19A git topology acceptance
 
@@ -609,7 +638,50 @@ production_release_review_closure
 global_causal_truth_closure
 ```
 
-Phase 21B is reserved for real nested-Codex Final Review Leader acceptance. It must preserve the single-Leader Final Review architecture and must not introduce Final Review Workers.
+### Phase 21B real Final Review Leader acceptance
+
+Phase 21B validates real nested-Codex / Codex Final Review Leader acceptance after Phase 21A.
+
+```text
+Master
+  -> real nested-Codex / Codex Final Review Leader
+      -> proof file
+      -> output file
+      -> final_review_result recommendation
+  -> Master recommendation boundary
+```
+
+Phase 21B proves:
+
+- Master creates exactly one real Final Review Leader;
+- Final Review creates zero workers;
+- the Leader consumes Phase 21A summary and result material;
+- the Leader writes a proof file before substantive review work;
+- the Leader writes an output file with a nested `final_review_result`;
+- proof and output audits pass;
+- the output route remains `final_review -> master`;
+- `accept_for_master_with_scope_limit` is used when upstream known limits remain material;
+- no router/topology mutation occurs;
+- no implementation/business code mutation occurs;
+- no Test route is run or replaced by Final Review;
+- no production release review, production sign-off, or global causal truth mutation is claimed.
+
+Phase 21B acceptance label:
+
+```text
+accepted_real_final_review_leader_closure
+```
+
+Phase 21B must not be labeled:
+
+```text
+accepted_final_review_worker_closure
+production_final_review_lifecycle_closure
+production_release_review_closure
+global_causal_truth_closure
+```
+
+Phase 21B preserves the single-Leader Final Review architecture and does not introduce Final Review Workers.
 
 ## Model and reasoning-budget policy
 
@@ -647,22 +719,52 @@ Hard rules:
 
 From repository root on Windows PowerShell.
 
-### Final Review runtime and Phase 21A
+### Final Review runtime, Phase 21A, and Phase 21B
 
 ```powershell
-py -3.13 -m venv .venv-final-review-phase21a
-.\.venv-final-review-phase21a\Scripts\python.exe -m pip install -U pip
-.\.venv-final-review-phase21a\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
-.\.venv-final-review-phase21a\Scripts\python.exe -m pip install -e ".\aegis-runtime\final_review[dev]"
+py -3.13 -m venv .venv-final-review-phase21b
+.\.venv-final-review-phase21b\Scripts\python.exe -m pip install -U pip
+.\.venv-final-review-phase21b\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-final-review-phase21b\Scripts\python.exe -m pip install -e ".\aegis-runtime\final_review[dev]"
 
-.\.venv-final-review-phase21a\Scripts\python.exe -m compileall .\aegis-runtime\final_review\aegis_final_review_runtime
-.\.venv-final-review-phase21a\Scripts\python.exe -m pytest .\aegis-runtime\final_review\tests\test_phase21a_final_review_handoff_validation.py -vv
-.\.venv-final-review-phase21a\Scripts\python.exe -m pytest .\aegis-runtime\final_review\tests\test_router_integrated_final_review_closure.py -vv
-.\.venv-final-review-phase21a\Scripts\python.exe -m pytest .\aegis-runtime\final_review -vv
+.\.venv-final-review-phase21b\Scripts\python.exe -m compileall .\aegis-runtime\final_review\aegis_final_review_runtime
+.\.venv-final-review-phase21b\Scripts\python.exe -m pytest .\aegis-runtime\final_review\tests\test_phase21a_final_review_handoff_validation.py -vv
+.\.venv-final-review-phase21b\Scripts\python.exe -m pytest .\aegis-runtime\final_review\tests\test_phase21b_final_review_real_leader_acceptance.py -vv
+.\.venv-final-review-phase21b\Scripts\python.exe -m pytest .\aegis-runtime\final_review -vv
+```
 
-.\.venv-final-review-phase21a\Scripts\python.exe -m aegis_final_review_runtime.phase21a_cli run `
+Phase 21A deterministic handoff validation:
+
+```powershell
+.\.venv-final-review-phase21b\Scripts\python.exe -m aegis_final_review_runtime.phase21a_cli run `
   --handoff-package .\.aegis-phase20b-test-real-worker\outputs\final_review_handoff_package_phase20b.json `
   --output-dir .\.aegis-phase21a-final-review-handoff-validation\outputs
+```
+
+Phase 21B real Leader request and audit tooling:
+
+```powershell
+.\.venv-final-review-phase21b\Scripts\python.exe -m aegis_final_review_runtime.real_leader_cli prepare-request `
+  --policy .\MODEL_REASONING_BUDGET_POLICY.yaml `
+  --phase21a-summary .\.aegis-phase21a-final-review-handoff-validation\outputs\phase21a_handoff_validation_summary.json `
+  --phase21a-result .\.aegis-phase21a-final-review-handoff-validation\outputs\phase21a_final_review_result.json `
+  --run-id phase21b-final-review-real-leader-001 `
+  --output-dir .\.aegis-phase21b-final-review-real-leader\prepared `
+  --proof-dir .\.aegis-phase21b-final-review-real-leader\leader_proofs `
+  --leader-output-dir .\.aegis-phase21b-final-review-real-leader\leader_outputs
+
+# Real Phase 21B acceptance also requires creating one real Final Review Leader
+# through the available nested-Codex/Codex surface and then auditing proof/output.
+
+.\.venv-final-review-phase21b\Scripts\python.exe -m aegis_final_review_runtime.real_leader_cli audit-proof `
+  --expected .\.aegis-phase21b-final-review-real-leader\prepared\expected_final_review_leader_proof.json `
+  --proof-dir .\.aegis-phase21b-final-review-real-leader\leader_proofs `
+  --output .\.aegis-phase21b-final-review-real-leader\final_review_leader_proof_audit_summary.json
+
+.\.venv-final-review-phase21b\Scripts\python.exe -m aegis_final_review_runtime.real_leader_cli audit-output `
+  --expected .\.aegis-phase21b-final-review-real-leader\prepared\expected_final_review_leader_output.json `
+  --leader-output-dir .\.aegis-phase21b-final-review-real-leader\leader_outputs `
+  --output .\.aegis-phase21b-final-review-real-leader\final_review_leader_output_audit_summary.json
 ```
 
 Before committing local changes:
@@ -707,6 +809,8 @@ runtime_test_reports/PHASE_20B_TEST_REAL_WORKER_PATCH_PLAN.md
 runtime_test_reports/PHASE_20B_TEST_REAL_WORKER_FULL_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_21A_FINAL_REVIEW_HANDOFF_VALIDATION_PATCH_PLAN.md
 runtime_test_reports/PHASE_21A_FINAL_REVIEW_HANDOFF_VALIDATION_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_21B_FINAL_REVIEW_REAL_LEADER_PATCH_PLAN.md
+runtime_test_reports/PHASE_21B_FINAL_REVIEW_REAL_LEADER_ACCEPTANCE_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -756,7 +860,11 @@ router-integrated communication closure
 + Final Review Phase 21A real Test handoff consumption closure
 + Final Review Phase 21A handoff validator closure
 + Final Review Phase 21A Master recommendation boundary closure
-+ Root static model/reasoning-budget policy for Master, top-level Leaders, Debate Workers, Execution Front/Back agents, and Test Workers
++ Final Review Phase 21B real Leader creation closure
++ Final Review Phase 21B proof-audit closure
++ Final Review Phase 21B output-audit closure
++ Final Review Phase 21B Master recommendation boundary closure
++ Root static model/reasoning-budget policy for Master, top-level Leaders, Debate Workers, Execution Front/Back agents, Test Workers, and Final Review Leader
 + Master nested-Codex top-level Leader creation closure
 + Master top-level Router registration and 10-edge communication closure
 + Four-Leader proof-file sha256 audit closure
@@ -786,8 +894,9 @@ Deferred production topics include:
 - production Test lifecycle supervision;
 - production Test CI, durable environment provisioning, and external artifact backend;
 - production Test Worker supervision, restart/recovery, and lifecycle management;
-- real Final Review Leader acceptance after Phase 21A;
-- production Final Review runtime with real external model invocation, root resource-policy integration, and production artifact review backend;
+- production Final Review lifecycle supervision;
+- production Final Review runtime with durable artifact review backend;
+- production release review and sign-off authority;
 - Master-driven dynamic model and reasoning-budget adjustment;
 - real Archive / Knowledge / Causal admission;
 - real global causal merge;
