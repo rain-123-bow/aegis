@@ -50,12 +50,6 @@ semantic alignment
 >
 > Full rationale: `aegis-master-kit/organization/departments/debate/CAUSAL_STRUCTURE_RATIONALE.md`.
 
-## High-level governance flow
-
-The following diagram shows the high-level Master governance flow. It is not a complete system architecture diagram.
-
-![Aegis high-level governance flow](docs/aegis-high-level-governance-flow.png)
-
 ## Repository layout
 
 ```text
@@ -97,27 +91,16 @@ The current prototype has closed the following demo/acceptance mechanisms:
 7. Debate Leader explicit causal-chain output.
 8. Execution Department contract package.
 9. Execution Department deterministic runtime demo.
-10. Execution router-integrated closure across:
-    - `master -> execution`;
-    - `execution -> test`;
-    - `test -> execution`;
-    - `execution -> debate`;
-    - `debate -> execution`;
-    - `execution -> master`.
+10. Execution router-integrated closure across `master -> execution`, `execution -> test`, `test -> execution`, `execution -> debate`, `debate -> execution`, and `execution -> master`.
 11. Execution Leader final `execution_causal_chain` output as a `causal_candidate`.
 12. Test Department contract package with strict evidence-state result semantics.
 13. Test Department deterministic runtime demo.
-14. Test router-integrated closure across:
-    - `execution -> test`;
-    - `test -> execution`;
-    - `test -> final_review`.
+14. Test router-integrated closure across `execution -> test`, `test -> execution`, and `test -> final_review`.
 15. Test result retention of reproducibility set and artifact manifest.
 16. Test result output as scoped evidence, not global causal truth.
 17. Final Review Department contract package with single-Leader whole-chain review semantics.
 18. Final Review Department deterministic runtime demo.
-19. Final Review router-integrated closure across:
-    - `test -> final_review`;
-    - `final_review -> master`.
+19. Final Review router-integrated closure across `test -> final_review` and `final_review -> master`.
 20. Final Review resource-policy gate with `blocked_resource_policy` precedence.
 21. Final Review output as recommendation to Master, not production release or global causal truth.
 22. Root model and reasoning-budget policy for Master and top-level department Leaders.
@@ -142,10 +125,10 @@ The current prototype has closed the following demo/acceptance mechanisms:
 29. Phase 19A Execution git topology acceptance:
     - the target business-code repo is `rain-123-bow/aegis-execution-sandbox`;
     - Execution Leader validates a real local sandbox clone;
-    - Execution Leader validates split boundaries before group branch creation;
+    - invalid splits are rejected before group branches are created;
     - one local group branch is created per accepted independent subtask;
     - Leader integrates group branches into a Leader-owned integration branch;
-    - a Test handoff package is produced with integration branch, commit, changed files, and group responsibility mapping;
+    - a Test handoff package is emitted;
     - no remote push, PR, production merge, release, or sign-off is performed;
     - this does not claim real Front/Back Codex agent closure.
 30. Phase 19A Execution runtime test closure:
@@ -158,7 +141,7 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - Execution Leader creates one real Front Agent and one real Back Agent per accepted Execution Group;
     - Front/Back Agents are request-scoped, group-internal, and not top-level route agents;
     - every Front/Back Agent leaves proof and output files;
-    - missing proof or missing output fails acceptance;
+    - missing proof or output fails acceptance;
     - Front output status is strictly `front_output_candidate`;
     - Back review status is strictly `review_candidate`;
     - Back Agents independently review Front output and have blocking authority;
@@ -195,7 +178,7 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - Test Leader creates one real nested-Codex / Codex Test Worker per accepted validation route;
     - Test Workers are request-scoped, route-bound, and Test-department-internal;
     - every Test Worker leaves proof, output, route evidence, and private work evidence;
-    - missing proof or missing output fails acceptance;
+    - missing proof or output fails acceptance;
     - Test Worker proof audit passed for 2 workers;
     - Test Worker output audit passed for 2 workers;
     - `route.sandbox_pytest` passed;
@@ -209,6 +192,22 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - full Test runtime suite passed;
     - direct sandbox pytest cross-check passed;
     - final review handoff package was produced with `handoff_kind: test_real_worker_result`.
+39. Phase 21A Final Review handoff validation acceptance:
+    - Final Review consumes the real Test Phase 20B `final_review_handoff_package_phase20b.json`;
+    - the handoff validator accepts the actual list-shaped Phase 20B `route_results` artifact shape;
+    - deterministic `FinalReviewLeader` builds a Final Review request and produces a `final_review_result`;
+    - the result target is `master` and the route remains `final_review -> master`;
+    - the result is a Master recommendation with explicit scope limits, not global causal truth;
+    - no real nested-Codex Final Review Leader is created;
+    - no Final Review Workers are created;
+    - no router/topology code is modified;
+    - no implementation code modification, remote push, PR, remote merge, release, production sign-off, or global causal truth mutation is performed.
+40. Phase 21A Final Review runtime closure:
+    - targeted Phase 21A handoff-validation tests passed with 14 tests;
+    - explicit router-integrated Final Review closure test passed;
+    - full Final Review runtime suite passed with 23 tests;
+    - canonical CLI against the real Phase 20B handoff package passed;
+    - `git diff --check` passed.
 
 This is demo/acceptance closure, not production closure.
 
@@ -283,7 +282,19 @@ Execution Phase 19B / Test Phase 20A validation material
       -> Final Review handoff package
 ```
 
-Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
+Phase 21A adds Final Review handoff validation after Test Phase 20B:
+
+```text
+Test Phase 20B final_review handoff package
+  -> Final Review handoff validator
+      -> deterministic FinalReviewLeader
+      -> final_review_result
+  -> Master recommendation boundary
+```
+
+Phase 21A is not real Final Review Leader acceptance. Phase 21B is reserved for real nested-Codex Final Review Leader acceptance.
+
+Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, production branch governance, production release review, or global causal truth merge.
 
 ## Aegis Router
 
@@ -353,14 +364,7 @@ Real Debate Worker acceptance requires:
 - one real nested-Codex Debate Worker per valid stance;
 - proof file for every Worker;
 - strict proof audit with missing proof as failure, not skip;
-- complete mailbucket package containing:
-  - `README.md`;
-  - `final_report.json`;
-  - `adjudicator_causal_state.json`;
-  - `worker_states/*.json`;
-  - `worker_proofs/*_proof.json`;
-  - `transcript_digest.json`;
-  - `evidence_manifest.json`.
+- complete mailbucket package containing `README.md`, `final_report.json`, `adjudicator_causal_state.json`, `worker_states/*.json`, `worker_proofs/*_proof.json`, `transcript_digest.json`, and `evidence_manifest.json`.
 
 ## Execution Department
 
@@ -429,35 +433,7 @@ Phase 19A validates local git topology and Leader-owned integration on a separat
 rain-123-bow/aegis-execution-sandbox
 ```
 
-Phase 19A proves:
-
-- Execution Leader can operate on a real local target repository clone;
-- the target repository must be clean before execution;
-- invalid splits are rejected before group branches are created;
-- one local group branch is created per accepted independent subtask;
-- the Leader owns the integration branch;
-- group branches are merged into the integration branch;
-- integration changed files are preserved;
-- a Test handoff package is emitted.
-
-Phase 19A acceptance label:
-
-```text
-accepted_execution_git_topology_closure
-```
-
-Phase 19A must not be labeled:
-
-```text
-accepted_real_execution_agent_closure
-```
-
-Known limits:
-
-- Front/Back agents are deterministic or deferred in Phase 19A.
-- The integration branch is a local Test handoff candidate only.
-- No remote push, PR, remote merge, release, or production sign-off is performed.
-- Real request-scoped Front/Back Codex agent acceptance is deferred to Phase 19B.
+Phase 19A proves local group branch creation, Leader-owned integration, integration changed-file preservation, and Test handoff package emission. It does not claim real Front/Back Codex agent closure, remote push, PR, production merge, release, or sign-off.
 
 ### Phase 19B real Front/Back Agent acceptance
 
@@ -469,44 +445,7 @@ The target business-code repository remains:
 rain-123-bow/aegis-execution-sandbox
 ```
 
-Phase 19B proves:
-
-- Execution Front Agent profile is `gpt-5.5 / high`;
-- Execution Back Agent profile is `gpt-5.5 / high`;
-- Front/Back profiles are no longer deferred;
-- Execution Leader creates real Front/Back agents for each accepted Execution Group;
-- every Front/Back agent leaves an auditable proof file;
-- every Front/Back agent leaves an auditable output file;
-- Front output must use `status: front_output_candidate`;
-- Back review output must use `status: review_candidate`;
-- output audit rejects `completed` as an invalid Front/Back output status;
-- Back Agents review Front outputs and have blocking authority;
-- Leader-owned integration evidence is aligned with the final execution candidate;
-- the final integration branch remains a local Test handoff candidate.
-
-Phase 19B acceptance label:
-
-```text
-accepted_real_execution_front_back_agent_closure
-```
-
-Phase 19B must not be labeled:
-
-```text
-production_execution_lifecycle_closure
-```
-
-Known limits:
-
-- no persistent production agent supervision;
-- no restart/recovery lifecycle;
-- no remote branch governance;
-- no remote push;
-- no PR;
-- no remote merge;
-- no release;
-- no production sign-off;
-- no global causal merge.
+Phase 19B proves real Front/Back agent creation, proof/output audits, Back Agent blocking review authority, and Leader-owned local integration. It does not claim production branch governance or production agent lifecycle supervision.
 
 ## Test Department
 
@@ -545,15 +484,6 @@ Key rules:
 - Passed or scoped-pass results go to Final Review, not directly to Master.
 - Test output is evidence/scoped conclusion, not global causal truth.
 
-The current Test runtime demo validates:
-
-```text
-Execution -> Test -> Execution
-Execution -> Test -> Final Review
-```
-
-The runtime uses request-provided candidate snapshots and in-process route workers. It does not perform production git checkout, real CI, real environment provisioning, or nested-Codex Test Worker orchestration.
-
 ### Phase 20A handoff validation acceptance
 
 Phase 20A validates Test Leader consumption of the Execution Phase 19B handoff package.
@@ -566,34 +496,7 @@ integration branch: aegis/phase19b/integration-001
 handoff kind: execution_real_front_back_candidate
 ```
 
-Phase 20A proves:
-
-- handoff target is `test`;
-- handoff status is `ready_for_test_department`;
-- the sandbox integration branch is checked out and validated;
-- the integration commit matches the expected commit;
-- sandbox pytest passes through the Test Leader handoff-validation path;
-- reproducibility set is generated;
-- artifact manifest is generated;
-- final Test result is `passed`;
-- next route is `final_review`;
-- Test does not modify implementation code;
-- no real Test Worker Codex agent is claimed;
-- no remote push, PR, remote merge, release, production sign-off, or global causal truth mutation occurs;
-- sandbox ending on `aegis/phase19b/integration-001` is expected, not failure.
-
-Phase 20A acceptance label:
-
-```text
-accepted_test_handoff_validation_closure
-```
-
-Phase 20A must not be labeled:
-
-```text
-accepted_real_test_worker_closure
-production_test_lifecycle_closure
-```
+Phase 20A proves handoff-field validation, sandbox checkout, local sandbox pytest through the Test handoff-validation path, reproducibility set generation, artifact manifest generation, and scoped final Test result. It does not claim real Test Worker Codex agent creation or production Test lifecycle closure.
 
 ### Phase 20B real Test Worker acceptance
 
@@ -607,26 +510,7 @@ integration branch: aegis/phase19b/integration-001
 source handoff: Execution Phase 19B / Test Phase 20A
 ```
 
-Phase 20B proves:
-
-- Test Worker profile is `gpt-5.5 / high`;
-- Test Worker profile is no longer deferred;
-- Master creates only the Test Leader;
-- Test Leader creates real Test Workers for accepted validation routes;
-- Test Workers are route-bound, request-scoped, and Test-department-internal;
-- every Test Worker leaves an auditable proof file;
-- every Test Worker leaves an auditable output file;
-- every Test Worker preserves route evidence and private work evidence;
-- missing proof or output fails acceptance;
-- worker output status is `test_worker_report_candidate`;
-- worker causal status is `scoped_evidence_candidate`;
-- `route.sandbox_pytest` passed;
-- `route.changed_files_scope` passed;
-- final Test result is `passed`;
-- next route is `final_review`;
-- final review handoff package is produced;
-- Test does not modify implementation code;
-- no remote push, PR, remote merge, release, production sign-off, or global causal truth mutation occurs.
+Phase 20B proves Test Worker `gpt-5.5 / high` model-policy closure, real Test Worker creation, proof/output audits, route-level scoped evidence, final Test result, and Final Review handoff package generation.
 
 Phase 20B acceptance label:
 
@@ -677,13 +561,55 @@ Key rules:
 - Final Review returns only to Master under the current topology.
 - Final Review output is a recommendation, not a release action or global causal truth.
 
-The current Final Review runtime demo validates:
+The deterministic Final Review runtime validates:
 
 ```text
 Test -> Final Review -> Master
 ```
 
-The runtime is deterministic demo infrastructure. It does not call real external models, create root model/reasoning-budget policy files, perform production artifact review, or merge global causal truth.
+### Phase 21A Final Review handoff validation
+
+Phase 21A validates that Final Review can consume the real Test Phase 20B handoff material and return a valid Master recommendation.
+
+```text
+Test Phase 20B final_review handoff package
+  -> Final Review handoff validator
+      -> deterministic FinalReviewLeader
+      -> final_review_result
+  -> Master recommendation boundary
+```
+
+Phase 21A proves:
+
+- the handoff kind is `test_real_worker_result`;
+- the target is `final_review`;
+- the source status is `ready_for_final_review`;
+- the canonical Phase 20B CLI handoff validation passes;
+- list-shaped and object-shaped `route_results` are accepted when all routes passed;
+- the output route remains `final_review -> master`;
+- the result is a `final_review_recommendation`;
+- `accept_for_master_with_scope_limit` is used when Phase 20B known limits remain material;
+- no real nested-Codex Final Review Leader is created;
+- no Final Review Worker is created;
+- no router/topology mutation occurs;
+- no production release review, production sign-off, or global causal truth mutation is claimed.
+
+Phase 21A acceptance label:
+
+```text
+accepted_final_review_handoff_validation_closure
+```
+
+Phase 21A must not be labeled:
+
+```text
+accepted_real_final_review_leader_closure
+production_final_review_lifecycle_closure
+production_release_review_closure
+global_causal_truth_closure
+```
+
+Phase 21B is reserved for real nested-Codex Final Review Leader acceptance. It must preserve the single-Leader Final Review architecture and must not introduce Final Review Workers.
 
 ## Model and reasoning-budget policy
 
@@ -713,226 +639,31 @@ Hard rules:
 - agents must not self-select models or budgets;
 - fallback and silent downgrade are forbidden in the current phase;
 - Master dynamic adjustment is deferred;
-- Test Worker profile is no longer deferred after Phase 20B;
 - Debate Worker is no longer deferred after Phase 18;
-- Execution Front/Back profiles are no longer deferred after Phase 19B.
-
-## Master top-level nested-Codex bootstrap
-
-The Master runtime can create the four top-level department Leaders through nested-Codex and register them into the top-level Router domain:
-
-```text
-Master
-  -> Debate Leader
-  -> Execution Leader
-  -> Test Leader
-  -> Final Review Leader
-```
-
-Phase 17 proof verifies:
-
-- root policy parsing for Master and all top-level Leaders;
-- nested-Codex creation request construction with the locked model and reasoning budget;
-- real nested-Codex MCP creation for all four top-level Leaders;
-- Router registration for the created Leaders;
-- all 10 v1 top-level route checks, including `debate -> master`;
-- proof-file audit with sha256 for each real nested-Codex Leader proof.
-
-Phase 18 Debate acceptance intentionally used a narrower top-level creation scope: Master created only the Debate Leader, and the Debate Leader created the request-scoped Debate Workers.
-
-Phase 19A Execution acceptance uses the Execution Leader boundary to operate on a separate local sandbox repository and create local group/integration branches. It does not create real Front/Back Codex agents.
-
-Phase 19B Execution acceptance uses the Execution Leader boundary to create real request-scoped Front/Back Codex agents for sandbox Execution Groups. It still does not claim production branch governance or production agent lifecycle supervision.
-
-This is still demo/acceptance closure. It does not claim production Master runtime closure or production nested-Codex process supervision.
+- Execution Front/Back profiles are no longer deferred after Phase 19B;
+- Test Worker profile is no longer deferred after Phase 20B.
 
 ## Quick validation
 
 From repository root on Windows PowerShell.
 
-### Debate runtime and real-worker tooling
+### Final Review runtime and Phase 21A
 
 ```powershell
-py -3.13 -m venv .venv-debate-real-worker
-.\.venv-debate-real-worker\Scripts\python.exe -m pip install -U pip
-.\.venv-debate-real-worker\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
-.\.venv-debate-real-worker\Scripts\python.exe -m pip install -e ".\aegis-runtime\debate[dev]"
+py -3.13 -m venv .venv-final-review-phase21a
+.\.venv-final-review-phase21a\Scripts\python.exe -m pip install -U pip
+.\.venv-final-review-phase21a\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-final-review-phase21a\Scripts\python.exe -m pip install -e ".\aegis-runtime\final_review[dev]"
 
-.\.venv-debate-real-worker\Scripts\python.exe -m pytest .\aegis-runtime\debate -vv
+.\.venv-final-review-phase21a\Scripts\python.exe -m compileall .\aegis-runtime\final_review\aegis_final_review_runtime
+.\.venv-final-review-phase21a\Scripts\python.exe -m pytest .\aegis-runtime\final_review\tests\test_phase21a_final_review_handoff_validation.py -vv
+.\.venv-final-review-phase21a\Scripts\python.exe -m pytest .\aegis-runtime\final_review\tests\test_router_integrated_final_review_closure.py -vv
+.\.venv-final-review-phase21a\Scripts\python.exe -m pytest .\aegis-runtime\final_review -vv
+
+.\.venv-final-review-phase21a\Scripts\python.exe -m aegis_final_review_runtime.phase21a_cli run `
+  --handoff-package .\.aegis-phase20b-test-real-worker\outputs\final_review_handoff_package_phase20b.json `
+  --output-dir .\.aegis-phase21a-final-review-handoff-validation\outputs
 ```
-
-Strict real-worker utility flow:
-
-```powershell
-.\.venv-debate-real-worker\Scripts\python.exe -m aegis_debate_runtime.real_worker_cli prepare-requests `
-  --policy .\MODEL_REASONING_BUDGET_POLICY.yaml `
-  --request .\aegis-runtime\debate\examples\demo_request.json `
-  --output-dir .\.aegis-debate-real-worker
-
-# Real creation requires a concrete nested-Codex/Codex MCP create-agent surface.
-# If the available surface is a current-session MCP tool, create workers there
-# and then run strict proof audit after proof files are written.
-
-.\.venv-debate-real-worker\Scripts\python.exe -m aegis_debate_runtime.real_worker_cli audit-proofs `
-  --expected .\.aegis-debate-real-worker\expected_worker_proofs.json `
-  --proof-dir .\.aegis-debate-real-worker\worker_proofs `
-  --output .\.aegis-debate-real-worker\worker_proof_audit_summary.json
-```
-
-### Execution runtime, Phase 19A, and Phase 19B
-
-```powershell
-py -3.13 -m venv .venv-execution-phase19b
-.\.venv-execution-phase19b\Scripts\python.exe -m pip install -U pip
-.\.venv-execution-phase19b\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
-.\.venv-execution-phase19b\Scripts\python.exe -m pip install -e ".\aegis-runtime\execution[dev]"
-
-.\.venv-execution-phase19b\Scripts\python.exe -m pytest .\aegis-runtime\execution\tests\test_execution_git_topology_closure.py -vv
-.\.venv-execution-phase19b\Scripts\python.exe -m pytest .\aegis-runtime\execution\tests\test_execution_real_front_back_agent_acceptance.py -vv
-.\.venv-execution-phase19b\Scripts\python.exe -m pytest .\aegis-runtime\execution -vv
-```
-
-Phase 19A/19B sandbox runs require a clean local clone of:
-
-```text
-C:\Users\playm\Documents\self-git\aegis-execution-sandbox
-git@github.com:rain-123-bow/aegis-execution-sandbox.git
-```
-
-Phase 19A local git topology CLI shape:
-
-```powershell
-.\.venv-execution-phase19b\Scripts\python.exe -m aegis_execution_runtime.git_topology_cli run `
-  --request .\.aegis-phase19a-execution-test\inputs\phase19a_execution_git_topology_request.json `
-  --output-dir .\.aegis-phase19a-execution-test\outputs
-```
-
-Phase 19B real Front/Back request/audit CLI shape:
-
-```powershell
-.\.venv-execution-phase19b\Scripts\python.exe -m aegis_execution_runtime.real_agent_cli prepare-requests `
-  --policy .\MODEL_REASONING_BUDGET_POLICY.yaml `
-  --execution-package .\.aegis-phase19b-execution-test\inputs\phase19b_execution_package.json `
-  --run-id phase19b-execution-real-agents-001 `
-  --output-dir .\.aegis-phase19b-execution-test\prepared `
-  --proof-dir .\.aegis-phase19b-execution-test\agent_proofs `
-  --agent-output-dir .\.aegis-phase19b-execution-test\agent_outputs
-
-.\.venv-execution-phase19b\Scripts\python.exe -m aegis_execution_runtime.real_agent_cli audit-proofs `
-  --expected .\.aegis-phase19b-execution-test\prepared\expected_execution_agent_proofs.json `
-  --proof-dir .\.aegis-phase19b-execution-test\agent_proofs `
-  --output .\.aegis-phase19b-execution-test\agent_proof_audit_summary.json
-
-.\.venv-execution-phase19b\Scripts\python.exe -m aegis_execution_runtime.real_agent_cli audit-outputs `
-  --expected .\.aegis-phase19b-execution-test\prepared\expected_execution_agent_outputs.json `
-  --agent-output-dir .\.aegis-phase19b-execution-test\agent_outputs `
-  --output .\.aegis-phase19b-execution-test\agent_output_audit_summary.json
-```
-
-### Test runtime
-
-```powershell
-py -3.13 -m venv .venv-test-runtime
-.\.venv-test-runtime\Scripts\python.exe -m pip install -U pip
-.\.venv-test-runtime\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
-.\.venv-test-runtime\Scripts\python.exe -m pip install -e ".\aegis-runtime\test[dev]"
-
-.\.venv-test-runtime\Scripts\python.exe -m pytest .\aegis-runtime\test
-.\.venv-test-runtime\Scripts\python.exe -m pytest .\aegis-runtime\test\tests\test_router_integrated_test_closure.py -vv
-.\.venv-test-runtime\Scripts\python.exe -m aegis_test_runtime.cli --request .\aegis-runtime\test\examples\demo_request_pass.json
-.\.venv-test-runtime\Scripts\python.exe -m aegis_test_runtime.cli --request .\aegis-runtime\test\examples\demo_request_failure.json
-```
-
-### Test runtime and Phase 20A
-
-```powershell
-py -3.13 -m venv .venv-test-phase20a
-.\.venv-test-phase20a\Scripts\python.exe -m pip install -U pip
-.\.venv-test-phase20a\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
-.\.venv-test-phase20a\Scripts\python.exe -m pip install -e ".\aegis-runtime\test[dev]"
-
-.\.venv-test-phase20a\Scripts\python.exe -m pytest .\aegis-runtime\test\tests\test_test_handoff_validation_closure.py -vv
-.\.venv-test-phase20a\Scripts\python.exe -m pytest .\aegis-runtime\test -vv
-```
-
-Phase 20A handoff validation CLI shape:
-
-```powershell
-.\.venv-test-phase20a\Scripts\python.exe -m aegis_test_runtime.handoff_validation_cli `
-  --handoff .\.aegis-phase20a-test-handoff-validation\inputs\phase20a_test_handoff_package.json `
-  --output-dir .\.aegis-phase20a-test-handoff-validation\outputs `
-  --test-command ".\.venv\Scripts\python.exe -m pytest -vv"
-```
-
-### Test Phase 20B real-worker tooling
-
-```powershell
-py -3.13 -m venv .venv-test-phase20b
-.\.venv-test-phase20b\Scripts\python.exe -m pip install -U pip
-.\.venv-test-phase20b\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
-.\.venv-test-phase20b\Scripts\python.exe -m pip install -e ".\aegis-runtime\test[dev]"
-
-.\.venv-test-phase20b\Scripts\python.exe -m pytest .\aegis-runtime\test\tests\test_test_real_worker_acceptance.py -vv
-.\.venv-test-phase20b\Scripts\python.exe -m pytest .\aegis-runtime\test -vv
-```
-
-Phase 20B real Test Worker request/audit CLI shape:
-
-```powershell
-.\.venv-test-phase20b\Scripts\python.exe -m aegis_test_runtime.real_worker_cli prepare-requests `
-  --policy .\MODEL_REASONING_BUDGET_POLICY.yaml `
-  --validation-package .\.aegis-phase20b-test-real-worker\inputs\phase20b_validation_package.json `
-  --run-id phase20b-test-real-workers-001 `
-  --output-dir .\.aegis-phase20b-test-real-worker\prepared `
-  --proof-dir .\.aegis-phase20b-test-real-worker\test_worker_proofs `
-  --worker-output-dir .\.aegis-phase20b-test-real-worker\test_worker_outputs
-
-.\.venv-test-phase20b\Scripts\python.exe -m aegis_test_runtime.real_worker_cli audit-proofs `
-  --expected .\.aegis-phase20b-test-real-worker\prepared\expected_test_worker_proofs.json `
-  --proof-dir .\.aegis-phase20b-test-real-worker\test_worker_proofs `
-  --output .\.aegis-phase20b-test-real-worker\test_worker_proof_audit_summary.json
-
-.\.venv-test-phase20b\Scripts\python.exe -m aegis_test_runtime.real_worker_cli audit-outputs `
-  --expected .\.aegis-phase20b-test-real-worker\prepared\expected_test_worker_outputs.json `
-  --worker-output-dir .\.aegis-phase20b-test-real-worker\test_worker_outputs `
-  --output .\.aegis-phase20b-test-real-worker\test_worker_output_audit_summary.json
-```
-
-Unit tests and `prepare-requests` validate tooling only. Real Phase 20B acceptance requires actual Test Worker creation through the available nested-Codex/Codex surface and strict proof/output audit.
-
-### Final Review runtime
-
-```powershell
-py -3.13 -m venv .venv-final-review-runtime
-.\.venv-final-review-runtime\Scripts\python.exe -m pip install -U pip
-.\.venv-final-review-runtime\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
-.\.venv-final-review-runtime\Scripts\python.exe -m pip install -e ".\aegis-runtime\final_review[dev]"
-
-.\.venv-final-review-runtime\Scripts\python.exe -m pytest .\aegis-runtime\final_review
-.\.venv-final-review-runtime\Scripts\python.exe -m pytest .\aegis-runtime\final_review\tests\test_router_integrated_final_review_closure.py -vv
-.\.venv-final-review-runtime\Scripts\python.exe -m aegis_final_review_runtime.cli --request .\aegis-runtime\final_review\examples\demo_request_accept.json
-.\.venv-final-review-runtime\Scripts\python.exe -m aegis_final_review_runtime.cli --request .\aegis-runtime\final_review\examples\demo_request_blocked_resource.json
-.\.venv-final-review-runtime\Scripts\python.exe -m aegis_final_review_runtime.cli --request .\aegis-runtime\final_review\examples\demo_request_scope_limit.json
-```
-
-### Master top-level runtime
-
-```powershell
-py -3.13 -m venv .venv-master-runtime
-.\.venv-master-runtime\Scripts\python.exe -m pip install -U pip
-.\.venv-master-runtime\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
-.\.venv-master-runtime\Scripts\python.exe -m pip install -e ".\aegis-runtime\master[dev]"
-
-.\.venv-master-runtime\Scripts\python.exe -m pytest .\aegis-runtime\master -vv
-.\.venv-master-runtime\Scripts\python.exe -m pytest .\aegis-runtime\master\tests\test_master_nested_codex_agent_proof_audit.py -vv
-
-.\.venv-master-runtime\Scripts\python.exe -m aegis_master_runtime.cli validate-recording `
-  --policy .\MODEL_REASONING_BUDGET_POLICY.yaml `
-  --router-state .\.aegis-master-runtime\router_state.json `
-  --output-dir .\.aegis-master-runtime
-```
-
-Real nested-Codex validation is performed through the available local MCP surface and audited through proof files. The stdio `validate-real` path remains available for a future standardized create-agent MCP tool name.
 
 Before committing local changes:
 
@@ -974,6 +705,8 @@ runtime_test_reports/PHASE_20A_TEST_HANDOFF_VALIDATION_PATCH_PLAN.md
 runtime_test_reports/PHASE_20A_TEST_HANDOFF_VALIDATION_FULL_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_20B_TEST_REAL_WORKER_PATCH_PLAN.md
 runtime_test_reports/PHASE_20B_TEST_REAL_WORKER_FULL_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_21A_FINAL_REVIEW_HANDOFF_VALIDATION_PATCH_PLAN.md
+runtime_test_reports/PHASE_21A_FINAL_REVIEW_HANDOFF_VALIDATION_ACCEPTANCE_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -1020,7 +753,10 @@ router-integrated communication closure
 + Final Review resource-policy gate closure
 + Final Review object-consistency and evidence-sufficiency closure
 + Final Review result-to-Master closure
-+ Root static model/reasoning-budget policy for Master, top-level Leaders, Debate Workers, and Execution Front/Back agents
++ Final Review Phase 21A real Test handoff consumption closure
++ Final Review Phase 21A handoff validator closure
++ Final Review Phase 21A Master recommendation boundary closure
++ Root static model/reasoning-budget policy for Master, top-level Leaders, Debate Workers, Execution Front/Back agents, and Test Workers
 + Master nested-Codex top-level Leader creation closure
 + Master top-level Router registration and 10-edge communication closure
 + Four-Leader proof-file sha256 audit closure
@@ -1050,6 +786,7 @@ Deferred production topics include:
 - production Test lifecycle supervision;
 - production Test CI, durable environment provisioning, and external artifact backend;
 - production Test Worker supervision, restart/recovery, and lifecycle management;
+- real Final Review Leader acceptance after Phase 21A;
 - production Final Review runtime with real external model invocation, root resource-policy integration, and production artifact review backend;
 - Master-driven dynamic model and reasoning-budget adjustment;
 - real Archive / Knowledge / Causal admission;
