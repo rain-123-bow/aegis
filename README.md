@@ -189,6 +189,26 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - full Test runtime suite passed;
     - sandbox pytest passed through the Test Leader handoff-validation path;
     - reproducibility set and artifact manifest were generated.
+36. Test Worker profile is explicitly locked as `gpt-5.5 / high` with fallback and silent downgrade forbidden.
+37. Phase 20B real Test Worker acceptance:
+    - Master creates only the Test Leader;
+    - Test Leader creates one real nested-Codex / Codex Test Worker per accepted validation route;
+    - Test Workers are request-scoped, route-bound, and Test-department-internal;
+    - every Test Worker leaves proof, output, route evidence, and private work evidence;
+    - missing proof or missing output fails acceptance;
+    - Test Worker proof audit passed for 2 workers;
+    - Test Worker output audit passed for 2 workers;
+    - `route.sandbox_pytest` passed;
+    - `route.changed_files_scope` passed;
+    - final Test result is `passed`;
+    - next route is `final_review`;
+    - Test output remains scoped evidence / `causal_candidate`, not global causal truth;
+    - no implementation code modification, remote push, PR, remote merge, release, production sign-off, or global causal truth mutation is performed.
+38. Phase 20B Test runtime closure:
+    - targeted Phase 20B real-worker tests passed;
+    - full Test runtime suite passed;
+    - direct sandbox pytest cross-check passed;
+    - final review handoff package was produced with `handoff_kind: test_real_worker_result`.
 
 This is demo/acceptance closure, not production closure.
 
@@ -248,6 +268,19 @@ Execution Phase 19B handoff package
       -> preserve reproducibility set and artifact manifest
       -> produce scoped final Test result
   -> passed result routes to Final Review
+```
+
+Phase 20B adds real Test Worker acceptance below the Test Leader:
+
+```text
+Execution Phase 19B / Test Phase 20A validation material
+  -> Test Leader
+      -> accepted validation routes
+          -> real nested-Codex Test Worker per route
+      -> strict Test Worker proof/output audit
+      -> route-level scoped evidence
+      -> final Test result
+      -> Final Review handoff package
 ```
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, or production branch governance.
@@ -562,6 +595,51 @@ accepted_real_test_worker_closure
 production_test_lifecycle_closure
 ```
 
+### Phase 20B real Test Worker acceptance
+
+Phase 20B validates real request-scoped Test Worker acceptance below the Test Leader.
+
+The source material remains the Execution Phase 19B / Test Phase 20A sandbox integration candidate:
+
+```text
+target repo: rain-123-bow/aegis-execution-sandbox
+integration branch: aegis/phase19b/integration-001
+source handoff: Execution Phase 19B / Test Phase 20A
+```
+
+Phase 20B proves:
+
+- Test Worker profile is `gpt-5.5 / high`;
+- Test Worker profile is no longer deferred;
+- Master creates only the Test Leader;
+- Test Leader creates real Test Workers for accepted validation routes;
+- Test Workers are route-bound, request-scoped, and Test-department-internal;
+- every Test Worker leaves an auditable proof file;
+- every Test Worker leaves an auditable output file;
+- every Test Worker preserves route evidence and private work evidence;
+- missing proof or output fails acceptance;
+- worker output status is `test_worker_report_candidate`;
+- worker causal status is `scoped_evidence_candidate`;
+- `route.sandbox_pytest` passed;
+- `route.changed_files_scope` passed;
+- final Test result is `passed`;
+- next route is `final_review`;
+- final review handoff package is produced;
+- Test does not modify implementation code;
+- no remote push, PR, remote merge, release, production sign-off, or global causal truth mutation occurs.
+
+Phase 20B acceptance label:
+
+```text
+accepted_real_test_worker_closure
+```
+
+Phase 20B must not be labeled:
+
+```text
+production_test_lifecycle_closure
+```
+
 ## Final Review Department
 
 The Final Review Department is responsible for single-Leader whole-chain consistency review before results return to Master.
@@ -625,6 +703,7 @@ Execution Leader            -> gpt-5.5 / high
 Execution Front Agent       -> gpt-5.5 / high
 Execution Back Agent        -> gpt-5.5 / high
 Test Leader                 -> gpt-5.5 / high
+Test Worker                 -> gpt-5.5 / high
 Final Review Leader         -> gpt-5.5 / extra_high
 ```
 
@@ -634,7 +713,7 @@ Hard rules:
 - agents must not self-select models or budgets;
 - fallback and silent downgrade are forbidden in the current phase;
 - Master dynamic adjustment is deferred;
-- Test Worker profile is deferred;
+- Test Worker profile is no longer deferred after Phase 20B;
 - Debate Worker is no longer deferred after Phase 18;
 - Execution Front/Back profiles are no longer deferred after Phase 19B.
 
@@ -785,6 +864,42 @@ Phase 20A handoff validation CLI shape:
   --test-command ".\.venv\Scripts\python.exe -m pytest -vv"
 ```
 
+### Test Phase 20B real-worker tooling
+
+```powershell
+py -3.13 -m venv .venv-test-phase20b
+.\.venv-test-phase20b\Scripts\python.exe -m pip install -U pip
+.\.venv-test-phase20b\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-test-phase20b\Scripts\python.exe -m pip install -e ".\aegis-runtime\test[dev]"
+
+.\.venv-test-phase20b\Scripts\python.exe -m pytest .\aegis-runtime\test\tests\test_test_real_worker_acceptance.py -vv
+.\.venv-test-phase20b\Scripts\python.exe -m pytest .\aegis-runtime\test -vv
+```
+
+Phase 20B real Test Worker request/audit CLI shape:
+
+```powershell
+.\.venv-test-phase20b\Scripts\python.exe -m aegis_test_runtime.real_worker_cli prepare-requests `
+  --policy .\MODEL_REASONING_BUDGET_POLICY.yaml `
+  --validation-package .\.aegis-phase20b-test-real-worker\inputs\phase20b_validation_package.json `
+  --run-id phase20b-test-real-workers-001 `
+  --output-dir .\.aegis-phase20b-test-real-worker\prepared `
+  --proof-dir .\.aegis-phase20b-test-real-worker\test_worker_proofs `
+  --worker-output-dir .\.aegis-phase20b-test-real-worker\test_worker_outputs
+
+.\.venv-test-phase20b\Scripts\python.exe -m aegis_test_runtime.real_worker_cli audit-proofs `
+  --expected .\.aegis-phase20b-test-real-worker\prepared\expected_test_worker_proofs.json `
+  --proof-dir .\.aegis-phase20b-test-real-worker\test_worker_proofs `
+  --output .\.aegis-phase20b-test-real-worker\test_worker_proof_audit_summary.json
+
+.\.venv-test-phase20b\Scripts\python.exe -m aegis_test_runtime.real_worker_cli audit-outputs `
+  --expected .\.aegis-phase20b-test-real-worker\prepared\expected_test_worker_outputs.json `
+  --worker-output-dir .\.aegis-phase20b-test-real-worker\test_worker_outputs `
+  --output .\.aegis-phase20b-test-real-worker\test_worker_output_audit_summary.json
+```
+
+Unit tests and `prepare-requests` validate tooling only. Real Phase 20B acceptance requires actual Test Worker creation through the available nested-Codex/Codex surface and strict proof/output audit.
+
 ### Final Review runtime
 
 ```powershell
@@ -857,6 +972,8 @@ runtime_test_reports/PHASE_19B_EXECUTION_REAL_FRONT_BACK_AGENT_POST_ACCEPTANCE_F
 runtime_test_reports/PHASE_19B_EXECUTION_REAL_FRONT_BACK_AGENT_EVIDENCE_CLEAN_FIX_REPORT.md
 runtime_test_reports/PHASE_20A_TEST_HANDOFF_VALIDATION_PATCH_PLAN.md
 runtime_test_reports/PHASE_20A_TEST_HANDOFF_VALIDATION_FULL_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_20B_TEST_REAL_WORKER_PATCH_PLAN.md
+runtime_test_reports/PHASE_20B_TEST_REAL_WORKER_FULL_ACCEPTANCE_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -894,6 +1011,11 @@ router-integrated communication closure
 + Test Phase 20A reproducibility-set closure
 + Test Phase 20A artifact-manifest closure
 + Test Phase 20A scoped final-test-result closure
++ Test Worker gpt-5.5/high model-policy closure
++ Test Phase 20B real Test Worker proof-audit closure
++ Test Phase 20B real Test Worker output-audit closure
++ Test Phase 20B route-level evidence closure
++ Test Phase 20B final-review handoff package closure
 + Final Review single-Leader whole-chain review closure
 + Final Review resource-policy gate closure
 + Final Review object-consistency and evidence-sufficiency closure
@@ -924,12 +1046,12 @@ Deferred production topics include:
 - real git branch/worktree orchestration beyond local Phase 19A/19B topology validation;
 - production real Front/Back worker supervision, restart/recovery, and lifecycle management;
 - remote Execution branch governance;
-- real Test Worker Codex agent acceptance;
 - production Debate Worker supervision, restart/recovery, and lifecycle management;
-- production Test CI, environment provisioning, and external artifact backend;
+- production Test lifecycle supervision;
+- production Test CI, durable environment provisioning, and external artifact backend;
+- production Test Worker supervision, restart/recovery, and lifecycle management;
 - production Final Review runtime with real external model invocation, root resource-policy integration, and production artifact review backend;
 - Master-driven dynamic model and reasoning-budget adjustment;
-- Test Worker model profile;
 - real Archive / Knowledge / Causal admission;
 - real global causal merge;
 - production branch protection;
