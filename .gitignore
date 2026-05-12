@@ -12,5 +12,6 @@ build/
 .aegis-router/
 .aegis-debate-real-worker/
 .aegis-phase*/
+local_artifacts/
 .DS_Store
 Thumbs.db

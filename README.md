@@ -4,6 +4,10 @@ Aegis is a layered AI organization architecture for governed multi-agent softwar
 
 It is not a generic agent chat framework. Aegis is designed to make AI collaboration auditable, contract-bounded, causally traceable, and safe to inherit across sessions.
 
+![Aegis Phase-1 demo acceptance architecture](docs/aegis-phase-1-demo-acceptance-architecture.png)
+
+This diagram shows the Phase-1 demo / acceptance architecture. It does not claim production lifecycle closure.
+
 ## Core idea
 
 ```text
