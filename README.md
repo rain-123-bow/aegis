@@ -232,6 +232,21 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - `git diff --check` passed;
     - real Leader proof/output audit passed;
     - acceptance label is `accepted_real_final_review_leader_closure`.
+43. Phase 22A three-store admission boundary:
+    - Master-owned Archive / Knowledge / Causal admission policy exists;
+    - deterministic `aegis-runtime/state_admission` validator exists;
+    - Archive admits history candidates without producing truth;
+    - Knowledge admits source-backed static facts and constraints, not causal reasoning chains;
+    - Causal admits only staged `causal_candidate` structures;
+    - `stage_causal_candidate` means candidate-lane staging, not canonical/global causal truth;
+    - Master may directly construct and stage a Causal candidate in the unique-conclusion path;
+    - Debate Leader output requires Master structural admission review before staging;
+    - direct global causal truth writes and production store mutations are rejected.
+44. Phase 22A runtime validation:
+    - `compileall` passed for `aegis-runtime/state_admission`;
+    - Phase 22A state admission pytest passed with 13 tests;
+    - `git diff --check` passed;
+    - no router/topology mutation, fifth department, long-lived State Admission Agent, production store write, or global causal merge is claimed.
 
 This is demo/acceptance closure, not production closure.
 
@@ -329,7 +344,54 @@ Master
 
 Phase 21B closes real Final Review Leader acceptance. It does not create Final Review Workers and does not claim production Final Review lifecycle closure.
 
+Phase 22A adds Master-owned three-store admission policy and deterministic validator tooling:
+
+```text
+Department output / developer claim / Master observation
+  -> Master-owned structural admission review
+  -> archive_candidate | knowledge_candidate | staged causal_candidate | rejection | debate request
+```
+
+Phase 22A stages Causal candidates only. It does not write production Archive / Knowledge / Causal stores and does not perform canonical/global causal truth merge.
+
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, production branch governance, production release review, or global causal truth merge.
+
+## Three-store admission
+
+Phase 22A introduces the current Master-owned admission boundary for project business state:
+
+```text
+Archive   = what happened
+Knowledge = what is known
+Causal    = why a judgment holds
+```
+
+The contract files live under:
+
+```text
+aegis-master-kit/master/THREE_STORE_ADMISSION_POLICY.md
+aegis-master-kit/master/STATE_ADMISSION_DECISION_CONTRACT.md
+```
+
+The deterministic validator lives under:
+
+```text
+aegis-runtime/state_admission/
+```
+
+Key rules:
+
+- three-store admission is a Master governance capability, not a fifth department;
+- no long-lived State Admission Agent is introduced;
+- ordinary agents cannot directly write Archive, Knowledge, or Causal;
+- Archive records events and responsibility, not truth;
+- Knowledge stores verified static facts and constraints, not causal reasoning;
+- Causal requires statement, why, evidence, scope, assumptions, and allowed source origin;
+- Master may directly stage a Causal candidate in the unique / near-unique conclusion path;
+- Debate Leader causal output is not automatically staged and requires Master structural admission review;
+- `stage_causal_candidate` is candidate-lane staging only;
+- staged Causal candidates are not canonical/global causal truth;
+- Phase 22A performs no production store write and no global causal merge.
 
 ## Aegis Router
 
@@ -771,6 +833,25 @@ Phase 21B real Leader request and audit tooling:
   --output .\.aegis-phase21b-final-review-real-leader\final_review_leader_output_audit_summary.json
 ```
 
+### Phase 22A state admission validator
+
+```powershell
+py -3.13 -m venv .venv-state-admission-phase22a
+.\.venv-state-admission-phase22a\Scripts\python.exe -m pip install -U pip
+.\.venv-state-admission-phase22a\Scripts\python.exe -m pip install -e ".\aegis-runtime\state_admission[dev]"
+
+.\.venv-state-admission-phase22a\Scripts\python.exe -m compileall .\aegis-runtime\state_admission\aegis_state_admission
+.\.venv-state-admission-phase22a\Scripts\python.exe -m pytest .\aegis-runtime\state_admission -vv
+```
+
+Expected Phase 22A result:
+
+```text
+13 passed
+```
+
+Phase 22A validation proves structural admission only. It does not prove production store writes or canonical/global causal merge.
+
 Before committing local changes:
 
 ```powershell
@@ -815,6 +896,7 @@ runtime_test_reports/PHASE_21A_FINAL_REVIEW_HANDOFF_VALIDATION_PATCH_PLAN.md
 runtime_test_reports/PHASE_21A_FINAL_REVIEW_HANDOFF_VALIDATION_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_21B_FINAL_REVIEW_REAL_LEADER_PATCH_PLAN.md
 runtime_test_reports/PHASE_21B_FINAL_REVIEW_REAL_LEADER_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_22A_THREE_STORE_ADMISSION_PATCH_PLAN.md
 ```
 
 Current demo/acceptance closure point:
@@ -872,6 +954,9 @@ router-integrated communication closure
 + Master nested-Codex top-level Leader creation closure
 + Master top-level Router registration and 10-edge communication closure
 + Four-Leader proof-file sha256 audit closure
++ Master-owned three-store structural admission boundary
++ State Admission deterministic validator closure
++ Causal candidate staging boundary with no global merge
 ```
 
 ## Production hardening not yet included
@@ -902,7 +987,8 @@ Deferred production topics include:
 - production Final Review runtime with durable artifact review backend;
 - production release review and sign-off authority;
 - Master-driven dynamic model and reasoning-budget adjustment;
-- real Archive / Knowledge / Causal admission;
+- production Archive / Knowledge / Causal store backend and durable write closure;
+- production three-store admission persistence;
 - real global causal merge;
 - production branch protection;
 - remote push / PR / merge / release.
