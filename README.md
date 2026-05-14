@@ -247,6 +247,13 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - Phase 22A state admission pytest passed with 13 tests;
     - `git diff --check` passed;
     - no router/topology mutation, fifth department, long-lived State Admission Agent, production store write, or global causal merge is claimed.
+45. Phase 22B Master causal review boundary:
+    - Master-owned high-budget causal review policy exists;
+    - deterministic `aegis-runtime/causal_review` validator exists;
+    - staged causal candidates are reviewed against Knowledge context, existing Causal context, constraints, and confidence state;
+    - statistical, deterministic proof, contract-proven, test-evidence-backed, and static-analysis-backed high-confidence support are distinguished from heuristic confidence;
+    - developer decision escalation produces a developer decision package and Archive event candidate;
+    - Phase 22B outputs decision artifacts only and does not perform canonical/global causal merge or production store writes.
 
 This is demo/acceptance closure, not production closure.
 
@@ -354,6 +361,19 @@ Department output / developer claim / Master observation
 
 Phase 22A stages Causal candidates only. It does not write production Archive / Knowledge / Causal stores and does not perform canonical/global causal truth merge.
 
+Phase 22B adds Master-owned causal review after Phase 22A staging:
+
+```text
+staged causal_candidate
+  + Knowledge context
+  + existing Causal context
+  + current constraints
+  + confidence / uncertainty state
+  -> causal_review_decision artifact
+```
+
+Phase 22B produces review decision artifacts only. It does not create a separate causal-review department, does not create a long-lived Causal Review Agent, does not modify router/topology, does not write production Archive / Knowledge / Causal stores, and does not perform canonical/global causal truth merge.
+
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, production branch governance, production release review, or global causal truth merge.
 
 ## Three-store admission
@@ -392,6 +412,47 @@ Key rules:
 - `stage_causal_candidate` is candidate-lane staging only;
 - staged Causal candidates are not canonical/global causal truth;
 - Phase 22A performs no production store write and no global causal merge.
+
+## Master causal review
+
+Phase 22B reviews staged Causal candidates after Phase 22A admission. It is a Master governance review step, not a new department or a production store writer.
+
+Input boundary:
+
+```text
+causal_candidate
+  + Knowledge context
+  + existing Causal context, or explicit absence reason
+  + current constraints
+  + confidence / uncertainty state
+```
+
+Output boundary:
+
+```text
+causal_review_decision artifact
+```
+
+Possible decision artifacts include:
+
+- `stage_canonical_merge_candidate`
+- `stage_scope_limited_merge_candidate`
+- `stage_supersession_candidate`
+- `stage_invalidation_candidate`
+- `developer_decision_required`
+- `needs_more_evidence`
+- `needs_debate`
+- `reject_direct_merge_or_store_write`
+
+Key rules:
+
+- statistical confidence requires numeric evidence above threshold;
+- deterministic proof, contract-proven, test-evidence-backed, and static-analysis-backed support require evidence references;
+- heuristic, qualitative, and unknown confidence do not satisfy decisive acceptance;
+- developer decision escalation produces a developer decision package and Archive event candidate;
+- Archive event candidate is not a production Archive write;
+- successful review stages a later persistence candidate only;
+- Phase 22B performs no production store write and no global causal merge.
 
 ## Aegis Router
 
@@ -852,6 +913,25 @@ Expected Phase 22A result:
 
 Phase 22A validation proves structural admission only. It does not prove production store writes or canonical/global causal merge.
 
+### Phase 22B causal review validator
+
+```powershell
+py -3.13 -m venv .venv-causal-review-phase22b
+.\.venv-causal-review-phase22b\Scripts\python.exe -m pip install -U pip
+.\.venv-causal-review-phase22b\Scripts\python.exe -m pip install -e ".\aegis-runtime\causal_review[dev]"
+
+.\.venv-causal-review-phase22b\Scripts\python.exe -m compileall .\aegis-runtime\causal_review\aegis_causal_review
+.\.venv-causal-review-phase22b\Scripts\python.exe -m pytest .\aegis-runtime\causal_review -vv
+```
+
+Expected Phase 22B result:
+
+```text
+22 passed
+```
+
+Phase 22B validation proves Master-owned causal review decision artifacts only. It does not prove production store writes or canonical/global causal merge.
+
 Before committing local changes:
 
 ```powershell
@@ -957,6 +1037,7 @@ router-integrated communication closure
 + Master-owned three-store structural admission boundary
 + State Admission deterministic validator closure
 + Causal candidate staging boundary with no global merge
++ Master causal review decision-artifact boundary with no global merge
 ```
 
 ## Production hardening not yet included
