@@ -254,6 +254,13 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - statistical, deterministic proof, contract-proven, test-evidence-backed, and static-analysis-backed high-confidence support are distinguished from heuristic confidence;
     - developer decision escalation produces a developer decision package and Archive event candidate;
     - Phase 22B outputs decision artifacts only and does not perform canonical/global causal merge or production store writes.
+46. Phase 22C local Causal Store persistence boundary:
+    - Master-owned local demo Causal Store persistence policy exists;
+    - deterministic `aegis-runtime/causal_store` persistence runtime exists;
+    - persistable Phase 22B decisions write local `causal/facts`, `index.yaml`, semantic changelog, change record, snapshot, and rollback metadata;
+    - causal semantic changelog records causal-state evolution and is not a Git diff duplicate;
+    - Phase 22C rejects unresolved developer decisions, insufficient-evidence decisions, direct write attempts, and malformed causal facts;
+    - Phase 22C does not implement production Causal Store backend, production encryption, remote sync, Archive/Knowledge persistence, router/topology changes, or a long-lived Causal Store Agent.
 
 This is demo/acceptance closure, not production closure.
 
@@ -373,6 +380,19 @@ staged causal_candidate
 ```
 
 Phase 22B produces review decision artifacts only. It does not create a separate causal-review department, does not create a long-lived Causal Review Agent, does not modify router/topology, does not write production Archive / Knowledge / Causal stores, and does not perform canonical/global causal truth merge.
+Phase 22C adds local demo Causal Store persistence after Phase 22B review:
+
+```text
+causal_review_decision
+  -> local causal/facts/Fxxxx.yaml
+  -> causal/index.yaml
+  -> causal/history/changes/Cxxxx.yaml
+  -> causal/history/changelog.md
+  -> causal/snapshots/Sxxxx.yaml
+  -> causal/rollback/Rxxxx.yaml
+```
+
+Phase 22C writes local demo causal state only. It does not implement production Causal Store backend, production encryption, remote sync, Archive/Knowledge persistence, or router/topology changes.
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, production branch governance, production release review, or global causal truth merge.
 
@@ -453,6 +473,44 @@ Key rules:
 - Archive event candidate is not a production Archive write;
 - successful review stages a later persistence candidate only;
 - Phase 22B performs no production store write and no global causal merge.
+
+## Causal Store persistence
+
+Phase 22C persists accepted Phase 22B causal review decisions into a local demo Causal Store.
+
+Persistable decisions:
+
+```text
+stage_canonical_merge_candidate
+stage_scope_limited_merge_candidate
+stage_supersession_candidate
+stage_invalidation_candidate
+```
+
+Rejected decisions:
+
+```text
+developer_decision_required
+needs_more_evidence
+needs_debate
+reject_candidate
+reject_direct_merge_or_store_write
+```
+
+Key local files:
+
+```text
+causal/index.yaml
+causal/facts/Fxxxx.yaml
+causal/history/changes/Cxxxx.yaml
+causal/history/changelog.md
+causal/snapshots/Sxxxx.yaml
+causal/rollback/Rxxxx.yaml
+```
+
+The causal semantic changelog records causal-state evolution: added facts, superseded facts, invalidated facts, reasons, evidence, affected scopes, and rollback references. It is not redundant with Git history.
+
+Phase 22C is local demo/runtime persistence only. It does not claim production persistence or global causal truth infrastructure.
 
 ## Aegis Router
 
@@ -931,6 +989,24 @@ Expected Phase 22B result:
 ```
 
 Phase 22B validation proves Master-owned causal review decision artifacts only. It does not prove production store writes or canonical/global causal merge.
+### Phase 22C Causal Store persistence validator
+
+```powershell
+py -3.13 -m venv .venv-causal-store-phase22c
+.\.venv-causal-store-phase22c\Scripts\python.exe -m pip install -U pip
+.\.venv-causal-store-phase22c\Scripts\python.exe -m pip install -e ".\aegis-runtime\causal_store[dev]"
+
+.\.venv-causal-store-phase22c\Scripts\python.exe -m compileall .\aegis-runtime\causal_store\aegis_causal_store
+.\.venv-causal-store-phase22c\Scripts\python.exe -m pytest .\aegis-runtime\causal_store -vv
+```
+
+Expected Phase 22C result:
+
+```text
+14 passed
+```
+
+Phase 22C validation proves local demo Causal Store persistence only. It does not prove production Causal Store backend, encryption, remote sync, Archive/Knowledge persistence, or global causal truth infrastructure.
 
 Before committing local changes:
 
@@ -977,6 +1053,7 @@ runtime_test_reports/PHASE_21A_FINAL_REVIEW_HANDOFF_VALIDATION_ACCEPTANCE_REPORT
 runtime_test_reports/PHASE_21B_FINAL_REVIEW_REAL_LEADER_PATCH_PLAN.md
 runtime_test_reports/PHASE_21B_FINAL_REVIEW_REAL_LEADER_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_22A_THREE_STORE_ADMISSION_PATCH_PLAN.md
+runtime_test_reports/PHASE_22C_CAUSAL_STORE_PERSISTENCE_PATCH_PLAN.md
 ```
 
 Current demo/acceptance closure point:
@@ -1038,6 +1115,7 @@ router-integrated communication closure
 + State Admission deterministic validator closure
 + Causal candidate staging boundary with no global merge
 + Master causal review decision-artifact boundary with no global merge
++ Local demo Causal Store persistence boundary with semantic changelog, snapshot, and rollback metadata
 ```
 
 ## Production hardening not yet included
