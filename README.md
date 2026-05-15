@@ -269,6 +269,14 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - artifact manifest, archive changelog, and rollback metadata are generated;
     - Archive records what happened and does not produce truth;
     - Phase 23A does not implement production Archive backend, production encryption, remote sync, Knowledge/Causal persistence, router/topology changes, or a long-lived archive runtime agent profile.
+48. Phase 23B local Knowledge Store persistence boundary:
+    - Master-owned local demo Knowledge Store persistence policy exists;
+    - deterministic `aegis-runtime/knowledge_store` persistence runtime exists;
+    - verified neutral facts and constraints are written into local Knowledge entries, index, changelog, and rollback metadata;
+    - `add_entry`, `update_entry`, and `deprecate_entry` operations are locally validated;
+    - causal-shaped inputs, archive-event-shaped inputs, unverified developer assertions, and direct Archive/Causal/global truth writes are rejected;
+    - Knowledge records what is known and does not produce Causal truth;
+    - Phase 23B does not implement production Knowledge backend, production encryption, remote sync, Archive/Causal persistence, router/topology changes, or a long-lived knowledge runtime agent profile.
 
 This is demo/acceptance closure, not production closure.
 
@@ -416,6 +424,19 @@ archive_event_candidate
 
 Phase 23A writes local demo Archive state only. It does not implement production Archive backend, production encryption, remote sync, Knowledge/Causal persistence, or router/topology changes.
 
+Phase 23B adds local demo Knowledge Store persistence:
+
+```text
+knowledge_candidate
+  -> knowledge/entries/Kxxxx.yaml
+  -> knowledge/index.yaml
+  -> knowledge/history/changes/Cxxxx.yaml
+  -> knowledge/history/changelog.md
+  -> knowledge/rollback/Rxxxx.yaml
+```
+
+Phase 23B writes local demo Knowledge state only. It does not implement production Knowledge backend, production encryption, remote sync, Archive/Causal persistence, or router/topology changes.
+
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, production branch governance, production release review, or global causal truth merge.
 
 ## Three-store admission
@@ -558,6 +579,36 @@ archive/rollback/Rxxxx.yaml
 ```
 
 Archive records events and responsibility. It does not produce Knowledge, Causal truth, or ordinary agent reasoning context.
+
+## Knowledge Store persistence
+
+Phase 23B persists accepted Knowledge candidates into a local demo Knowledge Store.
+
+Knowledge records verified static facts, constraints, environment facts, interface facts, dependency facts, policy facts, and glossary facts. It does not record task history or causal reasoning chains.
+
+Key local files:
+
+```text
+knowledge/index.yaml
+knowledge/entries/Kxxxx.yaml
+knowledge/history/changes/Cxxxx.yaml
+knowledge/history/changelog.md
+knowledge/rollback/Rxxxx.yaml
+```
+
+Phase 23B rejects causal-shaped inputs, Archive event-shaped inputs, unverified developer assertions, direct Archive/Causal write attempts, and global truth claims.
+
+The Phase 23B acceptance report is:
+
+```text
+runtime_test_reports/PHASE_23B_KNOWLEDGE_STORE_PERSISTENCE_ACCEPTANCE_REPORT.md
+```
+
+The local evidence bundle is generated under ignored `local_artifacts/`:
+
+```text
+local_artifacts/phase23b_knowledge_store_persistence_evidence.zip
+```
 
 ## Aegis Router
 
@@ -1074,6 +1125,25 @@ Expected Phase 23A result:
 
 Phase 23A validation proves local demo Archive segmented persistence only. It does not prove production Archive backend, encryption, remote sync, Knowledge/Causal persistence, or truth production.
 
+### Phase 23B Knowledge Store persistence validator
+
+```powershell
+py -3.13 -m venv .venv-knowledge-store-phase23b
+.\.venv-knowledge-store-phase23b\Scripts\python.exe -m pip install -U pip
+.\.venv-knowledge-store-phase23b\Scripts\python.exe -m pip install -e ".\aegis-runtime\knowledge_store[dev]"
+
+.\.venv-knowledge-store-phase23b\Scripts\python.exe -m compileall .\aegis-runtime\knowledge_store\aegis_knowledge_store
+.\.venv-knowledge-store-phase23b\Scripts\python.exe -m pytest .\aegis-runtime\knowledge_store -vv
+```
+
+Expected Phase 23B result:
+
+```text
+21 passed
+```
+
+Phase 23B validation proves local demo Knowledge Store persistence only. It does not prove production Knowledge backend, encryption, remote sync, Archive/Causal persistence, or causal truth production.
+
 Before committing local changes:
 
 ```powershell
@@ -1122,6 +1192,7 @@ runtime_test_reports/PHASE_22A_THREE_STORE_ADMISSION_PATCH_PLAN.md
 runtime_test_reports/PHASE_22C_CAUSAL_STORE_PERSISTENCE_PATCH_PLAN.md
 runtime_test_reports/PHASE_23A_ARCHIVE_SEGMENTED_PERSISTENCE_PATCH_PLAN.md
 runtime_test_reports/PHASE_23A_ARCHIVE_SEGMENTED_PERSISTENCE_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_23B_KNOWLEDGE_STORE_PERSISTENCE_PATCH_PLAN.md
 ```
 
 Current demo/acceptance closure point:
@@ -1185,6 +1256,7 @@ router-integrated communication closure
 + Master causal review decision-artifact boundary with no global merge
 + Local demo Causal Store persistence boundary with semantic changelog, snapshot, and rollback metadata
 + Local demo Archive segmented persistence boundary with sealed segments, artifact manifest, and rollback metadata
++ Local demo Knowledge Store persistence boundary with changelog and rollback metadata
 ```
 
 ## Production hardening not yet included
