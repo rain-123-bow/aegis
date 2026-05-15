@@ -261,6 +261,14 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - causal semantic changelog records causal-state evolution and is not a Git diff duplicate;
     - Phase 22C rejects unresolved developer decisions, insufficient-evidence decisions, direct write attempts, and malformed causal facts;
     - Phase 22C does not implement production Causal Store backend, production encryption, remote sync, Archive/Knowledge persistence, router/topology changes, or a long-lived Causal Store Agent.
+47. Phase 23A Archive segmented persistence boundary:
+    - Master-owned local demo Archive segmented persistence policy exists;
+    - deterministic `aegis-runtime/archive_store` persistence runtime exists;
+    - archive event candidates are written into bounded active segments;
+    - full active segments roll over into sealed read-only history with summary, index, seal, and compressed payload;
+    - artifact manifest, archive changelog, and rollback metadata are generated;
+    - Archive records what happened and does not produce truth;
+    - Phase 23A does not implement production Archive backend, production encryption, remote sync, Knowledge/Causal persistence, router/topology changes, or a long-lived archive runtime agent profile.
 
 This is demo/acceptance closure, not production closure.
 
@@ -394,6 +402,20 @@ causal_review_decision
 
 Phase 22C writes local demo causal state only. It does not implement production Causal Store backend, production encryption, remote sync, Archive/Knowledge persistence, or router/topology changes.
 
+Phase 23A adds local demo Archive segmented persistence:
+
+```text
+archive_event_candidate
+  -> archive/active/segment_xxxx/events/Exxxx.yaml
+  -> archive/index.yaml
+  -> archive/artifacts/manifest.yaml
+  -> archive/history/changelog.md
+  -> archive/rollback/Rxxxx.yaml
+  -> sealed segment summary/index/seal/compressed payload when rollover occurs
+```
+
+Phase 23A writes local demo Archive state only. It does not implement production Archive backend, production encryption, remote sync, Knowledge/Causal persistence, or router/topology changes.
+
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, production branch governance, production release review, or global causal truth merge.
 
 ## Three-store admission
@@ -511,6 +533,31 @@ causal/rollback/Rxxxx.yaml
 The causal semantic changelog records causal-state evolution: added facts, superseded facts, invalidated facts, reasons, evidence, affected scopes, and rollback references. It is not redundant with Git history.
 
 Phase 22C is local demo/runtime persistence only. It does not claim production persistence or global causal truth infrastructure.
+
+## Archive segmented persistence
+
+Phase 23A persists accepted archive event candidates into a bounded local demo Archive.
+
+Active segments are writable. When a configured event or size threshold is reached, the active segment is sealed into read-only history and a new active segment is opened.
+
+Key local files:
+
+```text
+archive/index.yaml
+archive/active/segment_xxxx/segment_state.yaml
+archive/active/segment_xxxx/events/Exxxx.yaml
+archive/active/segment_xxxx/index.yaml
+archive/active/segment_xxxx/segment_index.yaml
+archive/sealed/segment_xxxx/summary.yaml
+archive/sealed/segment_xxxx/index.yaml
+archive/sealed/segment_xxxx/seal.yaml
+archive/sealed/segment_xxxx/compressed_payload.zip
+archive/artifacts/manifest.yaml
+archive/history/changelog.md
+archive/rollback/Rxxxx.yaml
+```
+
+Archive records events and responsibility. It does not produce Knowledge, Causal truth, or ordinary agent reasoning context.
 
 ## Aegis Router
 
@@ -1008,6 +1055,25 @@ Expected Phase 22C result:
 
 Phase 22C validation proves local demo Causal Store persistence only. It does not prove production Causal Store backend, encryption, remote sync, Archive/Knowledge persistence, or global causal truth infrastructure.
 
+### Phase 23A Archive segmented persistence validator
+
+```powershell
+py -3.13 -m venv .venv-archive-store-phase23a
+.\.venv-archive-store-phase23a\Scripts\python.exe -m pip install -U pip
+.\.venv-archive-store-phase23a\Scripts\python.exe -m pip install -e ".\aegis-runtime\archive_store[dev]"
+
+.\.venv-archive-store-phase23a\Scripts\python.exe -m compileall .\aegis-runtime\archive_store\aegis_archive_store
+.\.venv-archive-store-phase23a\Scripts\python.exe -m pytest .\aegis-runtime\archive_store -vv
+```
+
+Expected Phase 23A result:
+
+```text
+17 passed
+```
+
+Phase 23A validation proves local demo Archive segmented persistence only. It does not prove production Archive backend, encryption, remote sync, Knowledge/Causal persistence, or truth production.
+
 Before committing local changes:
 
 ```powershell
@@ -1054,6 +1120,8 @@ runtime_test_reports/PHASE_21B_FINAL_REVIEW_REAL_LEADER_PATCH_PLAN.md
 runtime_test_reports/PHASE_21B_FINAL_REVIEW_REAL_LEADER_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_22A_THREE_STORE_ADMISSION_PATCH_PLAN.md
 runtime_test_reports/PHASE_22C_CAUSAL_STORE_PERSISTENCE_PATCH_PLAN.md
+runtime_test_reports/PHASE_23A_ARCHIVE_SEGMENTED_PERSISTENCE_PATCH_PLAN.md
+runtime_test_reports/PHASE_23A_ARCHIVE_SEGMENTED_PERSISTENCE_ACCEPTANCE_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -1116,6 +1184,7 @@ router-integrated communication closure
 + Causal candidate staging boundary with no global merge
 + Master causal review decision-artifact boundary with no global merge
 + Local demo Causal Store persistence boundary with semantic changelog, snapshot, and rollback metadata
++ Local demo Archive segmented persistence boundary with sealed segments, artifact manifest, and rollback metadata
 ```
 
 ## Production hardening not yet included
