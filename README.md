@@ -277,6 +277,17 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - causal-shaped inputs, archive-event-shaped inputs, unverified developer assertions, and direct Archive/Causal/global truth writes are rejected;
     - Knowledge records what is known and does not produce Causal truth;
     - Phase 23B does not implement production Knowledge backend, production encryption, remote sync, Archive/Causal persistence, router/topology changes, or a long-lived knowledge runtime agent profile.
+49. Phase 23C three-store linkage integrity boundary:
+    - Master-owned local demo three-store linkage policy exists;
+    - deterministic `aegis-runtime/three_store_linkage` validator exists;
+    - Archive promoted links to Knowledge / Causal are validated;
+    - Knowledge typed evidence references to Archive events are validated;
+    - Knowledge evidence references to local Knowledge/Causal records are rejected;
+    - Archive promoted_assets references to Archive are rejected;
+    - Causal typed evidence and dependency references to Archive / Knowledge / Causal are validated;
+    - broken typed local refs, cross-store type mismatches, duplicate IDs, and truth-boundary leakage are rejected;
+    - explicit Master-verified expected links are supported;
+    - Phase 23C validates linkage only and does not mutate Archive, Knowledge, or Causal stores, perform production persistence, remote sync, or global causal truth merge.
 
 This is demo/acceptance closure, not production closure.
 
@@ -436,6 +447,19 @@ knowledge_candidate
 ```
 
 Phase 23B writes local demo Knowledge state only. It does not implement production Knowledge backend, production encryption, remote sync, Archive/Causal persistence, or router/topology changes.
+
+Phase 23C adds local demo three-store linkage validation after Archive / Knowledge / Causal persistence boundaries:
+
+```text
+archive/ + knowledge/ + causal/
+  -> three-store linkage validator
+      -> validate Archive promoted_to_knowledge / promoted_to_causal / promoted_assets
+      -> validate Knowledge evidence_refs typed local Archive refs and reject local Knowledge/Causal evidence refs
+      -> validate Causal evidence / depends_on / supersedes / invalidates typed local refs
+      -> reject broken refs, store-type mismatches, duplicate IDs, and truth-boundary leakage
+```
+
+Phase 23C validates local reference integrity only. It does not write Archive, Knowledge, or Causal stores; it does not implement production backend, production encryption, remote sync, new department topology, long-lived linkage agent profile, or global causal truth merge.
 
 Phase 1 does **not** implement a full autonomous software company, a full causal database, automatic code submission, production branch governance, production release review, or global causal truth merge.
 
@@ -609,6 +633,37 @@ The local evidence bundle is generated under ignored `local_artifacts/`:
 ```text
 local_artifacts/phase23b_knowledge_store_persistence_evidence.zip
 ```
+
+## Three-store linkage integrity
+
+Phase 23C validates local demo cross-store references across Archive, Knowledge, and Causal.
+
+The contract files live under:
+
+```text
+aegis-master-kit/master/THREE_STORE_LINKAGE_POLICY.md
+aegis-master-kit/master/THREE_STORE_LINKAGE_RESULT_CONTRACT.md
+```
+
+The deterministic validator lives under:
+
+```text
+aegis-runtime/three_store_linkage/
+```
+
+Key rules:
+
+- Phase 23C is a Master-owned validation tool, not a new department;
+- no long-lived Three-Store Linkage Agent is introduced;
+- Archive promoted links may point to Knowledge entries or Causal facts, but Archive still does not produce truth;
+- Archive `promoted_assets` targeting Archive is rejected;
+- Knowledge typed evidence refs may target local Archive events or external source material only; local Knowledge/Causal evidence refs are rejected;
+- Causal typed evidence and dependency refs must resolve when they target local Archive / Knowledge / Causal objects;
+- missing typed local refs are rejected;
+- cross-store type mismatches are rejected;
+- duplicate local store IDs are rejected;
+- truth-boundary leakage flags are rejected;
+- Phase 23C performs no Archive / Knowledge / Causal store mutation, production store write, remote sync, or global causal merge.
 
 ## Aegis Router
 
@@ -1143,6 +1198,25 @@ Expected Phase 23B result:
 ```
 
 Phase 23B validation proves local demo Knowledge Store persistence only. It does not prove production Knowledge backend, encryption, remote sync, Archive/Causal persistence, or causal truth production.
+
+### Phase 23C three-store linkage validator
+
+```powershell
+py -3.13 -m venv .venv-three-store-linkage-phase23c
+.\.venv-three-store-linkage-phase23c\Scripts\python.exe -m pip install -U pip
+.\.venv-three-store-linkage-phase23c\Scripts\python.exe -m pip install -e ".\aegis-runtime\three_store_linkage[dev]"
+
+.\.venv-three-store-linkage-phase23c\Scripts\python.exe -m compileall .\aegis-runtime\three_store_linkage\aegis_three_store_linkage
+.\.venv-three-store-linkage-phase23c\Scripts\python.exe -m pytest .\aegis-runtime\three_store_linkage -vv
+```
+
+Expected Phase 23C result:
+
+```text
+22 passed
+```
+
+Phase 23C validation proves local demo cross-store reference integrity only. It does not mutate Archive, Knowledge, or Causal stores, and does not prove production backend, encryption, remote sync, or global causal truth merge.
 
 Before committing local changes:
 
