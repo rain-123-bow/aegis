@@ -1,7 +1,7 @@
 [project]
 name = "aegis-debate-runtime"
 version = "0.1.0"
-description = "Demo runtime for the Aegis Debate Department contract."
+description = "Demo runtime for the Aegis Debate Department contract and role-bound operational skills."
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
 authors = [{name = "Aegis Project"}]
@@ -15,6 +15,7 @@ dev = [
 [project.scripts]
 aegis-debate-demo = "aegis_debate_runtime.cli:main"
 aegis-debate-real = "aegis_debate_runtime.real_worker_cli:main"
+aegis-debate-skill = "aegis_debate_runtime.operational_skill:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -22,4 +23,5 @@ pythonpath = ["."]
 markers = [
     "contract: runtime contract verification tests for Debate Department demo behavior",
     "real_mcp: strict real nested-codex Debate Worker proof audit tests",
+    "skill: role-bound Debate Leader/Worker operational skill enforcement tests",
 ]

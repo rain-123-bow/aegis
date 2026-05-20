@@ -1402,3 +1402,22 @@ Deferred production topics include:
 Aegis can generate candidates and reports.
 
 Developers retain all critical responsibility actions, including remote push, main-branch merge, release, production deployment, and formal external sign-off.
+
+## Phase 25A Debate role-bound operational skills
+
+Phase 25A converts Debate Leader and Debate Worker role behavior from scattered role contracts into explicit role-bound operational skills:
+
+```text
+aegis-master-kit/organization/departments/debate/DEBATE_LEADER_OPERATIONAL_SKILL.md
+aegis-master-kit/organization/departments/debate/DEBATE_WORKER_OPERATIONAL_SKILL.md
+```
+
+The Debate Leader skill requires the Leader to install the Worker skill into every created Debate Worker. A Worker output is invalid unless it proves it received and applied `DEBATE_WORKER_OPERATIONAL_SKILL v0.1`, preserves `worker_local_causal_state`, and avoids final adjudication or global causal truth claims.
+
+Phase 25A adds a local demo validator under:
+
+```text
+aegis-runtime/debate/aegis_debate_runtime/operational_skill.py
+```
+
+Phase 25A removes superseded Debate role-contract documents that are replaced by the two role-bound skills. It does not change top-level topology, router behavior, production store writes, remote push, PR, merge, release, deployment, or global causal truth merge.

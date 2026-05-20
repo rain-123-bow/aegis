@@ -34,12 +34,12 @@ def test_debate_contract_preserves_two_layer_shape_and_no_extra_roles():
     assert "real nested-Codex Debate Workers" in contract
 
 
-def test_debate_worker_contract_requires_local_causal_state_priority():
-    contract = (REPO_ROOT / "aegis-master-kit/organization/departments/debate/DEBATE_WORKER_CONTRACT.md").read_text(
+def test_debate_worker_skill_requires_local_causal_state_priority():
+    contract = (REPO_ROOT / "aegis-master-kit/organization/departments/debate/DEBATE_WORKER_OPERATIONAL_SKILL.md").read_text(
         encoding="utf-8"
     )
 
     assert "worker_local_causal_state" in contract
     assert "route_priority" in contract
     assert "expand_priority" in contract
-    assert "higher authority for its later turns than compressed transcript context" in contract
+    assert "compact authoritative representation of its stance for later turns" in contract
