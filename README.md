@@ -289,6 +289,17 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - explicit Master-verified expected links are supported;
     - Phase 23C validates linkage only and does not mutate Archive, Knowledge, or Causal stores, perform production persistence, remote sync, or global causal truth merge.
 
+50. Phase 24A Master operational workflow skill enforcement:
+    - `MASTER_OPERATIONAL_WORKFLOW_SKILL.md` exists as the role-bound Master workflow skill;
+    - deterministic `aegis-runtime/master` validator exists for Master operational cycle artifacts;
+    - every substantive Master cycle must reference `MASTER_OPERATIONAL_WORKFLOW_SKILL v0.3`;
+    - Master input intake, task boundary reasoning, Archive event candidate creation, Knowledge/Causal candidate consideration, model-policy resolution, department dispatch, nested-agent supervision, commit gate, and responsibility boundary are validated;
+    - Archive task identity is commit-bound: one final Archive task maps to exactly one final git commit candidate;
+    - pre-Archive aggregation and logical splitting are supported, but existing archived tasks must not be merged;
+    - explicit gpt-5.5 -> gpt-5.4 fallback is allowed only with evidence while preserving reasoning budget; models below gpt-5.4 are rejected;
+    - nested-Codex launcher timeout is treated as recoverable supervision state, not child-agent failure;
+    - Phase 24A validates skill usage only and does not perform production autonomous execution, remote push, PR creation, remote merge, release, external sign-off, or global causal truth merge.
+
 This is demo/acceptance closure, not production closure.
 
 ## Phase-1 scope
@@ -1217,6 +1228,25 @@ Expected Phase 23C result:
 ```
 
 Phase 23C validation proves local demo cross-store reference integrity only. It does not mutate Archive, Knowledge, or Causal stores, and does not prove production backend, encryption, remote sync, or global causal truth merge.
+
+### Phase 24A Master operational workflow skill validator
+
+```powershell
+py -3.13 -m venv .venv-master-skill-phase24a
+.\.venv-master-skill-phase24a\Scripts\python.exe -m pip install -U pip
+.\.venv-master-skill-phase24a\Scripts\python.exe -m pip install -e ".\aegis-runtime\master[dev]"
+
+.\.venv-master-skill-phase24a\Scripts\python.exe -m compileall .\aegis-runtime\master\aegis_master_runtime
+.\.venv-master-skill-phase24a\Scripts\python.exe -m pytest .\aegis-runtime\master\tests\test_phase24a_master_operational_workflow_skill.py -vv
+```
+
+Expected Phase 24A result:
+
+```text
+19 passed
+```
+
+Phase 24A validation proves Master operational workflow skill usage only. It does not prove production autonomy, production scheduling, remote push, PR creation, remote merge, release, external sign-off, or global causal truth merge.
 
 Before committing local changes:
 

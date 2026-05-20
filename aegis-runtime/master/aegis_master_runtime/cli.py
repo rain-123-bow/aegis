@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .leader_bootstrap import MasterTopLevelRuntime
 from .mcp_client import NestedCodexMcpClient, RecordingNestedCodexClient
+from .operational_skill import validate_master_operational_cycle_file
 
 
 def _run(runtime: MasterTopLevelRuntime) -> dict:
@@ -14,7 +15,7 @@ def _run(runtime: MasterTopLevelRuntime) -> dict:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Aegis Master top-level nested-Codex bootstrap runtime.")
+    parser = argparse.ArgumentParser(description="Aegis Master top-level runtime and operational skill validation.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     real = sub.add_parser("validate-real", help="Call a real nested-codex MCP server and create top-level leaders.")
@@ -29,6 +30,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     test.add_argument("--policy", required=True)
     test.add_argument("--router-state", required=True)
     test.add_argument("--output-dir", required=True)
+
+    skill = sub.add_parser("validate-operational-skill", help="Validate one Master operational cycle against MASTER_OPERATIONAL_WORKFLOW_SKILL.")
+    skill.add_argument("--cycle", required=True, help="Path to Master operational cycle JSON.")
+    skill.add_argument("--skill", help="Optional path to MASTER_OPERATIONAL_WORKFLOW_SKILL.md.")
+    skill.add_argument("--output", help="Optional output path for validation result JSON.")
 
     return parser
 
@@ -45,7 +51,23 @@ def main(argv: list[str] | None = None) -> None:
                 router_state_path=args.router_state,
             )
             report = _run(runtime)
-    elif args.command == "validate-recording":
+        print(
+            json.dumps(
+                {
+                    "report_id": report["report_id"],
+                    "status": report["status"],
+                    "policy_version": report["policy_version"],
+                    "created_agent_count": report["audit"]["created_agent_count"],
+                    "route_checks": len(report["route_checks"]),
+                    "report_path": str(Path(args.output_dir) / "top_level_bootstrap_report.json"),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    if args.command == "validate-recording":
         runtime = MasterTopLevelRuntime(
             policy_path=args.policy,
             nested_codex_client=RecordingNestedCodexClient(),
@@ -53,23 +75,32 @@ def main(argv: list[str] | None = None) -> None:
             router_state_path=args.router_state,
         )
         report = _run(runtime)
-    else:
-        raise SystemExit(f"unknown command: {args.command}")
-
-    print(
-        json.dumps(
-            {
-                "report_id": report["report_id"],
-                "status": report["status"],
-                "policy_version": report["policy_version"],
-                "created_agent_count": report["audit"]["created_agent_count"],
-                "route_checks": len(report["route_checks"]),
-                "report_path": str(Path(args.output_dir) / "top_level_bootstrap_report.json"),
-            },
-            indent=2,
-            sort_keys=True,
+        print(
+            json.dumps(
+                {
+                    "report_id": report["report_id"],
+                    "status": report["status"],
+                    "policy_version": report["policy_version"],
+                    "created_agent_count": report["audit"]["created_agent_count"],
+                    "route_checks": len(report["route_checks"]),
+                    "report_path": str(Path(args.output_dir) / "top_level_bootstrap_report.json"),
+                },
+                indent=2,
+                sort_keys=True,
+            )
         )
-    )
+        return
+
+    if args.command == "validate-operational-skill":
+        result = validate_master_operational_cycle_file(args.cycle, skill_path=args.skill).to_dict()
+        if args.output:
+            output = Path(args.output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    raise SystemExit(f"unknown command: {args.command}")
 
 
 if __name__ == "__main__":

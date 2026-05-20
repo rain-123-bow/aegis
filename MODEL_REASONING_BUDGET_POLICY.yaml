@@ -1,31 +1,38 @@
 policy_id: model_reasoning_budget_policy
-version: v0.1
+version: v0.2
 scope: whole_aegis_runtime
-status: locked_static_policy
+status: locked_static_policy_with_explicit_gpt54_fallback
 
 purpose: >
   Define the authoritative AI model and reasoning-budget allocation for
   Master and top-level department leaders in the current Aegis phase.
 
 phase_boundary:
-  current_phase: phase_1_demo_closure
+  current_phase: phase_2_master_operational_skill_hardening
   dynamic_adjustment_enabled: false
   master_dynamic_adjustment_deferred: true
-  module_internal_agent_profiles_deferred: true
+  module_internal_agent_profiles_deferred: false
 
 hard_rules:
   - Model and reasoning-budget selection is owned by this root policy.
   - Agents must not self-select models or reasoning budgets.
   - Silent downgrade is forbidden.
-  - Fallback is forbidden unless a future policy version explicitly allows it.
+  - Provider-default model fallback is forbidden.
   - Missing or unsatisfied policy must fail fast instead of silently continuing.
   - Runtime outputs that depend on model execution must record the resolved profile.
+  - Primary model is gpt-5.5.
+  - If gpt-5.5 is objectively unavailable, explicit fallback to gpt-5.4 is allowed with evidence.
+  - Models below gpt-5.4 are forbidden.
+  - Reasoning budget downgrade is forbidden even when model fallback is used.
 
 fallback_policy:
   default_fallback_allowed: false
   silent_downgrade_allowed: false
-  fallback_on_missing_model: forbidden
+  explicit_gpt55_to_gpt54_fallback_allowed: true
+  minimum_accepted_model: gpt-5.4
+  fallback_on_missing_model: explicit_gpt54_only_with_evidence
   fallback_on_budget_unavailable: forbidden
+  reasoning_budget_downgrade_allowed: false
   missing_policy_behavior: blocked_resource_policy
 
 profile_schema:
@@ -156,9 +163,21 @@ audit_requirements:
     - policy_id
     - policy_version
     - role_id
+    - requested_model
     - resolved_model
+    - requested_reasoning_budget
     - resolved_reasoning_budget
     - fallback_used
+    - fallback_reason
+    - fallback_evidence_refs
     - dynamic_adjustment_used
-  fallback_used_must_be_false_in_current_phase: true
+  fallback_used_requires_explicit_evidence: true
   dynamic_adjustment_used_must_be_false_in_current_phase: true
+  reasoning_budget_downgrade_allowed: false
+  minimum_accepted_model: gpt-5.4
+
+
+phase24a_fallback_note: >
+  Role model profiles keep gpt-5.5 as the primary model. If gpt-5.5 is objectively unavailable,
+  gpt-5.4 may be used only with explicit evidence and with the configured reasoning_budget preserved.
+  Models below gpt-5.4 and reasoning-budget downgrades remain forbidden.

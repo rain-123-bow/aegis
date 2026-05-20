@@ -17,7 +17,10 @@ def test_locked_policy_parses_top_level_profiles():
     policy = load_model_reasoning_policy(_policy_path())
 
     assert policy.policy_id == "model_reasoning_budget_policy"
-    assert policy.version == "v0.1"
+    assert policy.version == "v0.2"
+    assert policy.status == "locked_static_policy_with_explicit_gpt54_fallback"
+    assert policy.default_fallback_allowed is False
+    assert policy.silent_downgrade_allowed is False
     assert policy.require_profile("master").model == "gpt-5.5"
     assert policy.require_profile("master").reasoning_budget == "extra_high"
     assert policy.require_profile("debate_leader").reasoning_budget == "high"
