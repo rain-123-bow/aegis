@@ -1293,10 +1293,22 @@ runtime_test_reports/PHASE_21A_FINAL_REVIEW_HANDOFF_VALIDATION_ACCEPTANCE_REPORT
 runtime_test_reports/PHASE_21B_FINAL_REVIEW_REAL_LEADER_PATCH_PLAN.md
 runtime_test_reports/PHASE_21B_FINAL_REVIEW_REAL_LEADER_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_22A_THREE_STORE_ADMISSION_PATCH_PLAN.md
+runtime_test_reports/PHASE_22A_THREE_STORE_ADMISSION_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_22B_MASTER_CAUSAL_REVIEW_PATCH_PLAN.md
+runtime_test_reports/PHASE_22B_MASTER_CAUSAL_REVIEW_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_22C_CAUSAL_STORE_PERSISTENCE_PATCH_PLAN.md
+runtime_test_reports/PHASE_22C_CAUSAL_STORE_PERSISTENCE_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_23A_ARCHIVE_SEGMENTED_PERSISTENCE_PATCH_PLAN.md
 runtime_test_reports/PHASE_23A_ARCHIVE_SEGMENTED_PERSISTENCE_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_23B_KNOWLEDGE_STORE_PERSISTENCE_PATCH_PLAN.md
+runtime_test_reports/PHASE_23B_KNOWLEDGE_STORE_PERSISTENCE_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_23C_THREE_STORE_LINKAGE_PATCH_PLAN.md
+runtime_test_reports/PHASE_23C_THREE_STORE_LINKAGE_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_24A_MASTER_OPERATIONAL_WORKFLOW_SKILL_PATCH_PLAN.md
+runtime_test_reports/PHASE_24A_MASTER_OPERATIONAL_WORKFLOW_SKILL_ACCEPTANCE_REPORT.md
+runtime_test_reports/DEBATE_DIRECT_LEADER_WORKER_BEHAVIORAL_PROBE_REPORT.md
+runtime_test_reports/PHASE_25A_DEBATE_ROLE_OPERATIONAL_SKILLS_PATCH_PLAN.md
+runtime_test_reports/PHASE_25A_DEBATE_ROLE_OPERATIONAL_SKILLS_ACCEPTANCE_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -1361,6 +1373,10 @@ router-integrated communication closure
 + Local demo Causal Store persistence boundary with semantic changelog, snapshot, and rollback metadata
 + Local demo Archive segmented persistence boundary with sealed segments, artifact manifest, and rollback metadata
 + Local demo Knowledge Store persistence boundary with changelog and rollback metadata
++ Local demo three-store linkage boundary across Archive, Knowledge, and Causal
++ Master operational workflow skill enforcement boundary
++ Debate direct real nested-Codex Leader/Worker behavioral probe, recorded as historical pre-skill evidence
++ Debate Leader/Worker role-bound operational skill enforcement closure
 ```
 
 ## Production hardening not yet included
@@ -1413,6 +1429,12 @@ aegis-master-kit/organization/departments/debate/DEBATE_WORKER_OPERATIONAL_SKILL
 ```
 
 The Debate Leader skill requires the Leader to install the Worker skill into every created Debate Worker. A Worker output is invalid unless it proves it received and applied `DEBATE_WORKER_OPERATIONAL_SKILL v0.1`, preserves `worker_local_causal_state`, and avoids final adjudication or global causal truth claims.
+
+The previous direct Debate Leader / Worker behavioral probe is retained as historical pre-skill evidence in:
+
+```text
+runtime_test_reports/DEBATE_DIRECT_LEADER_WORKER_BEHAVIORAL_PROBE_REPORT.md
+```
 
 Phase 25A adds a local demo validator under:
 
