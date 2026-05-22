@@ -300,6 +300,16 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - nested-Codex launcher timeout is treated as recoverable supervision state, not child-agent failure;
     - Phase 24A validates skill usage only and does not perform production autonomous execution, remote push, PR creation, remote merge, release, external sign-off, or global causal truth merge.
 
+
+51. Phase 26A Execution role operational skill enforcement:
+    - Execution Leader / Front / Back role contracts are converted into role-bound operational skills;
+    - Leader must create independent group workspaces and base-derived group branches before Front work;
+    - Leader must install Front/Back skills into every created child Agent;
+    - child_agent_creation_proof and non-empty thread_id are required for final Front/Back acceptance;
+    - Back reviews the real group branch diff and defaults to independent audit_workspace;
+    - Leader creates the integration branch from the Aegis work branch/base commit after all groups pass Back review;
+    - no router/topology mutation, production store write, remote push, PR, merge, release, deployment, or global causal truth merge is claimed.
+
 This is demo/acceptance closure, not production closure.
 
 ## Phase-1 scope
@@ -1309,6 +1319,8 @@ runtime_test_reports/PHASE_24A_MASTER_OPERATIONAL_WORKFLOW_SKILL_ACCEPTANCE_REPO
 runtime_test_reports/DEBATE_DIRECT_LEADER_WORKER_BEHAVIORAL_PROBE_REPORT.md
 runtime_test_reports/PHASE_25A_DEBATE_ROLE_OPERATIONAL_SKILLS_PATCH_PLAN.md
 runtime_test_reports/PHASE_25A_DEBATE_ROLE_OPERATIONAL_SKILLS_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_26A_EXECUTION_ROLE_OPERATIONAL_SKILLS_PATCH_PLAN.md
+runtime_test_reports/PHASE_26A_EXECUTION_ROLE_OPERATIONAL_SKILLS_ACCEPTANCE_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -1377,6 +1389,7 @@ router-integrated communication closure
 + Master operational workflow skill enforcement boundary
 + Debate direct real nested-Codex Leader/Worker behavioral probe, recorded as historical pre-skill evidence
 + Debate Leader/Worker role-bound operational skill enforcement closure
++ Execution Leader/Front/Back role-bound operational skill enforcement closure
 ```
 
 ## Production hardening not yet included

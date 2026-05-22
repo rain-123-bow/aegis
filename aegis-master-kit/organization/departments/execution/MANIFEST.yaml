@@ -1,26 +1,32 @@
 department_id: execution
-version: v0.1
-scope: department_contract_package
-status: contract_only
+version: v0.1-phase26a
+scope: department_role_skill_package
+status: role_bound_operational_skills
 external_role_id: execution
 external_boundary: Execution Leader
 runtime_package: aegis-runtime/execution
-contracts:
+skills:
+  execution_leader: EXECUTION_LEADER_OPERATIONAL_SKILL.md
+  execution_front_agent: EXECUTION_FRONT_AGENT_OPERATIONAL_SKILL.md
+  execution_back_agent: EXECUTION_BACK_AGENT_OPERATIONAL_SKILL.md
+enforcement_contract: EXECUTION_LEADER_FRONT_BACK_SKILL_ENFORCEMENT_CONTRACT.md
+support_contracts:
   department: EXECUTION_DEPARTMENT_CONTRACT.md
-  leader: EXECUTION_LEADER_CONTRACT.md
   task_split: TASK_SPLIT_CONTRACT.md
   debate_decision: DECISION_TO_DEBATE_RULES.md
   group: EXECUTION_GROUP_CONTRACT.md
-  front_agent: FRONT_AGENT_CONTRACT.md
-  back_agent: BACK_AGENT_CONTRACT.md
   branch_workspace: BRANCH_AND_WORKSPACE_CONTRACT.md
   integration_test_handoff: INTEGRATION_AND_TEST_HANDOFF_CONTRACT.md
   test_feedback_rework: TEST_FEEDBACK_AND_REWORK_CONTRACT.md
   causal_chain: EXECUTION_CAUSAL_CHAIN_RULES.md
   execution_git_topology: EXECUTION_GIT_TOPOLOGY_CLOSURE_CONTRACT.md
   phase19a_acceptance: EXECUTION_19A_ACCEPTANCE_CONTRACT.md
-  real_front_back_agents: EXECUTION_REAL_FRONT_BACK_AGENT_CONTRACT.md
   phase19b_acceptance: EXECUTION_19B_ACCEPTANCE_CONTRACT.md
+removed_superseded_contracts:
+  - EXECUTION_LEADER_CONTRACT.md
+  - FRONT_AGENT_CONTRACT.md
+  - BACK_AGENT_CONTRACT.md
+  - EXECUTION_REAL_FRONT_BACK_AGENT_CONTRACT.md
 schemas:
   - schemas/execution_request.schema.yaml
   - schemas/subtask_split.schema.yaml
@@ -41,19 +47,16 @@ templates:
 tests:
   - tests/EXECUTION_DEPARTMENT_CONSTRAINT_TESTS.md
 hard_rules:
-  - Do not split if independence cannot be proven.
-  - Do not parallelize across unfrozen interfaces.
-  - Do not create an Execution Group without local validation criteria.
-  - Do not treat Front Agent output as accepted without Back Agent review.
-  - Do not release groups before Test success feedback and Leader final causal handoff.
-  - Do not merge execution causal candidates into global causal truth.
-
-phase19a_notes:
-  - Phase 19A validates real local git branch/workspace/integration topology.
-  - Phase 19A does not claim real Front/Back Codex agent closure.
-  - Remote push, PR, merge, release, and production lifecycle remain forbidden.
-
-phase19b_notes:
-  - Phase 19B validates real nested-Codex Execution Front/Back agent acceptance.
-  - Phase 19B reuses Phase 19A local git topology and sandbox repository boundaries.
-  - Phase 19B does not claim production branch governance, remote push, PR, release, or global causal merge.
+  - Execution Leader is the only external department boundary.
+  - Front and Back Agents are group-internal request-scoped agents.
+  - Leader must install Front/Back skills into every created child Agent.
+  - Every child Front/Back Agent requires child_agent_creation_proof.
+  - Final Front/Back acceptance requires non-empty thread_id matching creation proof.
+  - Each Execution Group has one independent workspace and one base-derived group branch.
+  - Front works only inside group workspace and group work branch.
+  - Back reviews the real group work branch diff and uses independent audit workspace by default.
+  - Leader owns integration branch and Test handoff.
+  - Execution output is a causal candidate, not automatic global causal truth.
+phase26a_notes:
+  - Phase 26A validates role-bound Execution Leader/Front/Back operational skill enforcement.
+  - It does not claim production branch governance, remote push, PR, release, or global causal merge.

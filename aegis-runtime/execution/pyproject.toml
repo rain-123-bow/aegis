@@ -16,6 +16,7 @@ dev = [
 aegis-execution-demo = "aegis_execution_runtime.cli:main"
 aegis-execution-git-topology = "aegis_execution_runtime.git_topology_cli:main"
 aegis-execution-real-agents = "aegis_execution_runtime.real_agent_cli:main"
+aegis-execution-skill = "aegis_execution_runtime.operational_skill:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
