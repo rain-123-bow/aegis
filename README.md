@@ -80,7 +80,7 @@ Runtime code must not be moved into `aegis-master-kit` unless the project intent
 
 ## Current status
 
-Current branch: `v0.1.0-alpha`.
+Current branch: `v0.1.1-alpha-skill`.
 
 The current prototype has closed the following demo/acceptance mechanisms:
 
@@ -300,8 +300,16 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - nested-Codex launcher timeout is treated as recoverable supervision state, not child-agent failure;
     - Phase 24A validates skill usage only and does not perform production autonomous execution, remote push, PR creation, remote merge, release, external sign-off, or global causal truth merge.
 
+51. Phase 25A Debate role operational skill enforcement:
+    - Debate Leader / Worker role contracts are converted into role-bound operational skills;
+    - Debate Leader must install Debate Worker skill into every created Worker;
+    - Debate Worker output must prove skill receipt/application;
+    - worker local causal state, route priority, and expand priority are mandatory;
+    - `final_report.causal_chain` is required in addition to `causal_result`;
+    - targeted Phase 25A tests and full Debate runtime suite passed;
+    - no router/topology mutation, production store write, remote push, PR, merge, release, deployment, or global causal truth merge is claimed.
 
-51. Phase 26A Execution role operational skill enforcement:
+52. Phase 26A Execution role operational skill enforcement:
     - Execution Leader / Front / Back role contracts are converted into role-bound operational skills;
     - Leader must create independent group workspaces and base-derived group branches before Front work;
     - Leader must install Front/Back skills into every created child Agent;
@@ -835,6 +843,8 @@ rain-123-bow/aegis-execution-sandbox
 
 Phase 19B proves real Front/Back agent creation, proof/output audits, Back Agent blocking review authority, and Leader-owned local integration. It does not claim production branch governance or production agent lifecycle supervision.
 
+Historical runtime note: `aegis-runtime/execution/aegis_execution_runtime/real_agents.py` remains a Phase 19B strict historical proof-audit path. It intentionally preserves the older `gpt-5.5 / high` and fallback-forbidden checks for Phase 19B evidence compatibility. Phase 26A skill enforcement is the current Execution role-bound operational-skill boundary, and it follows the root `MODEL_REASONING_BUDGET_POLICY.yaml` authority for explicit `gpt-5.5 -> gpt-5.4` fallback handling.
+
 ## Test Department
 
 The Test Department is responsible for converting integrated implementation candidates into reproducible evidence and scoped test conclusions.
@@ -1068,7 +1078,9 @@ Hard rules:
 
 - model and reasoning-budget selection is owned by the root policy;
 - agents must not self-select models or budgets;
-- fallback and silent downgrade are forbidden in the current phase;
+- explicit `gpt-5.5 -> gpt-5.4` fallback is allowed only with evidence while preserving the configured reasoning budget;
+- silent downgrade and provider-default fallback are forbidden;
+- models below `gpt-5.4` are forbidden;
 - Master dynamic adjustment is deferred;
 - Debate Worker is no longer deferred after Phase 18;
 - Execution Front/Back profiles are no longer deferred after Phase 19B;
@@ -1253,10 +1265,49 @@ py -3.13 -m venv .venv-master-skill-phase24a
 Expected Phase 24A result:
 
 ```text
-19 passed
+25 passed
 ```
 
 Phase 24A validation proves Master operational workflow skill usage only. It does not prove production autonomy, production scheduling, remote push, PR creation, remote merge, release, external sign-off, or global causal truth merge.
+
+
+### Phase 25A Debate role operational skill validator
+
+```powershell
+py -3.13 -m venv .venv-debate-skill-phase25a
+.\.venv-debate-skill-phase25a\Scripts\python.exe -m pip install -U pip
+.\.venv-debate-skill-phase25a\Scripts\python.exe -m pip install -e ".\aegis-runtime\debate[dev]"
+
+.\.venv-debate-skill-phase25a\Scripts\python.exe -m compileall .\aegis-runtime\debate\aegis_debate_runtime
+.\.venv-debate-skill-phase25a\Scripts\python.exe -m pytest .\aegis-runtime\debate\tests\test_phase25a_debate_role_operational_skills.py -vv
+```
+
+Expected Phase 25A targeted result:
+
+```text
+20 passed
+```
+
+Phase 25A validation proves Debate Leader / Worker role-bound skill enforcement only. It does not prove production Debate orchestration, production worker lifecycle supervision, remote push, PR creation, remote merge, release, external sign-off, or global causal truth merge.
+
+### Phase 26A Execution role operational skill validator
+
+```powershell
+py -3.13 -m venv .venv-execution-skill-phase26a
+.\.venv-execution-skill-phase26a\Scripts\python.exe -m pip install -U pip
+.\.venv-execution-skill-phase26a\Scripts\python.exe -m pip install -e ".\aegis-runtime\execution[dev]"
+
+.\.venv-execution-skill-phase26a\Scripts\python.exe -m compileall .\aegis-runtime\execution\aegis_execution_runtime
+.\.venv-execution-skill-phase26a\Scripts\python.exe -m pytest .\aegis-runtime\execution\tests\test_phase26a_execution_role_operational_skills.py -vv
+```
+
+Expected Phase 26A targeted result:
+
+```text
+26 passed
+```
+
+Phase 26A validation proves Execution Leader / Front / Back role-bound skill enforcement only. It does not prove production branch governance, production nested-Codex orchestration, remote push, PR creation, remote merge, release, external sign-off, or global causal truth merge.
 
 Before committing local changes:
 

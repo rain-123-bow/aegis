@@ -1,3 +1,13 @@
+"""Phase 19B historical strict real Front/Back proof-audit path.
+
+This module intentionally preserves the older Phase 19B strict model policy checks:
+gpt-5.5 / high, fallback forbidden, and dynamic adjustment forbidden.
+
+Phase 26A role-bound Execution skill enforcement lives in ``operational_skill.py`` and
+follows the root ``MODEL_REASONING_BUDGET_POLICY.yaml`` authority, including explicit
+gpt-5.5 -> gpt-5.4 fallback with evidence when the root policy allows it.
+"""
+
 from __future__ import annotations
 
 import base64
