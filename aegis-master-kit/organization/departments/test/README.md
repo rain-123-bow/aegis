@@ -1,12 +1,12 @@
 # Test Department
 
-## Definition
+## Purpose
 
 The Test Department converts an integrated implementation candidate into reproducible evidence and a scoped test conclusion.
 
 It is not an Execution helper, not a code modification agent, not a final review authority, and not a global causal merge authority.
 
-## External boundary
+## Department boundary
 
 At the Master-layer topology, the whole department appears as the top-level role:
 
@@ -14,25 +14,90 @@ At the Master-layer topology, the whole department appears as the top-level role
 test
 ```
 
-The Test Leader is the only external department boundary.
+The `test` identity is the Test Leader.
 
-Internal Test Workers must not become top-level Master-route agents.
+Internal Test Workers are department-local, request-scoped, route-bound, and temporary. They must not become top-level Master-route agents.
 
-## Internal model
+## Role-bound operational skills
+
+Phase 27A moves Test Leader / Worker role behavior from role contracts into explicit role-bound operational skills:
 
 ```text
-Test Leader
-  -> receive implementation candidate from Execution Leader
-  -> inspect task objective, plan, changed scope, ownership map, local evidence, risks, and success criteria
-  -> design a reproducible test plan
-  -> split the plan into independent test routes only when justified
-  -> create one Test Worker per accepted route
-  -> collect route reports, logs, data, and artifacts
-  -> aggregate route reports into a scoped test_result
-  -> if failed: send evidence and test data to Execution Leader
-  -> if passed or scoped-pass: send result, evidence, test plan, data, and final code reference to Final Review
-  -> retain the minimal reproducibility set for later inspection
+TEST_LEADER_OPERATIONAL_SKILL.md
+TEST_WORKER_OPERATIONAL_SKILL.md
+TEST_LEADER_WORKER_SKILL_ENFORCEMENT_CONTRACT.md
 ```
+
+The Leader skill defines the full Test Leader work chain:
+
+```text
+receive Execution handoff
+-> intake / admission
+-> governance blocker check
+-> handoff validation
+-> reproducible test plan
+-> justified route split
+-> Worker skill installation
+-> real Worker creation with thread_id tracking
+-> proof/output audit
+-> evidence aggregation
+-> strict result-label decision
+-> reproducibility set + artifact manifest
+-> feedback to Execution or handoff to Final Review
+```
+
+The Worker skill defines the full Test Worker work chain:
+
+```text
+receive one route
+-> verify skill / role / thread / scope
+-> write proof before substantive work
+-> execute assigned commands or inspections
+-> capture logs / stdout / stderr / artifacts / environment
+-> classify route result by evidence state
+-> emit structured route evidence
+```
+
+## Mandatory Worker skill installation
+
+A Test Leader must not create a Test Worker unless the Worker creation request includes:
+
+```yaml
+worker_skill_ref:
+  skill_id: TEST_WORKER_OPERATIONAL_SKILL
+  skill_version: v0.1
+  required: true
+```
+
+A Worker proof and Worker output are invalid unless they prove:
+
+```yaml
+skill_ref:
+  skill_id: TEST_WORKER_OPERATIONAL_SKILL
+  skill_version: v0.1
+skill_received: true
+skill_applied: true
+```
+
+## Thread identity rule
+
+The Test Leader must supervise Test Workers by subagent `thread_id`, not by whether the outer MCP / `tools/call` launcher returned before timeout.
+
+Core rule:
+
+```text
+MCP / tools/call timeout != Test Worker failure
+subagent thread_id is the Worker lifecycle identity key
+```
+
+Required consequences:
+
+- persist `thread_id` immediately when creation returns or logs it;
+- classify outer launcher timeout as `launcher_timeout`, not `worker_failed`;
+- do not create a duplicate Worker for the same route solely because the launcher timed out;
+- recover, poll, or continue by `thread_id` when possible;
+- final Worker proof and output must include the same non-empty `thread_id`;
+- missing proof/output becomes failure only after final deadline and recovery attempts fail.
 
 ## Top-level route semantics
 
@@ -51,7 +116,7 @@ The Test Department must not send passed results directly to Master unless a fut
 ## Core invariants
 
 1. Test owns evidence production, not implementation modification.
-2. Test Leader owns test planning, route split, worker creation, evidence aggregation, and scoped conclusion generation.
+2. Test Leader owns test planning, route split, Worker creation, evidence aggregation, and scoped conclusion generation.
 3. Test Worker owns exactly one accepted test route.
 4. Test Worker reports route facts and artifacts; it does not decide whole-candidate acceptance.
 5. Test failure feedback goes to the Execution Leader, not directly to Execution Groups.
@@ -64,6 +129,7 @@ The Test Department must not send passed results directly to Master unless a fut
 12. Missing, unstable, contradictory, or insufficient evidence is `inconclusive` or `blocked`, not `failed`.
 13. Governance or policy bypass discovered by Test is `blocked` with `blocker_kind: governance`.
 14. Test result labels must follow the evidence-state decision tree; they must not be selected for convenience.
+15. Worker lifecycle status must be keyed by `thread_id`, not parent tool timeout.
 
 ## Strict result semantics
 
@@ -110,26 +176,42 @@ Routing rule:
 - If the blocker is caused by an invalid Execution handoff or candidate request, return to Execution Leader.
 - If the blocker requires final acceptance, policy review, or top-level governance review, hand off to Final Review.
 
-## Key files
+## Remaining support files
+
+The following files remain as department support material until later phases decide whether they should also become skills:
 
 ```text
 TEST_DEPARTMENT_CONTRACT.md
-TEST_LEADER_CONTRACT.md
-TEST_WORKER_CONTRACT.md
 TEST_PLAN_AND_ROUTE_SPLIT_CONTRACT.md
 TEST_EVIDENCE_AND_RETENTION_CONTRACT.md
 TEST_RESULT_AND_HANDOFF_CONTRACT.md
+TEST_20A_HANDOFF_VALIDATION_CONTRACT.md
+TEST_20B_ACCEPTANCE_CONTRACT.md
+TEST_REAL_WORKER_CONTRACT.md
 schemas/
 templates/
 tests/
 ```
 
+The following old role-contract files are superseded and removed by Phase 27A:
+
+```text
+TEST_LEADER_CONTRACT.md
+TEST_WORKER_CONTRACT.md
+```
+
 ## Runtime boundary
 
-This package defines department contracts only.
+This package defines department contracts and role-bound operational skills.
 
-The future runtime implementation belongs under:
+The deterministic and real-worker runtime support currently lives under:
 
 ```text
 aegis-runtime/test/
 ```
+
+Phase 27A is a role-skill document replacement patch. A later runtime enforcement phase should add a validator similar to Debate Phase 25A and Execution Phase 26A.
+
+## Non-goals
+
+Phase 27A does not implement production Test lifecycle closure, production CI, durable environment provisioning, external artifact backend, remote branch governance, remote push, PR creation, remote merge, release, deployment, external sign-off, production store writes, or global causal truth merge.

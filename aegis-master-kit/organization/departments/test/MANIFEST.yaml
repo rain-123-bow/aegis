@@ -1,20 +1,26 @@
 department_id: test
-version: v0.1
-scope: department_contract_package
-status: contract_only
+version: v0.2
+scope: department_contract_and_role_skill_package
+status: role_operational_skills_active_draft
 external_role_id: test
 external_boundary: Test Leader
 runtime_package: aegis-runtime/test
+skills:
+  leader: TEST_LEADER_OPERATIONAL_SKILL.md
+  worker: TEST_WORKER_OPERATIONAL_SKILL.md
+skill_enforcement:
+  leader_worker: TEST_LEADER_WORKER_SKILL_ENFORCEMENT_CONTRACT.md
 contracts:
   department: TEST_DEPARTMENT_CONTRACT.md
-  leader: TEST_LEADER_CONTRACT.md
-  worker: TEST_WORKER_CONTRACT.md
   plan_route_split: TEST_PLAN_AND_ROUTE_SPLIT_CONTRACT.md
   evidence_retention: TEST_EVIDENCE_AND_RETENTION_CONTRACT.md
   result_handoff: TEST_RESULT_AND_HANDOFF_CONTRACT.md
   phase20a_handoff_validation: TEST_20A_HANDOFF_VALIDATION_CONTRACT.md
   real_test_workers: TEST_REAL_WORKER_CONTRACT.md
   phase20b_acceptance: TEST_20B_ACCEPTANCE_CONTRACT.md
+superseded_role_contracts_removed:
+  - TEST_LEADER_CONTRACT.md
+  - TEST_WORKER_CONTRACT.md
 schemas:
   - schemas/test_request.schema.yaml
   - schemas/test_plan.schema.yaml
@@ -32,6 +38,12 @@ hard_rules:
   - Do not treat Test as an Execution helper.
   - Do not modify implementation code inside Test.
   - Do not create Test Workers before the test plan and route split are justified.
+  - Do not create Test Workers without installing TEST_WORKER_OPERATIONAL_SKILL.
+  - Do not judge Worker lifecycle by outer MCP/tools timeout.
+  - Use subagent thread_id as the Worker lifecycle identity key.
+  - Treat launcher timeout as launcher_timeout, not worker_failed, when thread_id exists.
+  - Do not create duplicate Workers for the same route solely because launcher timeout occurred.
+  - Final Worker proof and output must include matching non-empty thread_id.
   - Do not let a Worker decide the whole candidate result.
   - Do not send passed results directly to Master under the current topology.
   - Do not assign rework directly to Execution Groups; send evidence to Execution Leader.
@@ -53,3 +65,9 @@ phase20b_notes:
   - Phase 20B validates real nested-Codex Test Worker acceptance.
   - Phase 20B reuses Phase 20A handoff validation and sandbox integration-branch boundaries.
   - Phase 20B does not claim production CI, remote branch governance, PR, release, or global causal merge.
+
+phase27a_notes:
+  - Phase 27A replaces Test Leader / Worker role contracts with role-bound operational skills.
+  - Phase 27A preserves Test top-level routes execution -> test, test -> execution, and test -> final_review.
+  - Phase 27A requires Test Worker lifecycle supervision by subagent thread_id.
+  - Phase 27A is a document/package hardening step and does not claim production Test lifecycle closure.
