@@ -210,7 +210,27 @@ The deterministic and real-worker runtime support currently lives under:
 aegis-runtime/test/
 ```
 
-Phase 27A is a role-skill document replacement patch. A later runtime enforcement phase should add a validator similar to Debate Phase 25A and Execution Phase 26A.
+Phase 27A is a role-skill document replacement patch.
+
+Phase 27B adds a local deterministic role-skill validator under:
+
+```text
+aegis-runtime/test/aegis_test_runtime/operational_skill.py
+```
+
+The Phase 27B validator checks Test Leader / Worker role-skill artifacts for skill binding, `thread_id`-based Worker lifecycle supervision, proof/output thread identity matching, canonical `requested_reasoning_effort`, canonical `command_evidence`, strict evidence-state aggregation, reproducibility retention, artifact manifest retention, and valid handoff routing. It does not claim production Test lifecycle closure.
+
+## Runtime validator
+
+Phase 27B validator target:
+
+```text
+aegis-runtime/test/aegis_test_runtime/operational_skill.py
+aegis-runtime/test/tests/test_phase27b_test_role_operational_skills.py
+runtime_test_reports/PHASE_27B_TEST_ROLE_OPERATIONAL_SKILLS_PATCH_PLAN.md
+```
+
+It validates runtime artifacts only. It does not create real production Test Workers, run production CI, or mutate business code.
 
 ## Non-goals
 

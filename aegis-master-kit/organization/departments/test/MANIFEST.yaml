@@ -5,6 +5,8 @@ status: role_operational_skills_active_draft
 external_role_id: test
 external_boundary: Test Leader
 runtime_package: aegis-runtime/test
+runtime_validators:
+  role_skill_enforcement: aegis-runtime/test/aegis_test_runtime/operational_skill.py
 skills:
   leader: TEST_LEADER_OPERATIONAL_SKILL.md
   worker: TEST_WORKER_OPERATIONAL_SKILL.md
@@ -71,3 +73,8 @@ phase27a_notes:
   - Phase 27A preserves Test top-level routes execution -> test, test -> execution, and test -> final_review.
   - Phase 27A requires Test Worker lifecycle supervision by subagent thread_id.
   - Phase 27A is a document/package hardening step and does not claim production Test lifecycle closure.
+
+phase27b_notes:
+  - Phase 27B adds a deterministic local runtime validator for Test Leader / Worker role-skill artifacts.
+  - Phase 27B validates thread_id supervision, Worker skill binding, proof/output audit shape, field compatibility, evidence-state aggregation, reproducibility, artifact manifest, and handoff routing.
+  - Phase 27B does not claim production Test lifecycle closure, production CI, durable environment provisioning, remote branch governance, release, or global causal merge.

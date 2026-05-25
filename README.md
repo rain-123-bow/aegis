@@ -317,6 +317,19 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - Back reviews the real group branch diff and defaults to independent audit_workspace;
     - Leader creates the integration branch from the Aegis work branch/base commit after all groups pass Back review;
     - no router/topology mutation, production store write, remote push, PR, merge, release, deployment, or global causal truth merge is claimed.
+53. Phase 27A Test role operational skill document boundary:
+    - Test Leader / Worker role contracts are converted into role-bound operational skills;
+    - Test Leader must install Test Worker skill into every created Worker;
+    - Test Worker proof/output must prove skill receipt/application;
+    - Worker lifecycle supervision must use subagent `thread_id`, not outer MCP/tools timeout;
+    - canonical role-skill fields are `requested_reasoning_effort` and `command_evidence`;
+    - no router/topology mutation, runtime behavior change, production store write, remote push, PR, merge, release, deployment, or global causal truth merge is claimed.
+
+54. Phase 27B Test role operational skill runtime validator:
+    - deterministic `aegis-runtime/test` validator exists for Test Leader / Worker role-skill run artifacts;
+    - validator checks Leader skill reference, Worker skill installation, Worker proof/output skill receipt, thread_id supervision, launcher-timeout recovery boundary, proof/output thread match, canonical field compatibility, evidence-state aggregation, reproducibility set, artifact manifest, and handoff routing;
+    - validator rejects direct Test -> Master routing, hidden uncovered scope, failure downgraded to inconclusive because owner is ambiguous, Worker code modification, remote operations, production store writes, and global causal truth claims;
+    - Phase 27B validates local role-skill artifact enforcement only and does not perform production Test lifecycle closure, production CI, durable environment provisioning, remote branch governance, release, deployment, external sign-off, or global causal truth merge.
 
 This is demo/acceptance closure, not production closure.
 
@@ -390,6 +403,29 @@ Execution Phase 19B / Test Phase 20A validation material
       -> final Test result
       -> Final Review handoff package
 ```
+
+Phase 27A converts Test Leader / Worker role contracts into role-bound operational skills:
+
+```text
+TEST_LEADER_OPERATIONAL_SKILL.md
+TEST_WORKER_OPERATIONAL_SKILL.md
+TEST_LEADER_WORKER_SKILL_ENFORCEMENT_CONTRACT.md
+```
+
+Phase 27B adds Test role-skill runtime validation after Phase 27A:
+
+```text
+Test role-skill run artifact
+  -> aegis_test_runtime.operational_skill validator
+      -> verify Leader skill binding
+      -> verify Worker skill installation
+      -> verify thread_id-based Worker lifecycle supervision
+      -> verify Worker proof/output shape and field compatibility
+      -> verify evidence-state aggregation and handoff route
+      -> emit accepted_test_role_skill_runtime_validation or rejection
+```
+
+Phase 27B validates local role-skill artifacts only. It does not replace Phase 20A/20B runtime evidence and does not claim production Test lifecycle closure.
 
 Phase 21A adds Final Review handoff validation after Test Phase 20B:
 
@@ -1309,6 +1345,27 @@ Expected Phase 26A targeted result:
 
 Phase 26A validation proves Execution Leader / Front / Back role-bound skill enforcement only. It does not prove production branch governance, production nested-Codex orchestration, remote push, PR creation, remote merge, release, external sign-off, or global causal truth merge.
 
+### Phase 27B Test role operational skill validator
+
+```powershell
+py -3.13 -m venv .venv-test-skill-phase27b
+.\.venv-test-skill-phase27b\Scripts\python.exe -m pip install -U pip
+.\.venv-test-skill-phase27b\Scripts\python.exe -m pip install -e ".\aegis-router[dev]"
+.\.venv-test-skill-phase27b\Scripts\python.exe -m pip install -e ".\aegis-runtime\test[dev]"
+
+.\.venv-test-skill-phase27b\Scripts\python.exe -m compileall .\aegis-runtime\test\aegis_test_runtime
+.\.venv-test-skill-phase27b\Scripts\python.exe -m pytest .\aegis-runtime\test\tests\test_phase27b_test_role_operational_skills.py -vv
+.\.venv-test-skill-phase27b\Scripts\python.exe -m pytest .\aegis-runtime\test -vv
+```
+
+Expected Phase 27B targeted result:
+
+```text
+35 passed
+```
+
+Phase 27B validation proves Test Leader / Worker role-bound skill runtime artifact enforcement only. It does not prove production Test lifecycle closure, production CI, durable environment provisioning, remote branch governance, remote push, PR creation, remote merge, release, external sign-off, or global causal truth merge.
+
 Before committing local changes:
 
 ```powershell
@@ -1372,6 +1429,10 @@ runtime_test_reports/PHASE_25A_DEBATE_ROLE_OPERATIONAL_SKILLS_PATCH_PLAN.md
 runtime_test_reports/PHASE_25A_DEBATE_ROLE_OPERATIONAL_SKILLS_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_26A_EXECUTION_ROLE_OPERATIONAL_SKILLS_PATCH_PLAN.md
 runtime_test_reports/PHASE_26A_EXECUTION_ROLE_OPERATIONAL_SKILLS_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_27A_TEST_ROLE_OPERATIONAL_SKILLS_PATCH_PLAN.md
+runtime_test_reports/PHASE_27A_TEST_ROLE_OPERATIONAL_SKILLS_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_27B_TEST_ROLE_OPERATIONAL_SKILLS_PATCH_PLAN.md
+runtime_test_reports/PHASE_27B_TEST_ROLE_OPERATIONAL_SKILLS_ACCEPTANCE_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -1441,6 +1502,8 @@ router-integrated communication closure
 + Debate direct real nested-Codex Leader/Worker behavioral probe, recorded as historical pre-skill evidence
 + Debate Leader/Worker role-bound operational skill enforcement closure
 + Execution Leader/Front/Back role-bound operational skill enforcement closure
++ Test Leader/Worker role-bound operational skill document boundary closure
++ Test Leader/Worker role-bound operational skill runtime validator closure
 ```
 
 ## Production hardening not yet included
@@ -1507,3 +1570,29 @@ aegis-runtime/debate/aegis_debate_runtime/operational_skill.py
 ```
 
 Phase 25A removes superseded Debate role-contract documents that are replaced by the two role-bound skills. It does not change top-level topology, router behavior, production store writes, remote push, PR, merge, release, deployment, or global causal truth merge.
+
+## Phase 27A Test role-bound operational skills
+
+Phase 27A converts Test Leader and Test Worker role behavior from role contracts into explicit role-bound operational skills:
+
+```text
+aegis-master-kit/organization/departments/test/TEST_LEADER_OPERATIONAL_SKILL.md
+aegis-master-kit/organization/departments/test/TEST_WORKER_OPERATIONAL_SKILL.md
+aegis-master-kit/organization/departments/test/TEST_LEADER_WORKER_SKILL_ENFORCEMENT_CONTRACT.md
+```
+
+The Test Leader skill requires the Leader to install the Worker skill into every created Test Worker. Worker lifecycle status must be keyed by subagent `thread_id`; outer MCP / tools-call timeout is not Worker failure. Worker proof/output must use canonical `requested_reasoning_effort` and `command_evidence` fields.
+
+Phase 27A removes superseded Test role-contract documents. It does not change router behavior, runtime behavior, top-level topology, production store writes, remote push, PR, merge, release, deployment, or global causal truth merge.
+
+## Phase 27B Test role-bound operational skill runtime validator
+
+Phase 27B adds a local deterministic validator under:
+
+```text
+aegis-runtime/test/aegis_test_runtime/operational_skill.py
+```
+
+The validator checks Test Leader / Worker skill binding, Worker creation/proof/output thread identity, `launcher_timeout != worker_failed`, canonical field compatibility, evidence-state aggregation, result handoff routing, reproducibility set retention, artifact manifest retention, and forbidden production/global-truth actions.
+
+Phase 27B validates role-skill runtime artifacts only. It does not claim production Test lifecycle closure, production CI, durable environment provisioning, remote branch governance, release authority, production sign-off, or global causal truth merge.

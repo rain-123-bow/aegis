@@ -16,6 +16,7 @@ dev = [
 aegis-test-demo = "aegis_test_runtime.cli:main"
 aegis-test-handoff-validation = "aegis_test_runtime.handoff_validation_cli:main"
 aegis-test-real-workers = "aegis_test_runtime.real_worker_cli:main"
+aegis-test-operational-skill = "aegis_test_runtime.operational_skill:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
