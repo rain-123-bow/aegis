@@ -338,6 +338,16 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - BLE reachability can produce `passed_with_scope_limit` only when business write/notify remains unproven and the uncovered scope is preserved;
     - Phase 28A validates real-run monitoring hardening only and does not perform production Test lifecycle closure, production CI, durable environment provisioning, remote branch governance, release, deployment, external sign-off, or global causal truth merge.
 
+56. Phase 29A Final Review Leader operational skill document boundary:
+    - Final Review Leader role contract is converted into a role-bound operational skill;
+    - Final Review remains a single-Leader department with no internal workers or parallel reviewer fanout;
+    - `resource_policy_ref` is input-only and must be resolved into a `resource_policy` object before substantive review;
+    - Debate applicability must be explicit through `debate_applicability` and `no_debate_used_reason` when Debate was not used;
+    - `whole_chain_review` is a visible auditable result structure; resource-blocked results must mark it `not_started` and `graph_built: false`;
+    - `final_review_result` must include `status: final_review_recommendation`;
+    - Final Review input/result schemas and result template are synchronized with the new role skill;
+    - no router/topology mutation, runtime behavior change, production store write, remote push, PR, merge, release, deployment, or global causal truth merge is claimed.
+
 This is demo/acceptance closure, not production closure.
 
 ## Phase-1 scope
@@ -1461,6 +1471,7 @@ runtime_test_reports/PHASE_27B_TEST_ROLE_OPERATIONAL_SKILLS_PATCH_PLAN.md
 runtime_test_reports/PHASE_27B_TEST_ROLE_OPERATIONAL_SKILLS_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_28A_TEST_REAL_RUN_MONITORING_HARDENING_PATCH_PLAN.md
 runtime_test_reports/PHASE_28A_TEST_REAL_RUN_MONITORING_HARDENING_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_29A_FINAL_REVIEW_LEADER_OPERATIONAL_SKILL_PATCH_PLAN.md
 ```
 
 Current demo/acceptance closure point:
@@ -1514,6 +1525,7 @@ router-integrated communication closure
 + Final Review Phase 21B proof-audit closure
 + Final Review Phase 21B output-audit closure
 + Final Review Phase 21B Master recommendation boundary closure
++ Final Review Leader role-bound operational skill document boundary closure
 + Root static model/reasoning-budget policy for Master, top-level Leaders, Debate Workers, Execution Front/Back agents, Test Workers, and Final Review Leader
 + Master nested-Codex top-level Leader creation closure
 + Master top-level Router registration and 10-edge communication closure

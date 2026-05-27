@@ -1,5 +1,7 @@
-schema_id: final_review_input_package_v1
+schema_id: final_review_input_package_v2
 required:
+  - request_id
+  - source
   - task_scope
   - final_code_ref
   - implementation_candidate_ref
@@ -12,7 +14,11 @@ required:
   - test_evidence_refs
   - reproducibility_set_ref
   - artifact_manifest_ref
+  - debate_applicability
+  - resource_policy_ref
 fields:
+  request_id: string
+  source: test
   task_scope: string
   final_code_ref: string
   implementation_candidate_ref: string
@@ -28,12 +34,17 @@ fields:
   coverage_summary: object
   known_limits: list[string]
   uncovered_scope: list[string]
+  blocked_scope: list[string]
+  missing_evidence: list[string]
   material_conditions: list[string]
   assumptions: list[string]
+  debate_applicability: used|not_used
   debate_refs: list[string]
+  no_debate_used_reason: string|null
   governance_blockers: list[string]
-  resource_policy_ref: string
+  resource_policy_ref: string|null
 invalid_if:
+  - source != test
   - final_code_ref is empty
   - implementation_candidate_ref is empty
   - tested_candidate_ref is empty
@@ -41,3 +52,8 @@ invalid_if:
   - test_evidence_refs is empty
   - reproducibility_set_ref is empty
   - artifact_manifest_ref is empty
+  - debate_applicability == used and debate_refs is empty
+  - debate_applicability == not_used and no_debate_used_reason is empty
+notes:
+  - debate_refs: [] alone does not prove Debate was not used.
+  - resource_policy_ref is an input reference only. Final Review must resolve it into resource_policy before substantive review.
