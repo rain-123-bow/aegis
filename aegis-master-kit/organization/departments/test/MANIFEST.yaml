@@ -7,6 +7,7 @@ external_boundary: Test Leader
 runtime_package: aegis-runtime/test
 runtime_validators:
   role_skill_enforcement: aegis-runtime/test/aegis_test_runtime/operational_skill.py
+  real_run_monitoring_hardening: aegis-runtime/test/aegis_test_runtime/monitoring_hardening.py
 skills:
   leader: TEST_LEADER_OPERATIONAL_SKILL.md
   worker: TEST_WORKER_OPERATIONAL_SKILL.md
@@ -20,6 +21,7 @@ contracts:
   phase20a_handoff_validation: TEST_20A_HANDOFF_VALIDATION_CONTRACT.md
   real_test_workers: TEST_REAL_WORKER_CONTRACT.md
   phase20b_acceptance: TEST_20B_ACCEPTANCE_CONTRACT.md
+  real_run_monitoring_hardening: TEST_REAL_RUN_MONITORING_HARDENING_CONTRACT.md
 superseded_role_contracts_removed:
   - TEST_LEADER_CONTRACT.md
   - TEST_WORKER_CONTRACT.md
@@ -57,6 +59,11 @@ hard_rules:
   - Do not ask Execution to patch around governance or policy blockers.
   - Report governance or policy blockers as blocked with blocker_kind governance.
   - Do not route Test output directly to Master under the current topology.
+  - Do not label BLE business write/notify as passed unless deterministic business transaction is proven.
+  - Do not treat invalid BlueZ diagnostic commands as product-failure evidence.
+  - Do not accept Worker proof/output thread_id mismatch without a correction report.
+  - Do not use missing local tooling as candidate failure evidence.
+  - Do not create command routes without environment/tool preflight.
 
 phase20a_notes:
   - Phase 20A validates Test Leader consumption of Execution Phase 19B handoff packages.
@@ -78,3 +85,8 @@ phase27b_notes:
   - Phase 27B adds a deterministic local runtime validator for Test Leader / Worker role-skill artifacts.
   - Phase 27B validates thread_id supervision, Worker skill binding, proof/output audit shape, field compatibility, evidence-state aggregation, reproducibility, artifact manifest, and handoff routing.
   - Phase 27B does not claim production Test lifecycle closure, production CI, durable environment provisioning, remote branch governance, release, or global causal merge.
+
+phase28a_notes:
+  - Phase 28A adds deterministic monitoring hardening rules from a real BLE Test run.
+  - Phase 28A validates environment preflight, Worker thread_id consistency, launcher-timeout handling, invalid tooling exclusion, and BLE passed_with_scope_limit preservation.
+  - Phase 28A does not claim production Test lifecycle closure, production CI, durable environment provisioning, remote branch governance, release, or global causal merge.

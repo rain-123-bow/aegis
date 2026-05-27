@@ -188,6 +188,7 @@ TEST_RESULT_AND_HANDOFF_CONTRACT.md
 TEST_20A_HANDOFF_VALIDATION_CONTRACT.md
 TEST_20B_ACCEPTANCE_CONTRACT.md
 TEST_REAL_WORKER_CONTRACT.md
+TEST_REAL_RUN_MONITORING_HARDENING_CONTRACT.md
 schemas/
 templates/
 tests/
@@ -199,6 +200,29 @@ The following old role-contract files are superseded and removed by Phase 27A:
 TEST_LEADER_CONTRACT.md
 TEST_WORKER_CONTRACT.md
 ```
+
+
+## Real-run monitoring hardening
+
+Phase 28A records the first real-run monitoring hardening boundary for Test.
+
+The monitoring validator checks:
+
+```text
+environment/tool preflight before command routes
+Worker proof/output/supervision thread_id consistency
+launcher_timeout != worker_failed
+invalid tooling commands excluded from candidate-failure evidence
+BLE passed_with_scope_limit when business write/notify is not proven
+```
+
+The validator lives under:
+
+```text
+aegis-runtime/test/aegis_test_runtime/monitoring_hardening.py
+```
+
+It does not claim production Test lifecycle closure or production CI.
 
 ## Runtime boundary
 

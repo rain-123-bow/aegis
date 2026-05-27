@@ -331,6 +331,13 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - validator rejects direct Test -> Master routing, hidden uncovered scope, failure downgraded to inconclusive because owner is ambiguous, Worker code modification, remote operations, production store writes, and global causal truth claims;
     - Phase 27B validates local role-skill artifact enforcement only and does not perform production Test lifecycle closure, production CI, durable environment provisioning, remote branch governance, release, deployment, external sign-off, or global causal truth merge.
 
+55. Phase 28A Test real-run monitoring hardening:
+    - deterministic `aegis-runtime/test` monitoring validator exists for real-run Test packages;
+    - validator checks environment/tool preflight before command routes, Worker proof/output/supervision `thread_id` consistency, launcher-timeout recovery boundary, invalid tooling exclusion, BLE scope-limited result preservation, and production-boundary flags;
+    - missing local tooling is blocked or superseded instead of being used as candidate failure evidence;
+    - BLE reachability can produce `passed_with_scope_limit` only when business write/notify remains unproven and the uncovered scope is preserved;
+    - Phase 28A validates real-run monitoring hardening only and does not perform production Test lifecycle closure, production CI, durable environment provisioning, remote branch governance, release, deployment, external sign-off, or global causal truth merge.
+
 This is demo/acceptance closure, not production closure.
 
 ## Phase-1 scope
@@ -1366,6 +1373,25 @@ Expected Phase 27B targeted result:
 
 Phase 27B validation proves Test Leader / Worker role-bound skill runtime artifact enforcement only. It does not prove production Test lifecycle closure, production CI, durable environment provisioning, remote branch governance, remote push, PR creation, remote merge, release, external sign-off, or global causal truth merge.
 
+### Phase 28A Test real-run monitoring hardening validator
+
+```powershell
+py -3.13 -m venv .venv-test-monitoring-phase28a
+.\.venv-test-monitoring-phase28a\Scripts\python.exe -m pip install -U pip
+.\.venv-test-monitoring-phase28a\Scripts\python.exe -m pip install -e ".\aegis-runtime\test[dev]"
+
+.\.venv-test-monitoring-phase28a\Scripts\python.exe -m compileall .\aegis-runtime\test\aegis_test_runtime
+.\.venv-test-monitoring-phase28a\Scripts\python.exe -m pytest .\aegis-runtime\test\tests\test_phase28a_test_real_run_monitoring_hardening.py -vv
+```
+
+Expected Phase 28A targeted result:
+
+```text
+20 passed
+```
+
+Phase 28A validates real-run monitoring hardening only. It does not prove production Test lifecycle closure, production CI, durable environment provisioning, production BLE business tooling, or global causal truth merge.
+
 Before committing local changes:
 
 ```powershell
@@ -1433,6 +1459,8 @@ runtime_test_reports/PHASE_27A_TEST_ROLE_OPERATIONAL_SKILLS_PATCH_PLAN.md
 runtime_test_reports/PHASE_27A_TEST_ROLE_OPERATIONAL_SKILLS_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_27B_TEST_ROLE_OPERATIONAL_SKILLS_PATCH_PLAN.md
 runtime_test_reports/PHASE_27B_TEST_ROLE_OPERATIONAL_SKILLS_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_28A_TEST_REAL_RUN_MONITORING_HARDENING_PATCH_PLAN.md
+runtime_test_reports/PHASE_28A_TEST_REAL_RUN_MONITORING_HARDENING_ACCEPTANCE_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -1504,6 +1532,7 @@ router-integrated communication closure
 + Execution Leader/Front/Back role-bound operational skill enforcement closure
 + Test Leader/Worker role-bound operational skill document boundary closure
 + Test Leader/Worker role-bound operational skill runtime validator closure
++ Test real-run monitoring hardening closure
 ```
 
 ## Production hardening not yet included

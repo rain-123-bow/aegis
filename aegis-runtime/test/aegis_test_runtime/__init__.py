@@ -1,6 +1,12 @@
 from .leader import TestLeader
 from .real_workers import RealTestWorkerError, build_test_worker_creation_requests, audit_test_worker_proofs, audit_test_worker_outputs
 from .handoff_validation import TestHandoffValidationError, run_test_handoff_validation
+from .monitoring_hardening import (
+    MonitoringHardeningError,
+    MonitoringHardeningValidationResult,
+    validate_real_run_monitoring_package,
+    validate_real_run_monitoring_package_file,
+)
 from .operational_skill import (
     TestOperationalSkillError,
     TestSkillValidationResult,
@@ -36,4 +42,8 @@ __all__ = [
     "TestSkillValidationResult",
     "validate_test_skill_run",
     "validate_test_skill_run_file",
+    "validate_real_run_monitoring_package_file",
+    "validate_real_run_monitoring_package",
+    "MonitoringHardeningValidationResult",
+    "MonitoringHardeningError",
 ]
