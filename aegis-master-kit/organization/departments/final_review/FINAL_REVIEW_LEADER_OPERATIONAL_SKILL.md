@@ -75,6 +75,10 @@ final_review_leader:
 Rules:
 
 - The Leader must not self-select a weaker model profile.
+- `fallback_allowed: false` means the Leader cannot self-authorize fallback.
+  Any `gpt-5.5 -> gpt-5.4` fallback must be root-policy-authorized,
+  evidence-backed, and budget-preserving. If the root policy does not authorize
+  it for the current run, the resource gate must return `fallback_forbidden`.
 - Silent downgrade is forbidden.
 - Provider-default fallback is forbidden.
 - Reasoning-budget downgrade is forbidden.

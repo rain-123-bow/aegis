@@ -8,9 +8,17 @@ It demonstrates:
 
 - root `MODEL_REASONING_BUDGET_POLICY.yaml` parsing;
 - locked model/reasoning-budget resolution for Master and top-level Leaders;
-- no silent downgrade and no fallback in the current phase;
+- no silent downgrade, no provider-default fallback, and only root-policy
+  `gpt-5.5 -> gpt-5.4` fallback when objective evidence exists and the
+  reasoning budget is preserved;
 - nested-codex MCP create-agent request generation;
 - real nested-codex MCP create-agent validation path;
+- required child `thread_id` capture;
+- separated Leader proof path and task output directory authorization;
+- explicit model-attestation status when tool output cannot independently prove
+  actual resolved model/budget;
+- optional behavioral attestation challenge that can record
+  `behaviorally_attested` without claiming tool-level proof;
 - top-level Router registration for created Leaders;
 - top-level `status_update` route verification;
 - audit report generation.

@@ -91,6 +91,10 @@ Master may create or call top-level department Leaders:
 - Test Leader;
 - Final Review Leader.
 
+Top-level Leader creation is bootstrap authority. It is not runtime route
+authority. After bootstrap, Master must still obey the active directed route
+table for ordinary runtime messages. Creating or auditing a Test Leader or Final Review Leader does not create a `master -> test` or `master -> final_review` runtime edge.
+
 Master must not directly create department-internal workers such as:
 
 - Debate Workers;
@@ -146,6 +150,22 @@ Budget downgrade is forbidden.
 
 If the required model/budget combination is unavailable, Master must emit `blocked_resource_policy` unless the explicit `gpt-5.4` fallback path with unchanged budget is satisfied and recorded.
 
+`fallback_allowed: false` in a role profile means the role cannot
+self-authorize fallback. It does not override the root policy's only explicit
+fallback path. The only valid fallback is root-policy-authorized
+`gpt-5.5 -> gpt-5.4` with objective unavailability evidence and unchanged
+reasoning budget.
+
+If a tool cannot independently attest the actual resolved model and reasoning
+budget, Master must record `model_attestation_status:
+requested_policy_only|unattested`. Master must not claim independent proof of
+actual model execution from requested/policy fields alone.
+
+Master may strengthen the audit by running the standard behavioral attestation
+challenge after agent creation. Passing the challenge may record
+`model_attestation_status: behaviorally_attested`, but this remains behavioral
+inference and must not be reported as `tool_attested`.
+
 ---
 
 ## 4. Always-on trigger rules
@@ -196,6 +216,33 @@ Only source-backed, scope-bound, version-bound, Master-verified neutral facts ma
 ### 4.5 Every reusable judgment triggers Causal candidate consideration
 
 If a statement contains project-direction reasoning, dependency reasoning, invalidation reasoning, trade-off judgment, or because/therefore structure, Master must route it to Causal candidate handling rather than Knowledge.
+
+### 4.6 Missing-route requests trigger topology patch admission
+
+If the user asks to use or add a missing top-level route, Master must not treat
+the request as ordinary runtime routing.
+
+Master must classify the request as one of:
+
+- `reject_runtime_route_request`
+- `admit_topology_patch_investigation`
+- `admit_topology_patch_task`
+- `block_topology_patch`
+
+The governing contract is:
+
+```text
+aegis-master-kit/organization/contracts/TOPOLOGY_PATCH_ADMISSION_CONTRACT.md
+```
+
+For example, `test -> master` is invalid in v1. Master must reject runtime use
+of that edge. It may only admit a separate topology patch investigation or task
+when the user provides a topology-change request with evidence, affected
+contracts, test scope, and developer authorization.
+
+A topology investigation or patch task must explicitly state that the requested
+edge is inactive until the topology, contracts, runtime checks when required,
+and verification report are updated together and accepted.
 
 ---
 
@@ -451,7 +498,14 @@ A staged Causal candidate is not canonical/global truth.
 
 ### Step 8 — Determine execution route
 
-Master chooses the next top-level route.
+Master chooses or supervises the next top-level route state.
+
+This list includes department-to-department transitions that Master may require
+or supervise, but it does not give Master direct runtime send authority for
+every edge. Master's own runtime outgoing edges remain only:
+
+- `master -> debate`
+- `master -> execution`
 
 Possible routes:
 
@@ -475,6 +529,11 @@ Routing rules:
 - return to Master when governance, policy, or responsibility decision is needed.
 
 Master must not create department-internal workers directly.
+
+If Master needs information from Test or Final Review outside an active
+Execution/Test/Final Review handoff chain, it must use a separately defined
+bootstrap/audit/assessment procedure. It must not fabricate a runtime
+`master -> test` or `master -> final_review` message.
 
 ---
 
@@ -501,6 +560,14 @@ Rules:
 - any model below `gpt-5.4` is forbidden;
 - no provider-default model is acceptable unless it is proven to satisfy the policy;
 - every proof/output must record requested model, resolved model, requested reasoning budget, resolved reasoning budget, and fallback status.
+- if the tool cannot independently attest actual resolved model/budget, every
+  proof/output must record `model_attestation_status:
+  requested_policy_only|unattested`.
+- if Master runs the standard behavioral attestation challenge and the result
+  passes the fixed rubric, every proof/output may record
+  `model_attestation_status: behaviorally_attested` plus a
+  `behavioral_attestation_ref`. This is stronger than
+  `requested_policy_only`, but it is not tool-level proof.
 
 If the model or budget cannot satisfy policy, Master must produce `blocked_resource_policy`.
 

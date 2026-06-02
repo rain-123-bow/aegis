@@ -111,7 +111,7 @@ The current prototype has closed the following demo/acceptance mechanisms:
 23. Master top-level runtime demo for policy-bound nested-Codex Leader creation.
 24. Real nested-Codex creation proof for Debate, Execution, Test, and Final Review Leaders.
 25. Phase 17 proof audit with sha256 for all four real nested-Codex Leader proof files.
-26. Debate Worker profile is explicitly locked as `gpt-5.5 / high` with fallback and silent downgrade forbidden.
+26. Debate Worker profile is explicitly locked as `gpt-5.5 / high` with role-local fallback, provider-default fallback, and silent downgrade forbidden.
 27. Phase 18 real Debate Worker acceptance:
     - Master creates only the Debate Leader for the acceptance run;
     - Debate Leader creates one real nested-Codex Debate Worker per valid stance;
@@ -139,7 +139,7 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - targeted git-topology tests passed;
     - full Execution runtime suite passed;
     - sandbox integration-branch pytest passed.
-31. Execution Front and Back Agent profiles are explicitly locked as `gpt-5.5 / high` with fallback and silent downgrade forbidden.
+31. Execution Front and Back Agent profiles are explicitly locked as `gpt-5.5 / high` with role-local fallback, provider-default fallback, and silent downgrade forbidden.
 32. Phase 19B real Execution Front/Back Agent acceptance:
     - Master creates only the Execution Leader;
     - Execution Leader creates one real Front Agent and one real Back Agent per accepted Execution Group;
@@ -176,7 +176,7 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - full Test runtime suite passed;
     - sandbox pytest passed through the Test Leader handoff-validation path;
     - reproducibility set and artifact manifest were generated.
-36. Test Worker profile is explicitly locked as `gpt-5.5 / high` with fallback and silent downgrade forbidden.
+36. Test Worker profile is explicitly locked as `gpt-5.5 / high` with role-local fallback, provider-default fallback, and silent downgrade forbidden.
 37. Phase 20B real Test Worker acceptance:
     - Master creates only the Test Leader;
     - Test Leader creates one real nested-Codex / Codex Test Worker per accepted validation route;
@@ -347,6 +347,24 @@ The current prototype has closed the following demo/acceptance mechanisms:
     - `final_review_result` must include `status: final_review_recommendation`;
     - Final Review input/result schemas and result template are synchronized with the new role skill;
     - no router/topology mutation, runtime behavior change, production store write, remote push, PR, merge, release, deployment, or global causal truth merge is claimed.
+
+57. Phase 30A organization governance ambiguity hardening:
+    - root model fallback semantics are clarified as root-policy-only;
+    - `fallback_allowed: false` means roles cannot self-authorize fallback or accept provider-default models;
+    - explicit `gpt-5.5 -> gpt-5.4` fallback remains possible only through root policy, objective evidence, and unchanged reasoning budget;
+    - missing top-level route requests now have a formal topology patch admission contract;
+    - `test -> master` remains invalid runtime routing in v1;
+    - Master bootstrap authority is separated from Master runtime route authority;
+    - top-level nested-Codex Leader creation now requires non-empty `thread_id`, separate proof path and task output directory, and explicit model-attestation status;
+    - no router route-table expansion, production closure, remote push, PR, merge, release, or global causal truth merge is claimed.
+
+58. Phase 30B nested-Codex behavioral model attestation:
+    - when tool-level model/budget attestation is unavailable, Master may run a fixed deep-reasoning challenge against a created agent;
+    - passing the challenge may record `model_attestation_status: behaviorally_attested`;
+    - behavioral attestation is stronger than `requested_policy_only` but remains distinct from `tool_attested`;
+    - the challenge checks route-boundary reasoning, topology patch admission, root-policy-only fallback semantics, attestation boundaries, counterexamples, and limits;
+    - low score, failed constraints, or claiming private backend model knowledge fails the gate;
+    - no production closure, remote push, PR, merge, release, or global causal truth merge is claimed.
 
 This is demo/acceptance closure, not production closure.
 
@@ -1472,6 +1490,9 @@ runtime_test_reports/PHASE_27B_TEST_ROLE_OPERATIONAL_SKILLS_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_28A_TEST_REAL_RUN_MONITORING_HARDENING_PATCH_PLAN.md
 runtime_test_reports/PHASE_28A_TEST_REAL_RUN_MONITORING_HARDENING_ACCEPTANCE_REPORT.md
 runtime_test_reports/PHASE_29A_FINAL_REVIEW_LEADER_OPERATIONAL_SKILL_PATCH_PLAN.md
+runtime_test_reports/PHASE_29A_FINAL_REVIEW_LEADER_OPERATIONAL_SKILL_ACCEPTANCE_REPORT.md
+runtime_test_reports/PHASE_30A_ORGANIZATION_GOVERNANCE_AMBIGUITY_HARDENING_REPORT.md
+runtime_test_reports/PHASE_30B_NESTED_CODEX_BEHAVIORAL_MODEL_ATTESTATION_REPORT.md
 ```
 
 Current demo/acceptance closure point:
@@ -1539,6 +1560,10 @@ router-integrated communication closure
 + Local demo Knowledge Store persistence boundary with changelog and rollback metadata
 + Local demo three-store linkage boundary across Archive, Knowledge, and Causal
 + Master operational workflow skill enforcement boundary
++ Phase 30A root-policy-only fallback and topology patch admission hardening
++ Phase 30A Master bootstrap authority versus runtime route authority boundary
++ Phase 30A top-level Leader proof/output path separation and model-attestation status boundary
++ Phase 30B nested-Codex behavioral model attestation boundary
 + Debate direct real nested-Codex Leader/Worker behavioral probe, recorded as historical pre-skill evidence
 + Debate Leader/Worker role-bound operational skill enforcement closure
 + Execution Leader/Front/Back role-bound operational skill enforcement closure
@@ -1564,6 +1589,7 @@ Deferred production topics include:
 - JSON store locking;
 - real persistent nested-Codex session lifecycle;
 - standardized nested-Codex create-agent MCP tool name;
+- independent tool-level attestation of actual resolved nested-Codex model and reasoning budget beyond behavioral inference;
 - real git branch/worktree orchestration beyond local Phase 19A/19B topology validation;
 - production real Front/Back worker supervision, restart/recovery, and lifecycle management;
 - remote Execution branch governance;

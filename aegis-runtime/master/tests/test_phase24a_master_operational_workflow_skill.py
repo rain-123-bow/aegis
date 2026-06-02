@@ -38,6 +38,7 @@ def _cycle(**overrides):
                 "requested_reasoning_budget": "extra_high",
                 "resolved_reasoning_budget": "extra_high",
                 "policy_reasoning_budget": "extra_high",
+                "model_attestation_status": "requested_policy_only",
                 "fallback_used": False,
                 "fallback_reason": None,
                 "fallback_evidence_refs": [],
@@ -49,6 +50,7 @@ def _cycle(**overrides):
                 "requested_reasoning_budget": "high",
                 "resolved_reasoning_budget": "high",
                 "policy_reasoning_budget": "high",
+                "model_attestation_status": "requested_policy_only",
                 "fallback_used": False,
                 "fallback_reason": None,
                 "fallback_evidence_refs": [],
@@ -223,6 +225,103 @@ def test_gpt54_fallback_with_same_budget_and_evidence_is_valid() -> None:
     assert result.status == "validated"
 
 
+def test_behavioral_model_attestation_can_validate_requested_profile_consistency() -> None:
+    cycle = _cycle()
+    cycle["model_policy_resolution"][1]["model_attestation_status"] = "behaviorally_attested"
+    cycle["behavioral_model_attestation"] = [
+        {
+            "agent_id": "execution",
+            "role_id": "execution_leader",
+            "thread_id": "thread-execution-001",
+            "requested_model": "gpt-5.5",
+            "policy_model": "gpt-5.5",
+            "requested_reasoning_budget": "high",
+            "policy_reasoning_budget": "high",
+            "model_attestation_status": "behaviorally_attested",
+            "behavioral_attestation_status": "behavior_consistent_with_requested_profile",
+            "challenge_id": "aegis-model-behavioral-attestation-v1",
+            "challenge_prompt_ref": "aegis-runtime/master/NESTED_CODEX_BEHAVIORAL_ATTESTATION_CHALLENGE.md",
+            "rubric_ref": "aegis-runtime/master/NESTED_CODEX_BEHAVIORAL_ATTESTATION_CHALLENGE.md#rubric",
+            "started_at_utc": "2026-06-02T00:00:00Z",
+            "completed_at_utc": "2026-06-02T00:00:30Z",
+            "elapsed_ms": 30000,
+            "answer_quality_score": 0.86,
+            "minimum_quality_score": 0.75,
+            "failed_constraints": [],
+        }
+    ]
+    result = validate_master_operational_cycle(cycle)
+    assert result.status == "validated"
+
+
+def test_behavioral_model_attestation_must_not_claim_tool_attested() -> None:
+    cycle = _cycle()
+    cycle["behavioral_model_attestation"] = [
+        {
+            "agent_id": "execution",
+            "role_id": "execution_leader",
+            "thread_id": "thread-execution-001",
+            "requested_model": "gpt-5.5",
+            "policy_model": "gpt-5.5",
+            "requested_reasoning_budget": "high",
+            "policy_reasoning_budget": "high",
+            "model_attestation_status": "tool_attested",
+            "behavioral_attestation_status": "behavior_consistent_with_requested_profile",
+            "challenge_id": "aegis-model-behavioral-attestation-v1",
+            "challenge_prompt_ref": "aegis-runtime/master/NESTED_CODEX_BEHAVIORAL_ATTESTATION_CHALLENGE.md",
+            "rubric_ref": "aegis-runtime/master/NESTED_CODEX_BEHAVIORAL_ATTESTATION_CHALLENGE.md#rubric",
+            "started_at_utc": "2026-06-02T00:00:00Z",
+            "completed_at_utc": "2026-06-02T00:00:30Z",
+            "elapsed_ms": 30000,
+            "answer_quality_score": 0.86,
+            "minimum_quality_score": 0.75,
+            "failed_constraints": [],
+        }
+    ]
+    result = validate_master_operational_cycle(cycle)
+    assert result.status == "rejected"
+    assert any(
+        item["field"] == "behavioral_model_attestation[0].model_attestation_status"
+        for item in result.violations
+    )
+
+
+def test_behavioral_model_attestation_rejects_low_score_or_failed_constraints() -> None:
+    cycle = _cycle()
+    cycle["behavioral_model_attestation"] = [
+        {
+            "agent_id": "execution",
+            "role_id": "execution_leader",
+            "thread_id": "thread-execution-001",
+            "requested_model": "gpt-5.5",
+            "policy_model": "gpt-5.5",
+            "requested_reasoning_budget": "high",
+            "policy_reasoning_budget": "high",
+            "model_attestation_status": "behaviorally_attested",
+            "behavioral_attestation_status": "behavior_consistent_with_requested_profile",
+            "challenge_id": "aegis-model-behavioral-attestation-v1",
+            "challenge_prompt_ref": "aegis-runtime/master/NESTED_CODEX_BEHAVIORAL_ATTESTATION_CHALLENGE.md",
+            "rubric_ref": "aegis-runtime/master/NESTED_CODEX_BEHAVIORAL_ATTESTATION_CHALLENGE.md#rubric",
+            "started_at_utc": "2026-06-02T00:00:00Z",
+            "completed_at_utc": "2026-06-02T00:00:30Z",
+            "elapsed_ms": 30000,
+            "answer_quality_score": 0.50,
+            "minimum_quality_score": 0.75,
+            "failed_constraints": ["claimed_behaviorally_attested_equals_tool_attested"],
+        }
+    ]
+    result = validate_master_operational_cycle(cycle)
+    assert result.status == "rejected"
+    assert any(
+        item["field"] == "behavioral_model_attestation[0].answer_quality_score"
+        for item in result.violations
+    )
+    assert any(
+        item["field"] == "behavioral_model_attestation[0].failed_constraints"
+        for item in result.violations
+    )
+
+
 def test_model_below_gpt54_rejected() -> None:
     cycle = _cycle()
     cycle["model_policy_resolution"][0]["resolved_model"] = "gpt-5"
@@ -268,6 +367,49 @@ def test_dispatch_without_model_policy_check_rejected() -> None:
     result = validate_master_operational_cycle(cycle)
     assert result.status == "rejected"
     assert any(item["field"] == "department_dispatch.model_policy_checked" for item in result.violations)
+
+
+def test_missing_topology_edge_runtime_use_rejected() -> None:
+    cycle = _cycle()
+    cycle["topology_patch_request"] = {
+        "requested_edge": "test -> master",
+        "classification": "reject_runtime_route_request",
+        "runtime_route_attempted": True,
+        "edge_active": False,
+        "evidence_refs": ["topology:master_top_level_v1.yaml"],
+    }
+    result = validate_master_operational_cycle(cycle)
+    assert result.status == "rejected"
+    assert any(item["field"] == "topology_patch_request.runtime_route_attempted" for item in result.violations)
+
+
+def test_topology_patch_investigation_does_not_activate_edge() -> None:
+    cycle = _cycle()
+    cycle["topology_patch_request"] = {
+        "requested_edge": "test -> master",
+        "classification": "admit_topology_patch_investigation",
+        "runtime_route_attempted": False,
+        "edge_active": False,
+        "evidence_refs": ["topology:master_top_level_v1.yaml"],
+    }
+    result = validate_master_operational_cycle(cycle)
+    assert result.status == "validated"
+
+
+def test_topology_patch_task_requires_authorization_and_evidence() -> None:
+    cycle = _cycle()
+    cycle["topology_patch_request"] = {
+        "requested_edge": "test -> master",
+        "classification": "admit_topology_patch_task",
+        "runtime_route_attempted": False,
+        "edge_active": False,
+        "developer_authorization": False,
+        "evidence_refs": [],
+    }
+    result = validate_master_operational_cycle(cycle)
+    assert result.status == "rejected"
+    assert any(item["field"] == "topology_patch_request.developer_authorization" for item in result.violations)
+    assert any(item["field"] == "topology_patch_request.evidence_refs" for item in result.violations)
 
 
 def test_launcher_timeout_requires_thread_id_and_recovery() -> None:

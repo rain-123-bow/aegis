@@ -179,7 +179,9 @@ class RecordingNestedCodexClient(NestedCodexClientProtocol):
             status="created",
             resolved_model=request.model,
             resolved_reasoning_budget=request.reasoning_budget,
-            raw_response={"test_only": True},
+            thread_id=f"test-thread-{request.agent_id}",
+            model_attestation_status="requested_policy_only",
+            raw_response={"test_only": True, "model_attestation_status": "requested_policy_only"},
         )
         response.assert_matches(request)
         return response

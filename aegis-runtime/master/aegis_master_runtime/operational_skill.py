@@ -49,6 +49,23 @@ VALID_TIMEOUT_STATES = {
     "child_failed",
     "proof_missing_after_final_deadline",
 }
+VALID_TOPOLOGY_PATCH_CLASSIFICATIONS = {
+    "reject_runtime_route_request",
+    "admit_topology_patch_investigation",
+    "admit_topology_patch_task",
+    "block_topology_patch",
+}
+VALID_MODEL_ATTESTATION_STATUSES = {
+    "tool_attested",
+    "behaviorally_attested",
+    "requested_policy_only",
+    "unattested",
+}
+VALID_BEHAVIORAL_ATTESTATION_STATUSES = {
+    "behavior_consistent_with_requested_profile",
+    "behavioral_attestation_failed",
+    "behavioral_attestation_inconclusive",
+}
 
 
 class MasterOperationalSkillError(ValueError):
@@ -177,7 +194,13 @@ def validate_master_operational_cycle(
     _check_model_policy_resolution(cycle.get("model_policy_resolution", []), violations)
 
     checked += 1
+    _check_behavioral_attestation(cycle.get("behavioral_model_attestation", []), violations)
+
+    checked += 1
     _check_department_dispatch(cycle.get("department_dispatch", {}), violations)
+
+    checked += 1
+    _check_topology_patch_request(cycle.get("topology_patch_request"), violations)
 
     checked += 1
     _check_supervision(cycle.get("supervision", {}), violations)
@@ -291,6 +314,7 @@ def _check_model_policy_resolution(value: Any, violations: list[dict[str, Any]])
         resolved_budget = _string(item.get("resolved_reasoning_budget"))
         requested_budget = _string(item.get("requested_reasoning_budget"))
         policy_budget = _string(item.get("policy_reasoning_budget"))
+        attestation_status = _string(item.get("model_attestation_status")) or "unattested"
         fallback_used = item.get("fallback_used") is True
 
         if not requested_model:
@@ -303,6 +327,13 @@ def _check_model_policy_resolution(value: Any, violations: list[dict[str, Any]])
             violations.append(_violation(f"model_policy_resolution[{idx}].reasoning_budget", "reasoning budget must be high or extra_high for current Master skill roles"))
         if resolved_budget != policy_budget:
             violations.append(_violation(f"model_policy_resolution[{idx}].resolved_reasoning_budget", "reasoning budget downgrade or mismatch is forbidden"))
+        if attestation_status not in VALID_MODEL_ATTESTATION_STATUSES:
+            violations.append(
+                _violation(
+                    f"model_policy_resolution[{idx}].model_attestation_status",
+                    "model_attestation_status must be tool_attested, behaviorally_attested, requested_policy_only, or unattested",
+                )
+            )
         if fallback_used:
             if not (requested_model == PRIMARY_MODEL and resolved_model == FALLBACK_MODEL):
                 violations.append(_violation(f"model_policy_resolution[{idx}].fallback_used", "fallback is allowed only from gpt-5.5 to gpt-5.4"))
@@ -311,6 +342,77 @@ def _check_model_policy_resolution(value: Any, violations: list[dict[str, Any]])
         else:
             if requested_model and resolved_model and requested_model != resolved_model:
                 violations.append(_violation(f"model_policy_resolution[{idx}].resolved_model", "model mismatch without explicit fallback is forbidden"))
+
+
+def _check_behavioral_attestation(value: Any, violations: list[dict[str, Any]]) -> None:
+    records = _as_list(value)
+    for idx, item in enumerate(records):
+        if not isinstance(item, dict):
+            violations.append(_violation(f"behavioral_model_attestation[{idx}]", "behavioral attestation entry must be an object"))
+            continue
+
+        status = _string(item.get("behavioral_attestation_status"))
+        if status not in VALID_BEHAVIORAL_ATTESTATION_STATUSES:
+            violations.append(
+                _violation(
+                    f"behavioral_model_attestation[{idx}].behavioral_attestation_status",
+                    "behavioral attestation status is invalid",
+                )
+            )
+        if _string(item.get("model_attestation_status")) == "tool_attested":
+            violations.append(
+                _violation(
+                    f"behavioral_model_attestation[{idx}].model_attestation_status",
+                    "behavioral challenge must not claim tool_attested",
+                )
+            )
+        if status == "behavior_consistent_with_requested_profile":
+            required = {
+                "agent_id",
+                "role_id",
+                "thread_id",
+                "requested_model",
+                "policy_model",
+                "requested_reasoning_budget",
+                "policy_reasoning_budget",
+                "challenge_id",
+                "challenge_prompt_ref",
+                "rubric_ref",
+                "started_at_utc",
+                "completed_at_utc",
+                "elapsed_ms",
+                "answer_quality_score",
+                "minimum_quality_score",
+                "failed_constraints",
+            }
+            for field_name in sorted(required):
+                if field_name not in item:
+                    violations.append(
+                        _violation(
+                            f"behavioral_model_attestation[{idx}].{field_name}",
+                            "accepted behavioral attestation requires this field",
+                        )
+                    )
+            if int(item.get("elapsed_ms", 0) or 0) <= 0:
+                violations.append(
+                    _violation(f"behavioral_model_attestation[{idx}].elapsed_ms", "elapsed_ms must be positive")
+                )
+            quality = float(item.get("answer_quality_score", 0) or 0)
+            minimum = float(item.get("minimum_quality_score", 0) or 0)
+            if quality < minimum:
+                violations.append(
+                    _violation(
+                        f"behavioral_model_attestation[{idx}].answer_quality_score",
+                        "answer quality score must meet the minimum threshold",
+                    )
+                )
+            if _as_list(item.get("failed_constraints", [])):
+                violations.append(
+                    _violation(
+                        f"behavioral_model_attestation[{idx}].failed_constraints",
+                        "accepted behavioral attestation must not have failed constraints",
+                    )
+                )
 
 
 def _check_department_dispatch(value: Any, violations: list[dict[str, Any]]) -> None:
@@ -324,6 +426,52 @@ def _check_department_dispatch(value: Any, violations: list[dict[str, Any]]) -> 
         violations.append(_violation("department_dispatch.master_created_top_level_leader_only", "Master may create/call only top-level department Leaders"))
     if dispatch.get("model_policy_checked") is False and target is not None:
         violations.append(_violation("department_dispatch.model_policy_checked", "department dispatch requires model policy check"))
+
+
+def _check_topology_patch_request(value: Any, violations: list[dict[str, Any]]) -> None:
+    if value is None:
+        return
+    request = value if isinstance(value, dict) else {}
+    if not request:
+        violations.append(_violation("topology_patch_request", "topology patch request must be an object"))
+        return
+
+    classification = _string(request.get("classification"))
+    if classification not in VALID_TOPOLOGY_PATCH_CLASSIFICATIONS:
+        violations.append(
+            _violation(
+                "topology_patch_request.classification",
+                "missing-edge requests must be rejected, blocked, investigated, or admitted as topology patch tasks",
+            )
+        )
+    if not _string(request.get("requested_edge")):
+        violations.append(_violation("topology_patch_request.requested_edge", "requested edge is required"))
+    if request.get("runtime_route_attempted") is True:
+        violations.append(
+            _violation(
+                "topology_patch_request.runtime_route_attempted",
+                "missing-edge request must not be sent as an ordinary runtime route",
+            )
+        )
+    if request.get("edge_active") is True:
+        violations.append(
+            _violation(
+                "topology_patch_request.edge_active",
+                "topology investigation or patch admission does not activate the requested edge",
+            )
+        )
+    if classification == "admit_topology_patch_task":
+        if request.get("developer_authorization") is not True:
+            violations.append(
+                _violation(
+                    "topology_patch_request.developer_authorization",
+                    "topology patch task requires developer authorization",
+                )
+            )
+        if not _as_list(request.get("evidence_refs", [])):
+            violations.append(
+                _violation("topology_patch_request.evidence_refs", "topology patch task requires evidence refs")
+            )
 
 
 def _check_supervision(value: Any, violations: list[dict[str, Any]]) -> None:

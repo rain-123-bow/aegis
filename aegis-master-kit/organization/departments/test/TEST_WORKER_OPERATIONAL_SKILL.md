@@ -65,20 +65,21 @@ If this skill reference is missing, the Worker proof or output is invalid for Te
 
 The Worker must use the model and reasoning budget resolved by the Test Leader from `MODEL_REASONING_BUDGET_POLICY.yaml`.
 
-This skill does not grant fallback authority by itself. The active root policy profile for `test_worker` is decisive. If the active profile says `fallback_allowed: false`, fallback is forbidden. If a future root policy profile explicitly enables fallback, only `gpt-5.5 -> gpt-5.4` fallback is allowed, and only with evidence while preserving the configured reasoning budget.
+This skill does not grant fallback authority by itself. The active root policy profile for `test_worker` is decisive. `fallback_allowed: false` means the Worker cannot self-authorize fallback and cannot accept provider-default model selection. It does not override the root policy's explicit `gpt-5.5 -> gpt-5.4` fallback path when objective unavailability evidence exists and the configured reasoning budget is preserved.
 
-Current strict Phase 20B-compatible profile:
+Current root-policy-owned profile:
 
 ```yaml
 test_worker:
   model_primary: gpt-5.5
   fallback_allowed: false
-  minimum_accepted_model: gpt-5.5
+  fallback_authority: root_policy_only
+  minimum_accepted_model: gpt-5.4 only through explicit root-policy fallback
   reasoning_budget: high
   reasoning_budget_downgrade_allowed: false
 ```
 
-Future explicit fallback profile, only if the root policy profile is changed:
+Only valid explicit fallback path, owned by root policy:
 
 ```yaml
 allowed_fallback_path:
@@ -93,11 +94,11 @@ Rules:
 
 - Worker must not self-select model or reasoning budget.
 - The active root policy profile wins over this skill text when the two conflict.
-- In the current Phase 20B-compatible profile, fallback is forbidden because `fallback_allowed: false`.
+- In the current profile, role-local fallback is forbidden because `fallback_allowed: false`; root-policy-only explicit fallback remains possible only with evidence and unchanged budget.
 - Silent downgrade is forbidden.
 - Provider-default model fallback is forbidden.
 - Any model below the active minimum accepted model must be blocked.
-- If a future root policy profile enables `gpt-5.5 -> gpt-5.4` fallback, it must be explicit, evidenced, and recorded.
+- If root policy fallback is used, it must be explicit, evidenced, and recorded.
 - Reasoning budget must not downgrade.
 
 ---

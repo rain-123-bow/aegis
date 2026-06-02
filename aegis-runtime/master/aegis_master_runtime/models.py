@@ -40,6 +40,7 @@ class ModelProfile:
     model: str
     reasoning_budget: str
     fallback_allowed: bool
+    fallback_authority: str
     dynamic_adjustment_allowed: bool
     parallel_internal_workers: str | None = None
 
@@ -56,6 +57,7 @@ class ModelProfile:
             model=model,
             reasoning_budget=reasoning_budget,
             fallback_allowed=bool(value.get("fallback_allowed", False)),
+            fallback_authority=str(value.get("fallback_authority", "root_policy_only")),
             dynamic_adjustment_allowed=bool(value.get("dynamic_adjustment_allowed", False)),
             parallel_internal_workers=value.get("parallel_internal_workers"),
         )
@@ -66,6 +68,7 @@ class ModelProfile:
             "model": self.model,
             "reasoning_budget": self.reasoning_budget,
             "fallback_allowed": self.fallback_allowed,
+            "fallback_authority": self.fallback_authority,
             "dynamic_adjustment_allowed": self.dynamic_adjustment_allowed,
         }
         if self.parallel_internal_workers is not None:
@@ -82,6 +85,8 @@ class ModelReasoningPolicy:
     dynamic_adjustment_enabled: bool
     default_fallback_allowed: bool
     silent_downgrade_allowed: bool
+    explicit_gpt55_to_gpt54_fallback_allowed: bool
+    fallback_authority: str
 
     def require_profile(self, profile_id: str) -> ModelProfile:
         try:
@@ -90,6 +95,10 @@ class ModelReasoningPolicy:
             raise MasterRuntimeContractError(f"required model profile missing: {profile_id}") from exc
         if profile.fallback_allowed:
             raise MasterRuntimeContractError(f"fallback must be false in current phase: {profile_id}")
+        if profile.fallback_authority != "root_policy_only":
+            raise MasterRuntimeContractError(
+                f"profile fallback_authority must be root_policy_only in current phase: {profile_id}"
+            )
         if profile.dynamic_adjustment_allowed:
             raise MasterRuntimeContractError(f"dynamic adjustment must be false in current phase: {profile_id}")
         return profile
@@ -102,6 +111,8 @@ class ModelReasoningPolicy:
             "dynamic_adjustment_enabled": self.dynamic_adjustment_enabled,
             "default_fallback_allowed": self.default_fallback_allowed,
             "silent_downgrade_allowed": self.silent_downgrade_allowed,
+            "explicit_gpt55_to_gpt54_fallback_allowed": self.explicit_gpt55_to_gpt54_fallback_allowed,
+            "fallback_authority": self.fallback_authority,
             "profiles": {key: profile.to_dict() for key, profile in self.profiles.items()},
         }
 
@@ -139,6 +150,13 @@ class NestedCodexCreateResponse:
     status: Literal["created", "active", "ready"]
     resolved_model: str
     resolved_reasoning_budget: str
+    thread_id: str
+    model_attestation_status: Literal[
+        "tool_attested",
+        "behaviorally_attested",
+        "requested_policy_only",
+        "unattested",
+    ] = "unattested"
     raw_response: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -146,12 +164,20 @@ class NestedCodexCreateResponse:
         status = str(value.get("status", ""))
         if status not in {"created", "active", "ready"}:
             raise MasterRuntimeContractError(f"nested-codex response status is invalid: {status}")
+        thread_id = str(value.get("thread_id", value.get("threadId", ""))).strip()
+        if not thread_id:
+            raise MasterRuntimeContractError("nested-codex response must include non-empty thread_id")
+        attestation = str(value.get("model_attestation_status", "unattested"))
+        if attestation not in {"tool_attested", "behaviorally_attested", "requested_policy_only", "unattested"}:
+            raise MasterRuntimeContractError(f"nested-codex model_attestation_status is invalid: {attestation}")
         return cls(
             agent_id=str(value.get("agent_id", "")),
             role_id=str(value.get("role_id", "")),
             status=status,  # type: ignore[arg-type]
             resolved_model=str(value.get("resolved_model", value.get("model", ""))),
             resolved_reasoning_budget=str(value.get("resolved_reasoning_budget", value.get("reasoning_budget", ""))),
+            thread_id=thread_id,
+            model_attestation_status=attestation,  # type: ignore[arg-type]
             raw_response=dict(value),
         )
 
@@ -177,6 +203,8 @@ class NestedCodexCreateResponse:
             "status": self.status,
             "resolved_model": self.resolved_model,
             "resolved_reasoning_budget": self.resolved_reasoning_budget,
+            "thread_id": self.thread_id,
+            "model_attestation_status": self.model_attestation_status,
             "raw_response": self.raw_response,
         }
 
@@ -187,6 +215,10 @@ class LeaderCreationRecord:
     role_id: str
     model: str
     reasoning_budget: str
+    thread_id: str
+    model_attestation_status: str
+    proof_path: str
+    task_output_dir: str
     nested_codex_status: str
     router_registered: bool
     created_at: str = field(default_factory=utc_now)
@@ -197,6 +229,10 @@ class LeaderCreationRecord:
             "role_id": self.role_id,
             "model": self.model,
             "reasoning_budget": self.reasoning_budget,
+            "thread_id": self.thread_id,
+            "model_attestation_status": self.model_attestation_status,
+            "proof_path": self.proof_path,
+            "task_output_dir": self.task_output_dir,
             "nested_codex_status": self.nested_codex_status,
             "router_registered": self.router_registered,
             "created_at": self.created_at,

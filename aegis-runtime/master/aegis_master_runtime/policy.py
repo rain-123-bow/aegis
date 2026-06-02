@@ -79,7 +79,7 @@ def load_model_reasoning_policy(path: str | Path) -> ModelReasoningPolicy:
                 value = _strip(value)
                 if key in {"fallback_allowed", "dynamic_adjustment_allowed"}:
                     profiles[current_profile][key] = _parse_bool(value)
-                elif key in {"role_id", "model", "reasoning_budget", "parallel_internal_workers"}:
+                elif key in {"role_id", "model", "reasoning_budget", "fallback_authority", "parallel_internal_workers"}:
                     profiles[current_profile][key] = value
                 continue
 
@@ -95,6 +95,10 @@ def load_model_reasoning_policy(path: str | Path) -> ModelReasoningPolicy:
     dynamic_adjustment_enabled = _parse_bool(phase_boundary.get("dynamic_adjustment_enabled", "false"))
     default_fallback_allowed = _parse_bool(fallback_policy.get("default_fallback_allowed", "false"))
     silent_downgrade_allowed = _parse_bool(fallback_policy.get("silent_downgrade_allowed", "false"))
+    explicit_gpt55_to_gpt54_fallback_allowed = _parse_bool(
+        fallback_policy.get("explicit_gpt55_to_gpt54_fallback_allowed", "false")
+    )
+    fallback_authority = fallback_policy.get("authority", "root_policy_only")
 
     if dynamic_adjustment_enabled:
         raise MasterRuntimeContractError("dynamic adjustment must be disabled in current phase")
@@ -102,6 +106,10 @@ def load_model_reasoning_policy(path: str | Path) -> ModelReasoningPolicy:
         raise MasterRuntimeContractError("default fallback must be disabled in current phase")
     if silent_downgrade_allowed:
         raise MasterRuntimeContractError("silent downgrade must be disabled in current phase")
+    if not explicit_gpt55_to_gpt54_fallback_allowed:
+        raise MasterRuntimeContractError("explicit gpt-5.5 to gpt-5.4 fallback gate must be present")
+    if fallback_authority != "root_policy_only":
+        raise MasterRuntimeContractError("fallback authority must remain root_policy_only")
 
     return ModelReasoningPolicy(
         policy_id=top["policy_id"],
@@ -111,4 +119,6 @@ def load_model_reasoning_policy(path: str | Path) -> ModelReasoningPolicy:
         dynamic_adjustment_enabled=dynamic_adjustment_enabled,
         default_fallback_allowed=default_fallback_allowed,
         silent_downgrade_allowed=silent_downgrade_allowed,
+        explicit_gpt55_to_gpt54_fallback_allowed=explicit_gpt55_to_gpt54_fallback_allowed,
+        fallback_authority=fallback_authority,
     )

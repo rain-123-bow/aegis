@@ -51,6 +51,9 @@ class MasterTopLevelRuntime:
 
         for agent_id, profile_id in TOP_LEVEL_LEADER_PROFILES.items():
             profile = policy.require_profile(profile_id)
+            proof_path = self.private_root / "leader_proofs" / f"{agent_id}_leader_proof.json"
+            task_output_dir = self.private_root / "leader_outputs" / agent_id
+            task_output_dir.mkdir(parents=True, exist_ok=True)
             request = self._make_create_request(
                 agent_id=agent_id,
                 role_id=profile_id,
@@ -58,6 +61,8 @@ class MasterTopLevelRuntime:
                 reasoning_budget=profile.reasoning_budget,
                 policy_id=policy.policy_id,
                 policy_version=policy.version,
+                proof_path=proof_path,
+                task_output_dir=task_output_dir,
             )
             response = self.nested_codex_client.create_agent(request)
             response.assert_matches(request)
@@ -77,9 +82,12 @@ class MasterTopLevelRuntime:
                         "role_id": profile_id,
                         "resolved_model": profile.model,
                         "resolved_reasoning_budget": profile.reasoning_budget,
+                        "model_attestation_status": response.model_attestation_status,
                         "fallback_used": False,
                         "dynamic_adjustment_used": False,
                     },
+                    "proof_path": str(proof_path),
+                    "task_output_dir": str(task_output_dir),
                 },
             )
             leader_records.append(
@@ -88,6 +96,10 @@ class MasterTopLevelRuntime:
                     role_id=profile_id,
                     model=profile.model,
                     reasoning_budget=profile.reasoning_budget,
+                    thread_id=response.thread_id,
+                    model_attestation_status=response.model_attestation_status,
+                    proof_path=str(proof_path),
+                    task_output_dir=str(task_output_dir),
                     nested_codex_status=response.status,
                     router_registered=True,
                 )
@@ -116,6 +128,11 @@ class MasterTopLevelRuntime:
                 "topology_id": TOPOLOGY_ID,
                 "dynamic_adjustment_used": False,
                 "fallback_used": False,
+                "proof_output_boundary": {
+                    "proof_dir": str(self.private_root / "leader_proofs"),
+                    "task_output_root": str(self.private_root / "leader_outputs"),
+                    "proof_path_is_not_task_output_dir": True,
+                },
             },
         )
         self._write_json(self.private_root / "top_level_bootstrap_report.json", report.to_dict())
@@ -156,6 +173,8 @@ class MasterTopLevelRuntime:
         reasoning_budget: str,
         policy_id: str,
         policy_version: str,
+        proof_path: Path,
+        task_output_dir: Path,
     ) -> NestedCodexCreateRequest:
         display = {
             "debate": "Debate Leader",
@@ -174,14 +193,24 @@ class MasterTopLevelRuntime:
             instructions=(
                 f"You are {display} in Aegis. Obey the repository contracts, "
                 "top-level route topology, and root model/reasoning policy. "
-                "Do not self-select model or budget."
+                "Do not self-select model or budget. Write your proof JSON to "
+                f"{proof_path}. Write task consultation outputs only under "
+                f"{task_output_dir}. Do not treat the proof path as the task output directory."
             ),
             metadata={
                 "policy_id": policy_id,
                 "policy_version": policy_version,
                 "topology_id": TOPOLOGY_ID,
                 "fallback_allowed": False,
+                "fallback_authority": "root_policy_only",
                 "dynamic_adjustment_allowed": False,
+                "proof_path": str(proof_path),
+                "task_output_dir": str(task_output_dir),
+                "write_boundary": {
+                    "proof_json": str(proof_path),
+                    "task_outputs": str(task_output_dir),
+                    "proof_only_is_not_consultation_output": True,
+                },
             },
         )
 

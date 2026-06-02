@@ -60,6 +60,31 @@ The first-layer topology contains exactly these directed edges in v1:
 
 No other first-layer edge is valid in v1.
 
+## 5.1 Missing-edge requests
+
+A request to use a missing first-layer edge is not a normal runtime route
+request.
+
+Master must reject the runtime use of the missing edge and may only admit it as
+a topology patch investigation or topology patch task under:
+
+```text
+aegis-master-kit/organization/contracts/TOPOLOGY_PATCH_ADMISSION_CONTRACT.md
+```
+
+The requested edge remains inactive unless a separate topology patch updates
+the topology file, contracts, router behavior when required, and tests.
+
+Example:
+
+```text
+test -> master
+```
+
+is not valid in v1. Test success must flow through `test -> final_review` and
+then `final_review -> master`. A convenience request for direct `test -> master`
+must be rejected as runtime behavior.
+
 ## 6. Protocol-level bidirectional pairs
 
 The graph has protocol-level loops, but these loops are still made of directed edges.
@@ -97,3 +122,14 @@ Only the Master or the configured adjudication authority may merge, fuse, reject
 The router enforces identity and directed route validity.
 
 The router must not evaluate the content of README files, attachments, causal proposals, test evidence, or debate results.
+
+## 10. Bootstrap authority is not runtime route authority
+
+Master may bootstrap or create top-level department Leaders as governance setup.
+
+That creation authority does not create a runtime message edge.
+
+After bootstrap, ordinary runtime communication must still obey the directed
+route table. Master has runtime outgoing edges only to `debate` and `execution`
+in v1. Creating or auditing a Test Leader or Final Review Leader does not mean
+Master may send ordinary runtime work directly to `test` or `final_review`.

@@ -34,6 +34,27 @@ fallback_policy:
   fallback_on_budget_unavailable: forbidden
   reasoning_budget_downgrade_allowed: false
   missing_policy_behavior: blocked_resource_policy
+  authority: root_policy_only
+
+fallback_interpretation:
+  role_profile_fallback_allowed_false_means: >
+    The role may not self-authorize fallback and may not silently accept a
+    provider-default model. It does not override the root explicit fallback
+    policy.
+  only_valid_runtime_fallback: >
+    The root policy may authorize gpt-5.5 -> gpt-5.4 only when gpt-5.5 is
+    objectively unavailable, explicit evidence is recorded, and the configured
+    reasoning_budget is preserved.
+  unresolved_tool_attestation_behavior: >
+    If the execution tool cannot independently attest the actual resolved model
+    and reasoning budget, the audit record must say requested_policy_only or
+    unattested. It must not claim independently verified model execution.
+  behavioral_attestation_behavior: >
+    Master may challenge a created agent with a standard deep-reasoning task
+    and score the answer against a fixed rubric. Passing this gate may produce
+    behaviorally_attested status. It is stronger than requested_policy_only but
+    remains distinct from tool_attested because it infers capability from
+    behavior rather than reading authoritative tool metadata.
 
 profile_schema:
   fields:
@@ -41,6 +62,7 @@ profile_schema:
     model: string
     reasoning_budget: low|medium|medium_high|high|extra_high
     fallback_allowed: boolean
+    fallback_authority: root_policy_only
     dynamic_adjustment_allowed: boolean
     notes: string
 
@@ -50,6 +72,7 @@ profiles:
     model: gpt-5.5
     reasoning_budget: extra_high
     fallback_allowed: false
+    fallback_authority: root_policy_only
     dynamic_adjustment_allowed: false
     notes: >
       Master owns top-level governance, request admission, route-level authority,
@@ -61,6 +84,7 @@ profiles:
     model: gpt-5.5
     reasoning_budget: high
     fallback_allowed: false
+    fallback_authority: root_policy_only
     dynamic_adjustment_allowed: false
     notes: >
       Debate Leader owns adversarial reasoning orchestration and adjudication.
@@ -72,6 +96,7 @@ profiles:
     model: gpt-5.5
     reasoning_budget: high
     fallback_allowed: false
+    fallback_authority: root_policy_only
     dynamic_adjustment_allowed: false
     notes: >
       Debate Workers are request-scoped, stance-bound internal agents created by
@@ -87,6 +112,7 @@ profiles:
     model: gpt-5.5
     reasoning_budget: high
     fallback_allowed: false
+    fallback_authority: root_policy_only
     dynamic_adjustment_allowed: false
     notes: >
       Execution Leader owns planning, task split, group supervision,
@@ -99,6 +125,7 @@ profiles:
     model: gpt-5.5
     reasoning_budget: high
     fallback_allowed: false
+    fallback_authority: root_policy_only
     dynamic_adjustment_allowed: false
     notes: >
       Execution Front Agents are request-scoped group-internal agents created
@@ -112,6 +139,7 @@ profiles:
     model: gpt-5.5
     reasoning_budget: high
     fallback_allowed: false
+    fallback_authority: root_policy_only
     dynamic_adjustment_allowed: false
     notes: >
       Execution Back Agents are request-scoped group-internal agents created
@@ -125,6 +153,7 @@ profiles:
     model: gpt-5.5
     reasoning_budget: high
     fallback_allowed: false
+    fallback_authority: root_policy_only
     dynamic_adjustment_allowed: false
     notes: >
       Test Leader owns test plan design, route split, evidence aggregation,
@@ -136,6 +165,7 @@ profiles:
     model: gpt-5.5
     reasoning_budget: high
     fallback_allowed: false
+    fallback_authority: root_policy_only
     dynamic_adjustment_allowed: false
     notes: >
       Test Workers are request-scoped, route-bound internal agents created by
@@ -149,6 +179,7 @@ profiles:
     model: gpt-5.5
     reasoning_budget: extra_high
     fallback_allowed: false
+    fallback_authority: root_policy_only
     dynamic_adjustment_allowed: false
     parallel_internal_workers: forbidden
     notes: >
@@ -167,14 +198,23 @@ audit_requirements:
     - resolved_model
     - requested_reasoning_budget
     - resolved_reasoning_budget
+    - model_attestation_status
     - fallback_used
     - fallback_reason
     - fallback_evidence_refs
     - dynamic_adjustment_used
+    - behavioral_attestation_status
+    - behavioral_attestation_ref
   fallback_used_requires_explicit_evidence: true
   dynamic_adjustment_used_must_be_false_in_current_phase: true
   reasoning_budget_downgrade_allowed: false
   minimum_accepted_model: gpt-5.4
+  accepted_model_attestation_statuses:
+    - tool_attested
+    - behaviorally_attested
+    - requested_policy_only
+    - unattested
+  behaviorally_attested_is_not_tool_attested: true
 
 
 phase24a_fallback_note: >
