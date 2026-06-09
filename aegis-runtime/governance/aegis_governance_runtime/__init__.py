@@ -1,4 +1,3 @@
-from .action_gate import ActionGate, authorize_action
 from .artifact_contract import ArtifactContractRegistry, validate_artifact
 from .capability import CapabilityRegistry
 from .models import (
@@ -11,11 +10,11 @@ from .models import (
     SkillRegistrySnapshot,
     StateTransition,
 )
+from .runtime_check import RuntimeCheck, check_runtime_action
 from .skill_registry import SkillRegistry, load_default_skill_registry
 from .state_machine import StateMachineRegistry
 
 __all__ = [
-    "ActionGate",
     "ActionRequest",
     "ArtifactContract",
     "ArtifactContractRegistry",
@@ -23,12 +22,13 @@ __all__ = [
     "CapabilityRule",
     "GovernanceDecision",
     "GovernanceViolation",
+    "RuntimeCheck",
     "SkillDefinition",
     "SkillRegistry",
     "SkillRegistrySnapshot",
     "StateMachineRegistry",
     "StateTransition",
-    "authorize_action",
+    "check_runtime_action",
     "load_default_skill_registry",
     "validate_artifact",
 ]
