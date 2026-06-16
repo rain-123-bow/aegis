@@ -1,3 +1,0 @@
-# Amendments
-
-No amendments.

@@ -1,9 +1,0 @@
-id: K0001
-topic: <topic>
-statement: <static fact or constraint>
-source:
-  type: document|ticket|meeting|manual|developer_assertion
-  ref: <reference>
-scope: <valid scope>
-updated_at: <timestamp>
-status: active|deprecated

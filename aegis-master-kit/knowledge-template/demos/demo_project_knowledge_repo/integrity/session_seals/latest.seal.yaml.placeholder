@@ -1,9 +1,0 @@
-seal_id: demo-seal-001
-project_id: demo-project
-state_store: knowledge
-sealed_at: 2026-04-27T00:00:00Z
-sealed_by: master-main
-public_root: opaque_demo_public_root
-previous_seal_ref: null
-opaque_master_proof: opaque:demo-only
-note: Demo placeholder. No private proof internals.

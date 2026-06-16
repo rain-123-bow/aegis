@@ -1,8 +1,0 @@
-project_id: aegis-demo-project
-store_type: causal
-causal_version_public_label: CGV0001-public
-encrypted_payload_ref: ../encrypted/causal_payload.bin
-latest_public_root_ref: ../integrity/latest_public_root.txt
-public_index_ref: causal_public_index.yaml
-state: sealed
-last_public_update: 2026-04-27T00:00:00Z

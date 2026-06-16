@@ -1,9 +1,0 @@
-project_id: demo-business
-archive_id: archive-main
-payload_version: 1
-public_root_token: opaque-demo-root-token
-latest_seal_ref: S20260427-001-demo
-public_index_policy: minimal_non_sensitive
-public_task_count: 1
-status_summary:
-  completed: 1

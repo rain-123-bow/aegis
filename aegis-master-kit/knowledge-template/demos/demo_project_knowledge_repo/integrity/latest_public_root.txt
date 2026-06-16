@@ -1,1 +1,0 @@
-opaque_demo_public_root
