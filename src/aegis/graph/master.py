@@ -12,6 +12,7 @@ from langgraph.types import Command, interrupt
 from aegis.graph.debate import debate_node
 from aegis.graph.execution import execution_dispatch
 from aegis.graph.final_review import final_review_node
+from aegis.graph.routing import FLOW_ROUTING_POLICY
 from aegis.graph.state import AegisState
 from aegis.graph.test import run_dynamic_tests, synthesize_test_graph
 from aegis.models import (
@@ -126,7 +127,9 @@ def route_after_planning(state: AegisState) -> str:
         return "developer_authorization_interrupt"
     debate_request = state.get("debate_request_state") or {}
     if debate_request.get("debate_required") and not state.get("debate_result"):
+        FLOW_ROUTING_POLICY.require_allowed("master", "debate")
         return "debate_node"
+    FLOW_ROUTING_POLICY.require_allowed("master", "execution")
     return "execution_dispatch"
 
 
@@ -134,17 +137,22 @@ def route_after_execution(state: AegisState) -> str:
     execution_state = state.get("execution_state") or {}
     debate_request = state.get("debate_request_state") or {}
     if debate_request.get("debate_required") and execution_state.get("discovered_debate_need"):
+        FLOW_ROUTING_POLICY.require_allowed("execution", "debate")
         return "debate_node"
-    if execution_state.get("status") == "blocked":
-        return "final_review"
+    FLOW_ROUTING_POLICY.require_allowed("execution", "test")
     return "test_synthesize"
 
 
 def route_after_test(state: AegisState) -> str:
     final_result = ((state.get("test_state") or {}).get("final_test_result") or {}).get("result")
     execution_state = state.get("execution_state") or {}
+    if execution_state.get("status") == "blocked":
+        FLOW_ROUTING_POLICY.require_allowed("test", "final_review")
+        return "final_review"
     if final_result in {"failed", "blocked", "inconclusive"} and not execution_state.get("rework_applied"):
+        FLOW_ROUTING_POLICY.require_allowed("test", "execution")
         return "execution_dispatch"
+    FLOW_ROUTING_POLICY.require_allowed("test", "final_review")
     return "final_review"
 
 
@@ -186,6 +194,8 @@ def developer_authorization_interrupt(state: AegisState) -> dict[str, Any]:
 
 
 def final_commit_gate(state: AegisState) -> dict[str, Any]:
+    if state.get("final_review_result"):
+        FLOW_ROUTING_POLICY.require_allowed("final_review", "master_closeout")
     goal = _goal(state).lower()
     external_requested = any(
         marker in goal for marker in ["remote push", "create pr", "merge", "release", "deploy"]
@@ -330,7 +340,7 @@ class AegisRuntime:
     def run(self, goal: str, thread_id: str | None = None) -> dict[str, Any]:
         actual_thread_id = thread_id or f"thread-{uuid4().hex[:12]}"
         config = {"configurable": {"thread_id": actual_thread_id}}
-        state = new_initial_state(str(self.project_root), goal)
+        state = new_initial_state(str(self.project_root), goal, thread_id=actual_thread_id)
         result = self.graph.invoke(state, config=config)
         return {"thread_id": actual_thread_id, "result": result}
 

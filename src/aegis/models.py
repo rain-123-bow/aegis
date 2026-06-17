@@ -164,6 +164,7 @@ class DeveloperInterruptRecord(StrictModel):
 
 class AegisGraphState(StrictModel):
     run_id: str = Field(default_factory=lambda: f"run-{uuid4().hex[:12]}")
+    thread_id: str | None = None
     project_id: str
     project_root: str
     current_query: CurrentQuery
@@ -195,7 +196,12 @@ class AegisGraphState(StrictModel):
         return self.model_dump(mode="json")
 
 
-def new_initial_state(project_root: str, goal: str, task_type: TaskType = "implementation") -> dict[str, Any]:
+def new_initial_state(
+    project_root: str,
+    goal: str,
+    task_type: TaskType = "implementation",
+    thread_id: str | None = None,
+) -> dict[str, Any]:
     root = Path(project_root)
     query = CurrentQuery(
         query=goal,
@@ -205,6 +211,7 @@ def new_initial_state(project_root: str, goal: str, task_type: TaskType = "imple
         success_criteria=["langgraph_minimum_closure"],
     )
     state = AegisGraphState(
+        thread_id=thread_id,
         project_id=root.name or "aegis-project",
         project_root=str(root),
         current_query=query,

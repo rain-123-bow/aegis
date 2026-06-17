@@ -5,6 +5,7 @@ from typing import Any, TypedDict
 
 class AegisState(TypedDict, total=False):
     run_id: str
+    thread_id: str | None
     project_id: str
     project_root: str
     current_query: dict[str, Any]
@@ -24,4 +25,3 @@ class AegisState(TypedDict, total=False):
     commit_gate: dict[str, Any] | None
     pending_tool_request: dict[str, Any] | None
     closeout: dict[str, Any] | None
-

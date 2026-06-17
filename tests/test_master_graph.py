@@ -9,6 +9,7 @@ def test_normal_task_runs_end_to_end(tmp_path):
         payload = runtime.run("implement a small feature", thread_id="normal")
 
     result = payload["result"]
+    assert result["thread_id"] == "normal"
     assert result["execution_state"]["status"] == "completed"
     assert result["test_state"]["final_test_result"]["result"] == "passed"
     assert result["final_review_result"]["decision"] == "accept_for_master"
@@ -34,6 +35,17 @@ def test_execution_can_trigger_debate_and_resume(tmp_path):
     result = payload["result"]
     assert result["debate_result"]["causal_package"]["requested_by"] == "execution_actor"
     assert result["execution_state"]["adjudication_applied"] is True
+
+
+def test_cross_project_task_closes_with_governance_blocker(tmp_path):
+    with AegisRuntime(tmp_path) as runtime:
+        payload = runtime.run("implement feature across multiple repos", thread_id="blocked")
+
+    result = payload["result"]
+    assert result["execution_state"]["status"] == "blocked"
+    assert result["test_state"]["final_test_result"]["result"] == "inconclusive"
+    assert result["final_review_result"]["decision"] == "governance_blocker"
+    assert result["closeout"]["status"] == "closed"
 
 
 def test_test_failure_returns_to_execution_then_passes_after_rework(tmp_path):

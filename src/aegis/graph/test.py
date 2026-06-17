@@ -23,7 +23,16 @@ def synthesize_test_graph(state: dict[str, Any]) -> dict[str, Any]:
     execution_state = state.get("execution_state") or {}
     rework_applied = bool(execution_state.get("rework_applied"))
 
-    if "parallel" in goal or "super-step" in goal or "superstep" in goal:
+    if execution_state.get("status") == "blocked":
+        routes = [
+            TestRouteSpec(
+                route_id="execution_blocker_review",
+                description="execution blocker evidence route",
+                expected_result="blocked",
+            )
+        ]
+        integration_required = False
+    elif "parallel" in goal or "super-step" in goal or "superstep" in goal:
         routes = [
             TestRouteSpec(route_id="route_a", description="parallel route A", superstep="parallel"),
             TestRouteSpec(
@@ -140,4 +149,3 @@ class DynamicTestSubgraph:
 
 def run_dynamic_tests(state: dict[str, Any]) -> dict[str, Any]:
     return DynamicTestSubgraph().run(state)
-
