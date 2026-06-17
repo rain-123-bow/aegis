@@ -1,0 +1,13 @@
+.aegis/
+examples/demo-project/.aegis/
+examples/demo-project/archive/candidates/
+examples/demo-project/knowledge/candidates/
+examples/demo-project/causal/candidates/
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+*.egg-info/
+*.pyc
+dist/
+build/
