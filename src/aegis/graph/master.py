@@ -26,6 +26,21 @@ from aegis.models import (
     TaskBoundary,
     new_initial_state,
 )
+from aegis.modules.master.flow import (
+    continuity_preflight,
+    execution_handoff,
+    pm_intake,
+    pm_session_start_or_resume,
+    requirement_doc_draft,
+    requirement_review,
+    requirement_user_approval,
+    route_after_pm_intake,
+    review_debate_dispatch,
+    review_user_approval,
+    route_after_continuity_preflight,
+    route_after_requirement_approval,
+    route_after_review_approval,
+)
 from aegis.stores import ProjectStores
 from aegis.tools import ToolCallRequest, ToolGovernance
 
@@ -265,7 +280,16 @@ def archive_closeout(state: AegisState) -> dict[str, Any]:
 
 def build_master_graph(checkpointer: SqliteSaver | None = None):
     builder = StateGraph(AegisState)
+    builder.add_node("continuity_preflight", continuity_preflight)
     builder.add_node("master_intake", master_intake)
+    builder.add_node("pm_session_start_or_resume", pm_session_start_or_resume)
+    builder.add_node("pm_intake", pm_intake)
+    builder.add_node("requirement_doc_draft", requirement_doc_draft)
+    builder.add_node("requirement_user_approval", requirement_user_approval)
+    builder.add_node("requirement_review", requirement_review)
+    builder.add_node("review_debate_dispatch", review_debate_dispatch)
+    builder.add_node("review_user_approval", review_user_approval)
+    builder.add_node("execution_handoff", execution_handoff)
     builder.add_node("task_boundary_decision", task_boundary_decision)
     builder.add_node("project_state_context_load", project_state_context_load)
     builder.add_node("route_expand_planning", route_expand_planning)
@@ -278,8 +302,45 @@ def build_master_graph(checkpointer: SqliteSaver | None = None):
     builder.add_node("final_commit_gate", final_commit_gate)
     builder.add_node("archive_closeout", archive_closeout)
 
-    builder.add_edge(START, "master_intake")
-    builder.add_edge("master_intake", "task_boundary_decision")
+    builder.add_edge(START, "continuity_preflight")
+    builder.add_conditional_edges(
+        "continuity_preflight",
+        route_after_continuity_preflight,
+        {
+            "master_intake": "master_intake",
+            "final_commit_gate": "final_commit_gate",
+        },
+    )
+    builder.add_edge("master_intake", "pm_session_start_or_resume")
+    builder.add_edge("pm_session_start_or_resume", "pm_intake")
+    builder.add_conditional_edges(
+        "pm_intake",
+        route_after_pm_intake,
+        {
+            "requirement_doc_draft": "requirement_doc_draft",
+            "final_commit_gate": "final_commit_gate",
+        },
+    )
+    builder.add_edge("requirement_doc_draft", "requirement_user_approval")
+    builder.add_conditional_edges(
+        "requirement_user_approval",
+        route_after_requirement_approval,
+        {
+            "requirement_review": "requirement_review",
+            "final_commit_gate": "final_commit_gate",
+        },
+    )
+    builder.add_edge("requirement_review", "review_debate_dispatch")
+    builder.add_edge("review_debate_dispatch", "review_user_approval")
+    builder.add_conditional_edges(
+        "review_user_approval",
+        route_after_review_approval,
+        {
+            "execution_handoff": "execution_handoff",
+            "final_commit_gate": "final_commit_gate",
+        },
+    )
+    builder.add_edge("execution_handoff", "task_boundary_decision")
     builder.add_edge("task_boundary_decision", "project_state_context_load")
     builder.add_edge("project_state_context_load", "route_expand_planning")
     builder.add_conditional_edges(
@@ -337,10 +398,17 @@ class AegisRuntime:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
-    def run(self, goal: str, thread_id: str | None = None) -> dict[str, Any]:
+    def run(
+        self,
+        goal: str,
+        thread_id: str | None = None,
+        master_semantic_analysis: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         actual_thread_id = thread_id or f"thread-{uuid4().hex[:12]}"
         config = {"configurable": {"thread_id": actual_thread_id}}
         state = new_initial_state(str(self.project_root), goal, thread_id=actual_thread_id)
+        if master_semantic_analysis is not None:
+            state["master_semantic_analysis"] = master_semantic_analysis
         result = self.graph.invoke(state, config=config)
         return {"thread_id": actual_thread_id, "result": result}
 

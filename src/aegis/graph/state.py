@@ -9,6 +9,8 @@ class AegisState(TypedDict, total=False):
     project_id: str
     project_root: str
     current_query: dict[str, Any]
+    master_semantic_analysis: dict[str, Any] | None
+    master_module_state: dict[str, Any]
     task_boundary: dict[str, Any] | None
     route_expand_plan: dict[str, Any]
     debate_request_state: dict[str, Any]

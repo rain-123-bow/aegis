@@ -168,6 +168,8 @@ class AegisGraphState(StrictModel):
     project_id: str
     project_root: str
     current_query: CurrentQuery
+    master_semantic_analysis: dict[str, Any] | None = None
+    master_module_state: dict[str, Any] = Field(default_factory=dict)
     task_boundary: TaskBoundary | None = None
     route_expand_plan: RouteExpandPlan = Field(default_factory=RouteExpandPlan)
     debate_request_state: DebateRequestState = Field(default_factory=DebateRequestState)
