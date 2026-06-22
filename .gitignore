@@ -21,11 +21,12 @@ causal/candidates/
 *.tmp
 *.bak
 *.swp
+src/**/*.zip
 
 .env
 .env.*
 !.env.example
 
 runtime_test_reports/*artifacts*/
-module_test_reports/*artifacts*/
+module_test_reports/
 agent_proofs/
