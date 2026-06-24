@@ -51,69 +51,56 @@ class CausalStore:
         self._initialize()
 
     def put_candidate(self, node: CausalNodeDraft) -> int:
-        strict_hash = _strict_content_hash(node.content)
-        causal_hash = _causal_identity_hash(node)
-        semantic_fingerprint = _semantic_fingerprint(node)
-        now = utc_now()
-        node_uuid = str(uuid4())
-
         try:
             with self._connect() as conn:
                 conn.execute("BEGIN IMMEDIATE")
-                duplicate = conn.execute(
-                    "SELECT node_id FROM causal_nodes WHERE causal_identity_hash = ? "
-                    "AND status != 'invalidated'",
-                    (causal_hash,),
-                ).fetchone()
-                if duplicate:
-                    raise CausalStoreError(
-                        "DUPLICATE_NODE",
-                        f"causal node duplicates existing node {duplicate['node_id']}",
-                    )
-                near_duplicate = conn.execute(
-                    "SELECT node_id FROM causal_nodes WHERE strict_content_hash = ? "
-                    "AND causal_identity_hash != ? AND status != 'invalidated'",
-                    (strict_hash, causal_hash),
-                ).fetchone()
-                if near_duplicate:
-                    raise CausalStoreError(
-                        "NEAR_DUPLICATE_REVIEW_REQUIRED",
-                        f"causal node content overlaps existing node {near_duplicate['node_id']} with a different causal identity",
-                    )
-
-                self._validate_dependency_groups(conn, node.dependency_groups)
-                cursor = conn.execute(
-                    """
-                    INSERT INTO causal_nodes (
-                      node_uuid, created_at_utc, updated_at_utc, content, semantic_summary,
-                      status, source_module, source_run_id, source_artifact_ref, root_kind,
-                      strict_content_hash, causal_identity_hash, semantic_fingerprint
-                    )
-                    VALUES (?, ?, ?, ?, ?, 'candidate', ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        node_uuid,
-                        now,
-                        now,
-                        node.content,
-                        node.semantic_summary,
-                        node.source_module,
-                        node.source_run_id,
-                        node.source_artifact_ref,
-                        node.root_kind,
-                        strict_hash,
-                        causal_hash,
-                        semantic_fingerprint,
-                    ),
-                )
-                node_id = int(cursor.lastrowid)
-                self._write_node_terms(conn, node_id, node.semantic_keys)
-                self._write_node_refs(conn, node_id, node.node_refs)
-                self._write_dependency_groups(conn, node_id, node.dependency_groups)
-                self._upsert_recall_indexes(conn, node_id)
-                return node_id
+                return self._put_candidate_in_connection(conn, node)
         except sqlite3.Error as exc:
             raise _sqlite_write_error("put_candidate", exc) from exc
+
+    def put_candidates(self, nodes: list[CausalNodeDraft]) -> list[int]:
+        """Write a candidate package atomically.
+
+        Either all candidate nodes are persisted, or none are. This is used by
+        module-level candidate packages where partial persistence would create a
+        misleading governance artifact.
+        """
+
+        if not nodes:
+            return []
+        try:
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                return [
+                    self._put_candidate_in_connection(conn, node)
+                    for node in nodes
+                ]
+        except sqlite3.Error as exc:
+            raise _sqlite_write_error("put_candidates", exc) from exc
+
+    def existing_candidate_node_ids(
+        self,
+        nodes: list[CausalNodeDraft],
+    ) -> list[int | None]:
+        """Return active node ids with the same causal identity as each draft."""
+
+        if not nodes:
+            return []
+        with self._connect() as conn:
+            existing: list[int | None] = []
+            for node in nodes:
+                causal_hash = _causal_identity_hash(node)
+                row = conn.execute(
+                    """
+                    SELECT node_id FROM causal_nodes
+                    WHERE causal_identity_hash = ? AND status != 'invalidated'
+                    ORDER BY node_id
+                    LIMIT 1
+                    """,
+                    (causal_hash,),
+                ).fetchone()
+                existing.append(int(row["node_id"]) if row else None)
+            return existing
 
     def get_node(self, node_id: int) -> CausalNode:
         with self._connect() as conn:
@@ -399,6 +386,76 @@ class CausalStore:
                 "UNSUPPORTED_SCHEMA_VERSION",
                 f"database schema version {max_version} is newer than supported version {SCHEMA_VERSION}",
             )
+
+    def _put_candidate_in_connection(
+        self,
+        conn: sqlite3.Connection,
+        node: CausalNodeDraft,
+    ) -> int:
+        strict_hash = _strict_content_hash(node.content)
+        causal_hash = _causal_identity_hash(node)
+        semantic_fingerprint = _semantic_fingerprint(node)
+        now = utc_now()
+        node_uuid = str(uuid4())
+        duplicate = conn.execute(
+            "SELECT node_id FROM causal_nodes WHERE causal_identity_hash = ? "
+            "AND status != 'invalidated'",
+            (causal_hash,),
+        ).fetchone()
+        if duplicate:
+            duplicate_id = int(duplicate["node_id"])
+            raise CausalStoreError(
+                "DUPLICATE_NODE",
+                f"causal node duplicates existing node {duplicate_id}",
+                context={"node_id": duplicate_id},
+            )
+        near_duplicate = conn.execute(
+            "SELECT node_id FROM causal_nodes WHERE strict_content_hash = ? "
+            "AND causal_identity_hash != ? AND status != 'invalidated'",
+            (strict_hash, causal_hash),
+        ).fetchone()
+        if near_duplicate:
+            near_duplicate_id = int(near_duplicate["node_id"])
+            raise CausalStoreError(
+                "NEAR_DUPLICATE_REVIEW_REQUIRED",
+                (
+                    "causal node content overlaps existing node "
+                    f"{near_duplicate_id} with a different causal identity"
+                ),
+                context={"node_id": near_duplicate_id},
+            )
+
+        self._validate_dependency_groups(conn, node.dependency_groups)
+        cursor = conn.execute(
+            """
+            INSERT INTO causal_nodes (
+              node_uuid, created_at_utc, updated_at_utc, content, semantic_summary,
+              status, source_module, source_run_id, source_artifact_ref, root_kind,
+              strict_content_hash, causal_identity_hash, semantic_fingerprint
+            )
+            VALUES (?, ?, ?, ?, ?, 'candidate', ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                node_uuid,
+                now,
+                now,
+                node.content,
+                node.semantic_summary,
+                node.source_module,
+                node.source_run_id,
+                node.source_artifact_ref,
+                node.root_kind,
+                strict_hash,
+                causal_hash,
+                semantic_fingerprint,
+            ),
+        )
+        node_id = int(cursor.lastrowid)
+        self._write_node_terms(conn, node_id, node.semantic_keys)
+        self._write_node_refs(conn, node_id, node.node_refs)
+        self._write_dependency_groups(conn, node_id, node.dependency_groups)
+        self._upsert_recall_indexes(conn, node_id)
+        return node_id
 
     def _validate_dependency_groups(
         self,
