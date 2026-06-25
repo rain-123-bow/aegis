@@ -28,7 +28,9 @@ Core boundaries:
   first principles; it must not use keyword matching or mechanical technology-name rules.
 - Debate is conditional, not a fixed phase.
 - Execution v2 uses one single-project Execution Actor by default.
-- Test is graph-shaped through a deterministic `TestGraphSpec` compiler.
+- Test is now an independent Test Subgraph v2 module with input validation,
+  plan review, command safety, execution records, code-diff checks, evidence
+  checks, artifact schema checks, and file-ref based reports.
 - Final Review is a single Leader node; it does not create workers, run tests, or edit code.
 - Flow routing is checked through explicit edge contracts instead of unconstrained state visibility.
 - LLM behavior is behind an `LlmNodeRequest` / `LlmNodeResult` contract; the default adapter is deterministic and does not call a real LLM.
@@ -78,9 +80,9 @@ python -m ruff check .
 ## First Milestone Status
 
 The current implementation is deterministic-first. It proves the runtime kernel, Master approval
-gates, continuity preflight, directed flow, interrupt/resume, dynamic test subgraph, local
-three-store candidate boundary, and LLM node contract without enabling real LLM execution by
-default.
+gates, continuity preflight, directed flow, interrupt/resume, standalone Test Subgraph v2,
+local three-store candidate boundary, and LLM node contract without enabling real LLM execution
+by default.
 
 Master module behavior has also been tested with real subagents using `gpt-5.5` with high
 reasoning effort on the concrete “one-time table/chart, user requests C++” scenario. The current
