@@ -22,11 +22,11 @@ Therefore, each fact must include not only the fact itself, but also an applicab
 
 ## Relationship to Other Stores
 
-### Archive
+### Project history
 
-Archive records what happened.
+git commit history records what happened.
 
-Archive entries do not automatically become Knowledge facts.
+git commit history entries do not automatically become Knowledge facts.
 
 ### Knowledge
 
@@ -63,7 +63,7 @@ The Knowledge Store must prevent:
 
 - raw user text becoming a fact
 - developer claims becoming admitted Knowledge
-- Archive entries becoming Knowledge facts without verification
+- git commit history entries becoming Knowledge facts without verification
 - Knowledge facts becoming Causal truth without causal construction and review
 - common model-internal knowledge polluting the project store
 - semantic search being treated as complete recall
@@ -207,7 +207,7 @@ The `must_consider_when` field is the hard recall mechanism. If current task con
 
 ```yaml
 EvidenceRef:
-  ref_type: archive | test | external | artifact | customer_written | platform_doc | repository_source | manual_admission
+  ref_type: test | external | artifact | customer_written | platform_doc | repository_source | manual_admission
   ref_id: string
   verifier: master | test | knowledge_review | external_authority
   verified_at_utc: string
@@ -244,7 +244,7 @@ MissingKnowledgeNeed:
   task_context_id: string
   required_dimension: string
   reason_required: string
-  blocking_level: hard_block | needs_user_clarification | request_test_measurement | request_archive_lookup
+  blocking_level: hard_block | needs_user_clarification | request_test_measurement | request_evidence_artifact_lookup
   acceptable_sources: list[string]
   generated_at_utc: string
 ```
@@ -582,7 +582,7 @@ The caller may route missing needs to:
 
 - user clarification
 - Test measurement
-- Archive lookup
+- artifact lookup
 - repository inspection
 - external document verification
 
@@ -667,11 +667,11 @@ Developer claims are not admitted Knowledge.
 
 They may become evidence only after verification by Test, repository source inspection, customer written material, platform documentation, or Master-approved external evidence review.
 
-### Archive Boundary
+### Project History Boundary
 
-Archive records are not Knowledge facts.
+git commit history records are not Knowledge facts.
 
-Archive may provide evidence refs for Knowledge admission.
+Project history may provide evidence refs for Knowledge admission.
 
 ### Causal Boundary
 
@@ -712,7 +712,7 @@ Mixed-language queries must not degrade English query behavior.
 
 ## Example
 
-### User/Archive Source
+### User/Artifact Source
 
 ```text
 Maintenance report says storage-controller X123 on server-A shows aging.
@@ -747,8 +747,8 @@ scope:
 evidence_refs:
   - ref_type: test
     ref_id: test/storage-read-high-load-20260622
-  - ref_type: archive
-    ref_id: archive/maintenance-report-20260620
+  - ref_type: artifact
+    ref_id: artifacts/maintenance-report-20260620
 applicability_profile:
   affected_entities:
     - cpu
@@ -827,7 +827,7 @@ The caller must not silently ignore `missing_knowledge_needs`.
 - current task missing required platform fact produces `missing_knowledge_needs`
 - user preference without evidence is rejected as hard constraint
 - customer written requirement becomes admitted fact after evidence binding
-- Archive ref supports Knowledge admission but does not auto-upgrade
+- artifact ref supports Knowledge admission but does not auto-upgrade
 - Knowledge fact supports Causal candidate construction but does not auto-write Causal
 - CJK fact retrieved by CJK and mixed-language query
 - invalidated fact excluded from normal retrieval
@@ -868,7 +868,7 @@ Knowledge Store v1 is implementation-ready when:
 - degraded recall is visible to callers.
 - candidate/admitted separation is enforced.
 - invalidated and superseded facts are excluded from normal retrieval.
-- Archive refs remain evidence refs, not Knowledge truth.
+- artifact refs remain evidence refs, not Knowledge truth.
 - Knowledge refs do not directly mutate Causal truth.
 - full traversal is not used for normal retrieval.
 - tests prove trigger recall, missing-knowledge detection, typed refs, lifecycle, and retrieval complexity.

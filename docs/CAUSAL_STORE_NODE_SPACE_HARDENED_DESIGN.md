@@ -145,7 +145,7 @@ CausalNode:
   duplicate_of_node_id: int | null
 ```
 
-`content` is the smallest useful causal statement. Long reports, transcripts, raw documents, or broad narratives must be stored as artifacts or Archive evidence and referenced from the node.
+`content` is the smallest useful causal statement. Long reports, transcripts, raw documents, or broad narratives must be stored as artifacts or artifact evidence and referenced from the node.
 
 ### DependencyGroup
 
@@ -309,7 +309,7 @@ CREATE TABLE causal_group_refs (
 Allowed `ref_type` values:
 
 ```text
-archive
+artifact
 knowledge
 test
 external
@@ -707,7 +707,7 @@ Do not integrate DebateSubgraph before candidate write, closure validation, and 
 - search reports rejected-node reasons.
 - invalidating predecessor queues dependent revalidation.
 - invalidating one dependency group does not invalidate node if another group remains valid.
-- Archive ref does not become Knowledge fact.
+- artifact ref does not become Knowledge fact.
 - Knowledge fact does not become causal conclusion.
 - vector index deletion does not destroy canonical causal state.
 

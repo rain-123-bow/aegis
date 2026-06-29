@@ -187,7 +187,6 @@ def _test_plan_draft_node(state: TestGraphState) -> TestGraphState:
         allowed_temp_roots=[str(binding.test_artifact_root / "tmp")],
         forbidden_roots=[
             str(binding.code_root),
-            binding.archive_store_root,
             binding.knowledge_store_root,
             binding.causal_store_root,
         ],
@@ -838,7 +837,6 @@ def _write_provenance(
             "execution_handoff_tree_hash": handoff_hash,
             "execution_output_package_path": str(package.execution_output_package_path),
             "project_store_roots": {
-                "archive": binding.archive_store_root,
                 "knowledge": binding.knowledge_store_root,
                 "causal": binding.causal_store_root,
             },
@@ -849,7 +847,6 @@ def _write_provenance(
         fixture_manifest_hash=fixture_manifest_ref.sha256,
         fixture_roots=[
             str(package.execution_handoff_dir),
-            binding.archive_store_root,
             binding.knowledge_store_root,
             binding.causal_store_root,
         ],

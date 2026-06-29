@@ -150,8 +150,7 @@ class TestOutputPackage(BaseModel):
 ```python
 class TestBoundaryFlags(BaseModel):
     modified_code: bool = False
-    wrote_archive_truth: bool = False
-    wrote_knowledge_truth: bool = False
+        wrote_knowledge_truth: bool = False
     wrote_causal_truth: bool = False
     remote_published: bool = False
 ```
@@ -324,7 +323,7 @@ Required forbidden roots:
 
 ```text
 code_root
-archive_store_root
+artifact_evidence_root
 knowledge_store_root
 causal_store_root
 ```

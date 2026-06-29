@@ -15,7 +15,7 @@ from aegis.modules.debate import (
 def _project(tmp_path: Path) -> Path:
     root = tmp_path / "project"
     (root / "code").mkdir(parents=True)
-    (root / "archive").mkdir()
+    (root / "artifacts").mkdir()
     (root / "knowledge").mkdir()
     (root / "causal").mkdir()
     return root
@@ -23,8 +23,8 @@ def _project(tmp_path: Path) -> Path:
 
 def test_deterministic_debate_writes_candidate_package_without_polluting_code(tmp_path: Path) -> None:
     root = _project(tmp_path)
-    simple_ref = root / "archive" / "simple.md"
-    adapter_ref = root / "archive" / "adapter.md"
+    simple_ref = root / "artifacts" / "simple.md"
+    adapter_ref = root / "artifacts" / "adapter.md"
     simple_ref.write_text("simple direct implementation evidence", encoding="utf-8")
     adapter_ref.write_text("structured adapter implementation evidence", encoding="utf-8")
     package = DebateInputPackage(
@@ -65,8 +65,8 @@ def test_deterministic_debate_writes_candidate_package_without_polluting_code(tm
 
 def test_deterministic_debate_is_idempotent_for_same_input(tmp_path: Path) -> None:
     root = _project(tmp_path)
-    simple_ref = root / "archive" / "simple.md"
-    adapter_ref = root / "archive" / "adapter.md"
+    simple_ref = root / "artifacts" / "simple.md"
+    adapter_ref = root / "artifacts" / "adapter.md"
     simple_ref.write_text("simple direct implementation evidence", encoding="utf-8")
     adapter_ref.write_text("structured adapter implementation evidence", encoding="utf-8")
     package = DebateInputPackage(
@@ -116,8 +116,8 @@ def test_deterministic_debate_is_idempotent_for_same_input(tmp_path: Path) -> No
 
 def test_debate_runtime_checkpoints_and_resumes_completed_output(tmp_path: Path) -> None:
     root = _project(tmp_path)
-    simple_ref = root / "archive" / "simple.md"
-    adapter_ref = root / "archive" / "adapter.md"
+    simple_ref = root / "artifacts" / "simple.md"
+    adapter_ref = root / "artifacts" / "adapter.md"
     simple_ref.write_text("simple direct implementation evidence", encoding="utf-8")
     adapter_ref.write_text("structured adapter implementation evidence", encoding="utf-8")
     package = DebateInputPackage(

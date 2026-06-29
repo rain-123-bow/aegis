@@ -6,7 +6,7 @@ DebateSubgraph v2 is a bounded, project-store-grounded causal adjudication subgr
 
 It must:
 
-1. bind to the managed project's local Archive, Knowledge, and Causal store instances;
+1. bind to the managed project's local Knowledge and Causal store instances;
 2. validate whether Debate should start;
 3. admit only genuinely contested defensible stances;
 4. run stance-bound Debate Workers under a Leader adjudicator;
@@ -33,14 +33,14 @@ Default managed project layout:
 project-root/
   code/
     ...pure project code...
-  archive/
+  artifacts/
   knowledge/
   causal/
 ```
 
 This layout is the default project convention, not a hard-coded graph assumption.
 
-Runtime must use `ProjectStoreBinding`. If future projects store these under another layout, only the binding layer changes. Graph nodes must not manually concatenate `archive/`, `knowledge/`, or `causal/` paths.
+Runtime must use `ProjectStoreBinding`. If future projects store these under another layout, only the binding layer changes. Graph nodes must not manually concatenate `artifacts/`, `knowledge/`, or `causal/` paths.
 
 ## Implementation Placement
 
@@ -284,7 +284,7 @@ Node contract rule:
 ProjectStoreBinding:
   project_root: path
   code_root: path
-  archive_store_root: path
+  artifact_evidence_root: path
   knowledge_store_root: path
   causal_store_root: path
   debate_candidate_root: path
@@ -388,7 +388,7 @@ DebateContextBundle:
 hard_block
 needs_user_clarification
 request_test_measurement
-request_archive_lookup
+request_evidence_artifact_lookup
 advisory
 ```
 

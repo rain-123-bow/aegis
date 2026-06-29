@@ -7,7 +7,7 @@ LangGraph Store is intentionally not used for Aegis project memory. Durable proj
 is stored in the target project repository under:
 
 ```text
-archive/
+artifacts/
 knowledge/
 causal/
 ```
@@ -44,4 +44,4 @@ Every LLM node result is checked for:
 - tool requests that remain inside the node's allowed tool list;
 - Tool Governance approval before any side-effectful action.
 
-Invalid LLM output is blocked instead of being admitted into Archive, Knowledge, or Causal state.
+Invalid LLM output is blocked instead of being admitted into Knowledge or Causal state.

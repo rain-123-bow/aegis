@@ -27,13 +27,13 @@ from aegis.stores.knowledge.store import KnowledgeStore
 
 def _project(tmp_path: Path) -> Path:
     root = tmp_path / "project"
-    for name in ("code", "archive", "knowledge", "causal"):
+    for name in ("code", "artifacts", "knowledge", "causal"):
         (root / name).mkdir(parents=True)
     return root
 
 
 def _evidence_file(root: Path, name: str, text: str = "verified evidence") -> Path:
-    path = root / "archive" / name
+    path = root / "artifacts" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path

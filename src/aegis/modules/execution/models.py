@@ -59,10 +59,8 @@ class ArtifactRef(StrictModel):
 class ProjectStoreRefs(StrictModel):
     """Project-local store roots available to ExecutionSubgraph."""
 
-    archive_store_root: str
     knowledge_store_root: str
     causal_store_root: str
-    archive_read_mode: Literal["readonly"] = "readonly"
     knowledge_read_mode: Literal["readonly"] = "readonly"
     causal_read_mode: Literal["readonly_or_candidate_write"] = "readonly_or_candidate_write"
     candidate_write_root: str
@@ -480,7 +478,6 @@ class ExecutionCausalCandidateWriteResult(StrictModel):
 class ExecutionBoundaryFlags(StrictModel):
     """Truth and external publication boundary proof."""
 
-    wrote_archive_truth: bool = False
     wrote_knowledge_truth: bool = False
     wrote_causal_truth: bool = False
     remote_published: bool = False
@@ -488,8 +485,7 @@ class ExecutionBoundaryFlags(StrictModel):
     @model_validator(mode="after")
     def _all_false(self) -> "ExecutionBoundaryFlags":
         if (
-            self.wrote_archive_truth
-            or self.wrote_knowledge_truth
+            self.wrote_knowledge_truth
             or self.wrote_causal_truth
             or self.remote_published
         ):

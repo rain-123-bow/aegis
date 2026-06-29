@@ -1189,7 +1189,7 @@ CREATE TABLE IF NOT EXISTS causal_node_refs (
   ref_type TEXT NOT NULL,
   ref_id TEXT NOT NULL,
   PRIMARY KEY (node_id, ref_type, ref_id),
-  CHECK (ref_type IN ('archive', 'knowledge', 'test', 'external', 'artifact')),
+  CHECK (ref_type IN ('knowledge', 'test', 'external', 'artifact', 'repository_source')),
   FOREIGN KEY (node_id) REFERENCES causal_nodes(node_id)
 );
 
@@ -1198,7 +1198,7 @@ CREATE TABLE IF NOT EXISTS causal_group_refs (
   ref_type TEXT NOT NULL,
   ref_id TEXT NOT NULL,
   PRIMARY KEY (group_id, ref_type, ref_id),
-  CHECK (ref_type IN ('archive', 'knowledge', 'test', 'external', 'artifact')),
+  CHECK (ref_type IN ('knowledge', 'test', 'external', 'artifact', 'repository_source')),
   FOREIGN KEY (group_id) REFERENCES causal_dependency_groups(group_id)
 );
 

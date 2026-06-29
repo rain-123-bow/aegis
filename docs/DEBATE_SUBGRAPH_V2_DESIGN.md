@@ -18,8 +18,8 @@ Expected managed project layout:
 project-root/
   code/
     ...pure project code...
-  archive/
-    ...project archive store instance...
+  artifacts/
+    ...project artifact evidence...
   knowledge/
     ...project knowledge store instance...
   causal/
@@ -29,7 +29,7 @@ project-root/
 Rules:
 
 - `code/` contains project code only.
-- Archive, Knowledge, and Causal stores are siblings of `code/`.
+- Knowledge and Causal stores are siblings of `code/`.
 - Aegis runtime reads and writes through project-local store interfaces.
 - Aegis must not embed project store instances inside the Aegis repository.
 - LangGraph state must carry refs and artifact paths, not long text bodies.
@@ -56,7 +56,7 @@ DebateSubgraph must not:
 - treat developer claims as Knowledge facts;
 - treat Knowledge facts as causal truth without causal construction;
 - mutate project code;
-- write Archive, Knowledge, or Causal truth directly;
+- write Knowledge or Causal truth directly;
 - bypass Master or Causal admission governance;
 - store long reports in LangGraph state.
 

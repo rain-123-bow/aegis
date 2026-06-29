@@ -12,7 +12,6 @@ from aegis.modules.debate.artifacts import DebateArtifactWriter
 def _project(tmp_path: Path) -> Path:
     root = tmp_path / "project"
     (root / "code").mkdir(parents=True)
-    (root / "archive").mkdir()
     (root / "knowledge").mkdir()
     (root / "causal").mkdir()
     return root
@@ -34,14 +33,13 @@ def test_project_store_binding_non_default_layout(tmp_path: Path) -> None:
     code = root / "src-code"
     stores = root / ".state"
     code.mkdir(parents=True)
-    for name in ("archive", "knowledge", "causal"):
+    for name in ("knowledge", "causal"):
         (stores / name).mkdir(parents=True)
 
     binding = bind_project_stores(
         root,
         debate_id="debate-2",
         code_root=code,
-        archive_store_root=stores / "archive",
         knowledge_store_root=stores / "knowledge",
         causal_store_root=stores / "causal",
     )

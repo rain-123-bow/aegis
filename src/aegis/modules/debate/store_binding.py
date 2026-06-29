@@ -13,20 +13,14 @@ def bind_project_stores(
     *,
     debate_id: str,
     code_root: str | Path | None = None,
-    archive_store_root: str | Path | None = None,
     knowledge_store_root: str | Path | None = None,
     causal_store_root: str | Path | None = None,
 ) -> ProjectStoreBinding:
-    """Bind DebateSubgraph to project-local code/archive/knowledge/causal roots."""
+    """Bind DebateSubgraph to project-local code/knowledge/causal roots."""
 
     root = Path(project_root).resolve()
     roots = {
         "code_root": Path(code_root).resolve() if code_root else root / "code",
-        "archive_store_root": (
-            Path(archive_store_root).resolve()
-            if archive_store_root
-            else root / "archive"
-        ),
         "knowledge_store_root": (
             Path(knowledge_store_root).resolve()
             if knowledge_store_root
@@ -45,7 +39,7 @@ def bind_project_stores(
     if missing:
         raise DebateRuntimeError(
             DebateErrorCode.PROJECT_STORE_NOT_FOUND,
-            "DebateSubgraph requires project-local code/archive/knowledge/causal roots.",
+            "DebateSubgraph requires project-local code/knowledge/causal roots.",
             context={
                 "project_root": str(root),
                 "missing_roots": missing,
@@ -70,7 +64,6 @@ def bind_project_stores(
     return ProjectStoreBinding(
         project_root=root,
         code_root=roots["code_root"],
-        archive_store_root=roots["archive_store_root"],
         knowledge_store_root=roots["knowledge_store_root"],
         causal_store_root=roots["causal_store_root"],
         debate_candidate_root=candidate_root,

@@ -12,7 +12,7 @@ NodeStatus = Literal["candidate", "admitted", "invalidated", "deprecated", "supe
 SourceModule = Literal["master", "debate", "execution", "test", "final_review", "causal_review"]
 AuthorityModule = Literal["master", "causal_review"]
 RootKind = Literal["observation", "test_result", "user_constraint", "design_decision", "external_evidence"]
-RefType = Literal["archive", "knowledge", "test", "external", "artifact"]
+RefType = Literal["knowledge", "test", "external", "artifact", "repository_source"]
 Confidence = Literal["high", "medium", "low"]
 RetrievalMode = Literal[
     "admitted_only",

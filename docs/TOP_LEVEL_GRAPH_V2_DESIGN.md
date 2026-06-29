@@ -17,7 +17,7 @@ handoff references between them.
 
 An Aegis process is equivalent to one independent executable runtime bound to
 one project working directory. Multiple Aegis processes may run in parallel as
-long as they use different working directories. Project-local Archive,
+long as they use different working directories. Project-local Project history,
 Knowledge, and Causal stores follow the project directory, so Top-Level Graph v2
 does not coordinate cross-project store access.
 
@@ -72,7 +72,7 @@ points:
 - Do not implement business review inside the parent graph.
 - Do not inspect long-form requirement, plan, evidence, report, or causal-chain
   text inside the parent graph.
-- Do not write Archive, Knowledge, or Causal truth from the parent graph.
+- Do not write Knowledge or Causal truth from the parent graph.
 - Do not create Debate workers at parent graph scope.
 - Do not auto-recover resident agents after failure.
 - Do not solve Codex CLI global resource contention.
@@ -87,7 +87,7 @@ An Aegis runtime process has these fixed properties:
 - `aegis_instance_id`: stable identity for this process.
 - `project_root`: the project working directory.
 - `code_root`: the code directory inside the project when applicable.
-- `store_root`: project-local Archive, Knowledge, and Causal store root.
+- `store_root`: project-local Knowledge and Causal store root.
 - `runtime_root`: project-local `.aegis/runtime` directory for checkpoints and
   runtime metadata.
 - `artifact_root`: project-local `.aegis/artifacts` directory for handoff
@@ -237,7 +237,7 @@ The parent graph must not:
 - Perform code edits.
 - Run tests.
 - Create pull requests, push, merge, release, or deploy.
-- Mutate Archive, Knowledge, or Causal truth.
+- Mutate Knowledge or Causal truth.
 
 ## Parent State Model
 
@@ -370,7 +370,7 @@ Forbidden examples:
 - Execution to Final Review without Test.
 - Master to Test.
 - Final Review to Execution directly.
-- Any module to Archive, Knowledge, or Causal truth.
+- Any module to Knowledge or Causal truth.
 
 ## Route Schema Registry
 
@@ -448,7 +448,7 @@ Final Review should normally return `ready` or `module_terminal` with
 2. Create or open `.aegis/runtime`.
 3. Acquire the project runtime lock.
 4. Write `runtime_instance.json` with `runtime_status=initializing`.
-5. Resolve project-local `archive`, `knowledge`, and `causal` store locations.
+5. Resolve project-local `knowledge` and `causal` store locations.
 6. Create or open parent checkpoint database.
 7. Build the `ModuleRegistry`.
 8. Construct all resident subgraph instances.
@@ -610,7 +610,7 @@ produce candidates.
 
 Rules:
 
-- Archive, Knowledge, and Causal stores live beside the project code, not inside
+- Knowledge and Causal stores live beside the project code, not inside
   the Aegis source repository.
 - Parent graph must not write truth records.
 - Parent graph may record run closeout package refs only under `.aegis/runtime`
@@ -649,7 +649,7 @@ Parent graph runtime evidence lives under:
   closeout/
 ```
 
-This folder is runtime evidence, not Archive/Knowledge/Causal truth.
+This folder is runtime evidence, not Knowledge/Causal truth.
 
 ## Implementation Plan
 
@@ -784,7 +784,7 @@ Acceptance:
 
 - Parent graph cannot pass long text.
 - Parent graph cannot read package bodies to choose routes.
-- Parent graph cannot write Archive, Knowledge, or Causal truth.
+- Parent graph cannot write Knowledge or Causal truth.
 - Parent graph cannot silently create a second resident subgraph.
 - Debate workers do not appear in global resident registry.
 - Parent source scan confirms no module business evaluator is imported or called.

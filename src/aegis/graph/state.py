@@ -19,7 +19,6 @@ class AegisState(TypedDict, total=False):
     test_state: dict[str, Any]
     final_review_result: dict[str, Any] | None
     tool_intent_audits: list[dict[str, Any]]
-    archive_candidates: list[dict[str, Any]]
     knowledge_candidates: list[dict[str, Any]]
     causal_candidates: list[dict[str, Any]]
     blockers: list[str]

@@ -13,7 +13,8 @@ Aegis 当前重构不是把旧版多 agent 路由系统简单搬迁到 LangGraph
 
 - 用 LangGraph 控制长流程、恢复点和 human-in-the-loop。
 - 用严格 schema 和显式路由约束替代软 prompt 约束。
-- 用项目本地 `archive/`、`knowledge/`、`causal/` 三库保存长期项目候选状态。
+- 用项目本地 `knowledge/`、`causal/` 两库保存长期项目候选状态。
+- 用 git commit history 记录任务来源、代码变更和项目历史，不再维护独立项目历史库。
 - 不使用 LangGraph Store 保存项目事实或长期记忆。
 - 先采用 deterministic-first 架构证明运行时边界，再逐步接入真实 LLM 节点。
 
@@ -35,21 +36,19 @@ LangGraph 只负责流程控制、节点状态、interrupt 和 checkpoint。
 
 ### 2.2 项目长期状态
 
-长期项目状态只能通过项目本地三库候选写入：
+长期项目状态只能通过项目本地 Knowledge/Causal 候选写入：
 
 ```text
-archive/candidates/
 knowledge/candidates/
 causal/candidates/
 ```
 
 当前实现写入的是 candidate，不是最终真值：
 
-- Archive candidate：记录本次 graph run closeout。
 - Knowledge candidate：记录静态边界候选。
 - Causal candidate：记录因果候选包。
 
-Archive、Knowledge、Causal 的 admission 和 truth merge 不由 LangGraph Store 完成。
+项目历史由 git commit history 承担。Knowledge、Causal 的 admission 和 truth merge 不由 LangGraph Store 完成。
 
 ### 2.3 工具治理面
 
@@ -237,7 +236,7 @@ Test 不只是普通节点，而是由结构化 `TestGraphSpec` 编译出的动�
 
 Test 只产生 evidence/result。
 
-Test 不做业务真值裁决，不写 Archive/Knowledge/Causal truth。
+Test 不做业务真值裁决，不写 Knowledge/Causal truth。
 
 如果 parallel super-step 中一个 route 失败，当前 super-step 内其他 route 仍应完成，然后 barrier 后统一回 Execution 或进入 Final Review。
 
@@ -396,7 +395,7 @@ git diff --check passed
 - Execution Group / Front / Back 默认创建。
 - Test worker-level production orchestration。
 - Final Review worker production orchestration。
-- Archive / Knowledge / Causal 的最终 truth admission。
+- Knowledge / Causal 的最终 truth admission。
 
 这些必须在后续阶段单独实现、单独验收。
 
@@ -406,7 +405,7 @@ git diff --check passed
 
 ```text
 Aegis 是一个以 Master 治理为中心、以 LangGraph 为运行控制面、
-以文件 artifact 和本地三库候选为状态边界、
+以文件 artifact 和本地 Knowledge/Causal 候选为状态边界、
 以显式审批、显式路由、显式工具治理为安全闸门的
 本地 git 项目治理运行时。
 ```

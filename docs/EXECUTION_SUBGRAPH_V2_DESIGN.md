@@ -33,7 +33,7 @@ Execution Subgraph v2 的目标是把 Master 已准入的需求转化为可验�
 8. 执行节点完成实现后执行简单本地测试。
 9. 输出 implementation artifact、simple test evidence、known limits、execution causal candidate。
 10. 不创建默认 Execution Group / Front / Back。
-11. 不写 Archive / Knowledge / Causal admitted truth。
+11. 不写 Knowledge / Causal admitted truth。
 12. 不使用 LangGraph Store 保存项目长期事实。
 13. 在进入 plan 前校验 Master handoff artifact 完整性。
 14. 在审核方案前要求 Review Node 先产出独立需求理解 baseline。
@@ -63,7 +63,7 @@ Execution Subgraph v2 的目标是把 Master 已准入的需求转化为可验�
 3. 生产级真实 nested-codex 编排。
 4. Test Department 的完整验证职责。
 5. Final Review 职责。
-6. Archive / Knowledge / Causal truth admission。
+6. Knowledge / Causal truth admission。
 7. 自动 push、PR、merge、release、deploy。
 
 ## 核心原则
@@ -174,7 +174,7 @@ LangGraph 状态只保存短状态和引用，不传长文本。
 1. symlink escape。
 2. `..` 逃逸。
 3. 写入 `code_root` 外的项目文件。
-4. 写入 Archive / Knowledge / Causal admitted truth。
+4. 写入 Knowledge / Causal admitted truth。
 5. 把 runtime artifact 写进 `code/`。
 
 允许：
@@ -283,7 +283,7 @@ flowchart TD
 1. 未经审核直接实现。
 2. 把用户无证据技术偏好当硬约束。
 3. 为了速度跳过方案阶段。
-4. 直接写 Archive / Knowledge / Causal admitted truth。
+4. 直接写 Knowledge / Causal admitted truth。
 5. 自动执行 remote push / PR / merge / release / deploy。
 6. 默认创建 Execution Group / Front / Back。
 
@@ -359,10 +359,10 @@ round: int | null
 ### `ProjectStoreRefs`
 
 ```text
-archive_store_root: str
+artifact_evidence_root: str
 knowledge_store_root: str
 causal_store_root: str
-archive_read_mode: readonly
+artifact_evidence_read_mode: readonly
 knowledge_read_mode: readonly
 causal_read_mode: readonly_or_candidate_write
 candidate_write_root: str
@@ -572,7 +572,7 @@ execution_causal_candidate_write_result_ref: ArtifactRef | null
 blocker: ExecutionBlocker | null
 known_limits_ref: ArtifactRef | null
 boundary:
-  wrote_archive_truth: false
+  wrote_knowledge_truth: false
   wrote_knowledge_truth: false
   wrote_causal_truth: false
   remote_published: false
@@ -1441,18 +1441,18 @@ Execution Subgraph 可以读取：
 
 1. Knowledge Store 的相关事实约束。
 2. Causal Store 的相关因果候选或已准入因果节点。
-3. Archive Store 的必要历史记录 refs。
+3. git history 的必要历史记录 refs。
 
 Execution Subgraph 可以写入：
 
 1. execution causal candidate。
-2. run archive candidate。
+2. run closeout history record via git commit history。
 
 Execution Subgraph 不可以写入：
 
 1. Knowledge admitted truth。
 2. Causal admitted truth。
-3. Archive final truth。
+3. git history final record。
 
 Execution causal candidate 必须满足：
 

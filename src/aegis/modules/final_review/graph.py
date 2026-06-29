@@ -944,7 +944,6 @@ def _bind_project(package: FinalReviewInputPackage) -> FinalReviewProjectBinding
     return FinalReviewProjectBinding(
         project_root=package.project_root,
         code_root=package.code_root,
-        archive_store_root=str(package.project_root / "archive"),
         knowledge_store_root=str(package.project_root / "knowledge"),
         causal_store_root=str(package.project_root / "causal"),
         final_review_artifact_root=artifact_root,
@@ -1242,7 +1241,7 @@ def _detect_threat_surfaces(content: str) -> dict[str, bool]:
             token in content for token in ["requests.", "httpx.", "urllib.", "socket.", "git push"]
         ),
         "THREAT-006-truth-store-write": any(
-            token in content for token in ["archive/", "knowledge/", "causal/", "truth_written"]
+            token in content for token in ["knowledge/", "causal/", "truth_written"]
         ),
         "THREAT-007-governance-bypass": any(
             token in content for token in ["skip_review", "bypass", "force=True"]
@@ -1291,7 +1290,7 @@ def _threat_finding(checklist_id: str, reviewed_path: str) -> ReviewFinding:
         ),
         "THREAT-006-truth-store-write": (
             "critical",
-            "Archive/Knowledge/Causal truth-store mutation surface",
+            "Knowledge/Causal truth-store mutation surface",
             "Changed code appears able to write truth-store material directly.",
             True,
         ),
@@ -1346,7 +1345,7 @@ def _threat_checklist_items(
         "THREAT-003-file-delete-move-overwrite-recursive-scan": "Does changed code delete, move, overwrite, or recursively scan files?",
         "THREAT-004-secret-read-or-logging": "Does changed code read or log secrets?",
         "THREAT-005-network-or-remote-publication": "Does changed code perform network or remote publication?",
-        "THREAT-006-truth-store-write": "Does changed code write Archive, Knowledge, or Causal truth?",
+        "THREAT-006-truth-store-write": "Does changed code write Knowledge or Causal truth?",
         "THREAT-007-governance-bypass": "Does changed code bypass governance gates?",
         "THREAT-008-unbounded-resource-or-concurrency": "Does changed code introduce unbounded resources or concurrency?",
         "THREAT-009-raw-report-trust": "Does changed code trust raw reports over structured evidence?",
@@ -1807,7 +1806,7 @@ def _final_report_text(trace: FinalReviewDecisionTrace) -> str:
         f"- next_stage: `{trace.next_stage}`\n"
         f"- matched_rule: `{trace.matched_rule}`\n\n"
         "This report is a gate decision only. It does not modify code, run tests, "
-        "or admit Archive/Knowledge/Causal truth.\n"
+        "or admit Knowledge/Causal truth.\n"
     )
 
 

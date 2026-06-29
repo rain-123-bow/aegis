@@ -31,7 +31,7 @@ def _write_minimal_raw_agent_artifacts(writer: verify.EvidenceWriter) -> None:
             "thread_id": "worker-simple-thread",
             "output": {
                 "stance_id": "simple",
-                "evidence_refs": ["archive/simple-route.md"],
+                "evidence_refs": ["artifact/simple-route.md"],
                 "causal_chain_delta": {"added_local_nodes": ["n-simple"]},
                 "self_audit": {"global_truth_claim": False},
             },
@@ -41,7 +41,7 @@ def _write_minimal_raw_agent_artifacts(writer: verify.EvidenceWriter) -> None:
             "thread_id": "worker-adapter-thread",
             "output": {
                 "stance_id": "adapter",
-                "evidence_refs": ["archive/adapter-route.md"],
+                "evidence_refs": ["artifact/adapter-route.md"],
                 "causal_chain_delta": {"added_local_nodes": ["n-adapter"]},
                 "self_audit": {"global_truth_claim": False},
             },
@@ -51,7 +51,7 @@ def _write_minimal_raw_agent_artifacts(writer: verify.EvidenceWriter) -> None:
             "thread_id": "worker-measurement-thread",
             "output": {
                 "stance_id": "measurement",
-                "evidence_refs": ["archive/measurement.md"],
+                "evidence_refs": ["artifact/measurement.md"],
                 "causal_chain_delta": {"added_local_nodes": ["n-measurement"]},
                 "self_audit": {"global_truth_claim": False},
             },

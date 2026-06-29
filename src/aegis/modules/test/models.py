@@ -86,7 +86,6 @@ class TestProjectBinding(StrictModel):
 
     project_root: Path
     code_root: Path
-    archive_store_root: str
     knowledge_store_root: str
     causal_store_root: str
     test_artifact_root: Path
@@ -567,7 +566,6 @@ class TestBoundaryFlags(StrictModel):
 
     __test__: ClassVar[bool] = False
 
-    wrote_archive_truth: bool = False
     wrote_knowledge_truth: bool = False
     wrote_causal_truth: bool = False
     remote_published: bool = False
@@ -576,8 +574,7 @@ class TestBoundaryFlags(StrictModel):
     @model_validator(mode="after")
     def _forbidden_flags(self) -> "TestBoundaryFlags":
         if (
-            self.wrote_archive_truth
-            or self.wrote_knowledge_truth
+            self.wrote_knowledge_truth
             or self.wrote_causal_truth
             or self.remote_published
             or self.code_modified

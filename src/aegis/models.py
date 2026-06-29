@@ -137,7 +137,7 @@ class FinalReviewResult(StrictModel):
 
 
 class StoreCandidate(StrictModel):
-    store: Literal["archive", "knowledge", "causal"]
+    store: Literal["knowledge", "causal"]
     candidate_id: str = Field(default_factory=lambda: f"candidate-{uuid4().hex[:8]}")
     kind: str
     payload: dict[str, Any]
@@ -147,7 +147,7 @@ class StoreCandidate(StrictModel):
 
 class CommitGate(StrictModel):
     commit_candidate_requested: bool = False
-    exactly_one_archive_task_per_commit: bool = True
+    exactly_one_task_per_commit: bool = True
     developer_authorization_required: bool = True
     remote_push_performed: bool = False
     pr_created: bool = False
@@ -178,7 +178,6 @@ class AegisGraphState(StrictModel):
     test_state: TestState = Field(default_factory=TestState)
     final_review_result: FinalReviewResult | None = None
     tool_intent_audits: list[dict[str, Any]] = Field(default_factory=list)
-    archive_candidates: list[StoreCandidate] = Field(default_factory=list)
     knowledge_candidates: list[StoreCandidate] = Field(default_factory=list)
     causal_candidates: list[StoreCandidate] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)

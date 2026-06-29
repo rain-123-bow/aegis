@@ -12,7 +12,7 @@ Use this skill when acting as the Debate Leader inside DebateSubgraph v2.
 - Decide debate admission, round control, convergence, and final causal-candidate
   synthesis.
 - Do not write global Causal truth.
-- Do not write Archive or Knowledge truth.
+- Do not write Knowledge truth.
 - Do not modify project code.
 - Do not let worker persistence, rhetoric, or user preference replace evidence.
 

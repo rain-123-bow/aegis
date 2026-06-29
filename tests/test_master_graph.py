@@ -94,7 +94,7 @@ def test_normal_task_runs_end_to_end(tmp_path, monkeypatch):
     assert result["test_state"]["final_test_result"]["result"] == "passed"
     assert result["final_review_result"]["decision"] == "accept_for_master"
     assert result["closeout"]["langgraph_store_used_for_project_memory"] is False
-    assert Path(result["closeout"]["archive_ref"]).exists()
+    assert result["closeout"]["history_source"] == "git_commit_history"
     assert Path(result["closeout"]["knowledge_ref"]).exists()
     assert Path(result["closeout"]["causal_ref"]).exists()
 

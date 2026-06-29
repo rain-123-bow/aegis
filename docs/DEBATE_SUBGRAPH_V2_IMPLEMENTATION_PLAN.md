@@ -16,7 +16,7 @@ Managed project layout:
 project-root/
   code/
     ...pure project code...
-  archive/
+  artifacts/
   knowledge/
   causal/
 ```
@@ -161,7 +161,7 @@ Forbidden in state:
 ProjectStoreBinding:
   project_root: path
   code_root: path
-  archive_store_root: path
+  artifact_evidence_root: path
   knowledge_store_root: path
   causal_store_root: path
   debate_candidate_root: path
@@ -275,7 +275,7 @@ DebateContextBundle:
       dimension: string
       why_needed: string
       blocking_level:
-        hard_block|needs_user_clarification|request_test_measurement|request_archive_lookup|advisory
+        hard_block|needs_user_clarification|request_test_measurement|request_evidence_artifact_lookup|advisory
   measurement_needs:
     - measurement_id: string
       question: string

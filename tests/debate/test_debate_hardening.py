@@ -37,15 +37,15 @@ from aegis.stores.knowledge.store import KnowledgeStore
 
 def _project(tmp_path: Path) -> Path:
     root = tmp_path / "project"
-    for name in ("code", "archive", "knowledge", "causal"):
+    for name in ("code", "artifacts", "knowledge", "causal"):
         (root / name).mkdir(parents=True)
     return root
 
 
 def _package(root: Path) -> DebateInputPackage:
-    adapter_ref = root / "archive" / "adapter-weak.md"
-    simple_ref = root / "archive" / "simple-strong.md"
-    simple_review_ref = root / "archive" / "simple-review.md"
+    adapter_ref = root / "artifacts" / "adapter-weak.md"
+    simple_ref = root / "artifacts" / "simple-strong.md"
+    simple_review_ref = root / "artifacts" / "simple-review.md"
     adapter_ref.write_text("adapter route extension overhead evidence", encoding="utf-8")
     simple_ref.write_text("simple direct implementation evidence", encoding="utf-8")
     simple_review_ref.write_text("simple direct review evidence", encoding="utf-8")
@@ -223,7 +223,7 @@ def test_opposing_evidence_does_not_verify_hard_constraint(tmp_path: Path) -> No
 
 def test_unrelated_project_artifact_does_not_admit_stance(tmp_path: Path) -> None:
     root = _project(tmp_path)
-    unrelated_ref = root / "archive" / "unrelated.md"
+    unrelated_ref = root / "artifacts" / "unrelated.md"
     unrelated_ref.write_text(
         "Meeting note about release timing and owner availability.",
         encoding="utf-8",
@@ -285,9 +285,9 @@ def test_leader_selection_not_based_on_adapter_keyword(tmp_path: Path) -> None:
 
 def test_leader_selection_is_not_input_order_when_later_stance_has_stronger_evidence(tmp_path: Path) -> None:
     root = _project(tmp_path)
-    weak_ref = root / "archive" / "weak.md"
-    strong_ref_1 = root / "archive" / "strong-1.md"
-    strong_ref_2 = root / "archive" / "strong-2.md"
+    weak_ref = root / "artifacts" / "weak.md"
+    strong_ref_1 = root / "artifacts" / "strong-1.md"
+    strong_ref_2 = root / "artifacts" / "strong-2.md"
     weak_ref.write_text("simple direct implementation evidence", encoding="utf-8")
     strong_ref_1.write_text("adapter architecture platform evidence", encoding="utf-8")
     strong_ref_2.write_text("adapter architecture review evidence", encoding="utf-8")

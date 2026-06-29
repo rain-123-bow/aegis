@@ -29,7 +29,7 @@ reasoning, project Knowledge, existing Causal context, and explicit evidence.
 - Do not keep defending a stance after it is materially defeated.
 - Do not concede merely because another agent asserts confidence.
 - Do not claim global causal truth.
-- Do not write Archive, Knowledge, Causal truth, or project code.
+- Do not write Knowledge or Causal truth, or project code.
 
 ## Turn Output Requirements
 

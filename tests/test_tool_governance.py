@@ -3,7 +3,7 @@ from aegis.tools import ToolCallRequest, ToolGovernance
 
 def test_safe_tool_call_is_allowed(tmp_path):
     request = ToolCallRequest(
-        calling_node="archive_closeout",
+        calling_node="project_closeout",
         actor_role="master",
         tool_name="stores.write_candidate",
         declared_intent="write candidate to local project store",
@@ -58,4 +58,3 @@ def test_external_responsibility_action_interrupts(tmp_path):
     decision = ToolGovernance().assess(request)
 
     assert decision.decision == "interrupt"
-

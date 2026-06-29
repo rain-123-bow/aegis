@@ -209,7 +209,6 @@ class DebateBoundary(StrictModel):
     wrote_knowledge_truth: bool = False
     modified_code: bool = False
     global_causal_truth_written: bool = False
-    archive_written: bool = False
     knowledge_written: bool = False
     project_code_modified: bool = False
 
@@ -641,7 +640,6 @@ class ProjectStoreBinding(StrictModel):
 
     project_root: Path
     code_root: Path
-    archive_store_root: Path
     knowledge_store_root: Path
     causal_store_root: Path
     debate_candidate_root: Path

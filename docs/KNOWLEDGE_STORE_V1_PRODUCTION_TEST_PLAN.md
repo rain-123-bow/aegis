@@ -33,7 +33,7 @@ The tests must also prove that lifecycle, audit, retrieval, persistence, backup,
 
 ## Non-Goals
 
-- Do not test Archive Store or Causal Store behavior except where Knowledge Store references their evidence IDs.
+- Do not test git history or Causal Store behavior except where Knowledge Store references their evidence IDs.
 - Do not add vector database, embedding provider, or external search dependency.
 - Do not benchmark cloud or multi-user production deployment.
 - Do not claim semantic omniscience. The store can enforce indexed applicability and missing-knowledge rules, but it cannot infer every possible unstated dependency.

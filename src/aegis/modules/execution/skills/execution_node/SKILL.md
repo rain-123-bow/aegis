@@ -22,5 +22,5 @@ Plan first, submit the plan for Review, implement only after receiving an approv
 1. Do not write code before approval.
 2. Do not treat unsupported technical preference as a hard constraint.
 3. Do not create default Execution Group, Front Agent, or Back Agent.
-4. Do not write Archive, Knowledge, or Causal admitted truth.
+4. Do not write Knowledge or Causal admitted truth.
 5. Do not push, merge, release, deploy, or create PR automatically.

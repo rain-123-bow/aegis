@@ -2013,7 +2013,6 @@ CREATE TABLE IF NOT EXISTS knowledge_evidence_refs (
   verification_method TEXT NOT NULL,
   PRIMARY KEY (knowledge_id, ref_type, ref_id),
   CHECK (ref_type IN (
-    'archive',
     'test',
     'external',
     'artifact',
@@ -2059,7 +2058,6 @@ CREATE TABLE IF NOT EXISTS knowledge_admission_evidence_refs (
   ref_id TEXT NOT NULL,
   PRIMARY KEY (knowledge_id, ref_type, ref_id),
   CHECK (ref_type IN (
-    'archive',
     'test',
     'external',
     'artifact',
@@ -2112,7 +2110,6 @@ CREATE TABLE IF NOT EXISTS knowledge_invalidation_records (
   evidence_ref_id TEXT,
   CHECK (
     evidence_ref_type IS NULL OR evidence_ref_type IN (
-      'archive',
       'test',
       'external',
       'artifact',
@@ -2186,7 +2183,7 @@ CREATE TABLE IF NOT EXISTS knowledge_need_rules (
     'hard_block',
     'needs_user_clarification',
     'request_test_measurement',
-    'request_archive_lookup'
+    'request_evidence_artifact_lookup'
   ))
 );
 

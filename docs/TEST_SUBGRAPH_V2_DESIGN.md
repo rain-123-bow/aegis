@@ -45,7 +45,7 @@ Test Subgraph v2 不做以下事情：
 
 1. 不修改业务代码。
 2. 不修复测试失败。
-3. 不把测试结果直接写入 Archive、Knowledge 或 Causal truth。
+3. 不把测试结果直接写入 Project history、Knowledge 或 Causal truth。
 4. 不执行远程发布、push、merge、release、deploy。
 5. 不在 LangGraph State 中传递长文。
 6. 不让报告处理者补测或补证据。
@@ -472,8 +472,7 @@ class TestOutputPackage(BaseModel):
 ```python
 class TestBoundaryFlags(BaseModel):
     modified_code: bool = False
-    wrote_archive_truth: bool = False
-    wrote_knowledge_truth: bool = False
+        wrote_knowledge_truth: bool = False
     wrote_causal_truth: bool = False
     remote_published: bool = False
 ```
@@ -635,7 +634,7 @@ Test Subgraph 可以写：
 Test Subgraph 不可以写：
 
 1. `code/` 业务代码。
-2. Archive admitted truth。
+2. Knowledge/Causal admitted truth。
 3. Knowledge admitted fact。
 4. Causal admitted truth。
 5. 远端仓库。
@@ -779,7 +778,7 @@ Test Subgraph 不可以写：
 9. State 中不包含长文。
 10. 测试产物目录包含 README、方案、证据、报告。
 11. `code/` 不被测试模块修改。
-12. Archive/Knowledge/Causal truth 不被测试模块写入。
+12. Knowledge/Causal truth 不被测试模块写入。
 
 ## 生产级验收标准
 

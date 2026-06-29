@@ -10,7 +10,7 @@ The revision incorporates the external test-plan review while preserving three b
 
 1. Pydantic/model validation failures are allowed at the model boundary. They are not public store API failures.
 2. Invalid enum values such as invalid fact kind, subject kind, object kind, and evidence ref type are model/schema validation cases, not required `KnowledgeStoreError` domain codes unless they reach a public store method.
-3. Archive / Knowledge / Causal boundary tests verify that Knowledge Store does not perform implicit cross-store mutation. Full three-store orchestration belongs to the three-store linkage layer, not to Knowledge Store itself.
+3. Knowledge / Causal boundary tests verify that Knowledge Store does not perform implicit cross-store mutation. Full three-store orchestration belongs to the three-store linkage layer, not to Knowledge Store itself.
 
 This document is a test plan only. It does not claim that tests have passed.
 
@@ -35,7 +35,7 @@ In scope:
 
 Out of scope:
 
-- Archive Store implementation internals
+- git history implementation internals
 - Causal Store implementation internals
 - LangGraph parent graph behavior
 - Real LLM/nested-Codex agent behavior
@@ -71,7 +71,7 @@ Knowledge Store may store verified static facts and typed evidence references.
 
 It must not:
 
-- auto-create Knowledge from Archive;
+- auto-create Knowledge from Project history;
 - auto-write Causal claims;
 - turn developer claims into admitted Knowledge;
 - turn user preferences into project facts without accepted evidence.
@@ -607,8 +607,8 @@ Objective: Verify Knowledge Store does not perform implicit cross-store mutation
 
 | Case ID | Scenario | Expected |
 | --- | --- | --- |
-| SB-001 | Archive ref exists in evidence field | does not auto-create admitted Knowledge |
-| SB-002 | Archive ref supports admission | only through explicit evidence binding and admission request |
+| SB-001 | artifact ref exists in evidence field | does not auto-create admitted Knowledge |
+| SB-002 | artifact ref supports admission | only through explicit evidence binding and admission request |
 | SB-003 | admitted Knowledge fact exists | does not auto-write Causal Store |
 | SB-004 | Knowledge fact used by causal workflow | only as explicit reference outside Knowledge Store |
 | SB-005 | developer claim submitted | candidate/rejection only, not admitted fact |
@@ -842,7 +842,7 @@ Knowledge Store v1 can be accepted only if all are true:
 18. Revalidation queue APIs exist and affect active retrieval correctly.
 19. Domain error contract is verified at both model and public store boundaries.
 20. Fact completeness gate is verified.
-21. Archive / Knowledge / Causal boundary behavior is verified within Knowledge Store scope.
+21. Knowledge / Causal boundary behavior is verified within Knowledge Store scope.
 22. Concurrent duplicate writes produce one persisted fact and controlled duplicate errors.
 23. Mixed lifecycle concurrency does not corrupt lifecycle or audit state.
 24. Backup/restore preserves query behavior.

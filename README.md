@@ -37,7 +37,8 @@ Core boundaries:
 - Every side-effectful runtime tool call goes through Tool Governance.
 - LangGraph checkpointer is used for run recovery and interrupts.
 - LangGraph Store is not used for project memory.
-- Long-term project state remains local to the project repository under `archive/`, `knowledge/`, and `causal/`.
+- Long-term project state remains local to the project repository under `knowledge/` and `causal/`.
+- Project history is represented by git commit history; Aegis no longer maintains a separate project history store.
 - Master continuity memory is stored outside the project by default at
   `%LOCALAPPDATA%/Aegis/continuity/continuity.sqlite3`.
 
@@ -81,7 +82,7 @@ python -m ruff check .
 
 The current implementation is deterministic-first. It proves the runtime kernel, Master approval
 gates, continuity preflight, directed flow, interrupt/resume, standalone Test Subgraph v2,
-local three-store candidate boundary, and LLM node contract without enabling real LLM execution
+local Knowledge/Causal candidate boundary, and LLM node contract without enabling real LLM execution
 by default.
 
 Master module behavior has also been tested with real subagents using `gpt-5.5` with high

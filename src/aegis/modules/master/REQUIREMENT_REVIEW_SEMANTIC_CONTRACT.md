@@ -81,7 +81,7 @@ Use `route_to_debate` when:
 - first-principles analysis cannot resolve the issue without adversarial review.
 
 Debate output is a causal candidate for review integration. It is not global causal
-truth and must not mutate Archive, Knowledge, or Causal stores directly.
+truth and must not mutate Knowledge or Causal stores directly.
 
 ## Output Requirements
 

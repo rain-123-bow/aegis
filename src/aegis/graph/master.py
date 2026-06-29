@@ -229,17 +229,8 @@ def final_commit_gate(state: AegisState) -> dict[str, Any]:
     return {"commit_gate": gate.model_dump(mode="json"), "blockers": blockers}
 
 
-def archive_closeout(state: AegisState) -> dict[str, Any]:
+def project_closeout(state: AegisState) -> dict[str, Any]:
     stores = ProjectStores(state["project_root"])
-    archive = StoreCandidate(
-        store="archive",
-        kind="graph_run_closeout",
-        payload={
-            "run_id": state["run_id"],
-            "task_boundary": state.get("task_boundary"),
-            "final_review_result": state.get("final_review_result"),
-        },
-    )
     causal = StoreCandidate(
         store="causal",
         kind="causal_candidate",
@@ -257,18 +248,17 @@ def archive_closeout(state: AegisState) -> dict[str, Any]:
             "scope": "aegis_v0_1_2",
         },
     )
-    for candidate in (archive, causal, knowledge):
+    for candidate in (causal, knowledge):
         candidate.artifact_ref = stores.write_candidate(candidate)
 
     closeout = {
         "status": "closed",
-        "archive_ref": archive.artifact_ref,
+        "history_source": "git_commit_history",
         "knowledge_ref": knowledge.artifact_ref,
         "causal_ref": causal.artifact_ref,
         "langgraph_store_used_for_project_memory": False,
     }
     return {
-        "archive_candidates": [*(state.get("archive_candidates") or []), archive.model_dump(mode="json")],
         "knowledge_candidates": [
             *(state.get("knowledge_candidates") or []),
             knowledge.model_dump(mode="json"),
@@ -300,7 +290,7 @@ def build_master_graph(checkpointer: SqliteSaver | None = None):
     builder.add_node("run_dynamic_tests", run_dynamic_tests)
     builder.add_node("final_review", final_review_node)
     builder.add_node("final_commit_gate", final_commit_gate)
-    builder.add_node("archive_closeout", archive_closeout)
+    builder.add_node("project_closeout", project_closeout)
 
     builder.add_edge(START, "continuity_preflight")
     builder.add_conditional_edges(
@@ -373,8 +363,8 @@ def build_master_graph(checkpointer: SqliteSaver | None = None):
         },
     )
     builder.add_edge("final_review", "final_commit_gate")
-    builder.add_edge("final_commit_gate", "archive_closeout")
-    builder.add_edge("archive_closeout", END)
+    builder.add_edge("final_commit_gate", "project_closeout")
+    builder.add_edge("project_closeout", END)
     return builder.compile(checkpointer=checkpointer)
 
 

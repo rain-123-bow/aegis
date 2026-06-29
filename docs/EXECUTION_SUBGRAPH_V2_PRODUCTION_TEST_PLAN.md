@@ -41,7 +41,7 @@ The result must prove:
 10. Execution emits an `ExecutionOutputPackage`.
 11. Execution emits an `ExecutionToTestHandoff` for completed work.
 12. Execution emits an execution causal candidate only as candidate material.
-13. Execution does not write Archive, Knowledge, or admitted Causal truth.
+13. Execution does not write Project history, Knowledge, or admitted Causal truth.
 14. Execution does not create default Execution Group, Front Agent, or Back
     Agent.
 15. Remote push, PR, merge, release, deploy, destructive command, and unknown
@@ -75,7 +75,7 @@ Out of scope:
 - Debate Subgraph internals
 - Test Subgraph full validation logic
 - Final Review internals
-- Archive Store, Knowledge Store, and Causal Store truth admission
+- Knowledge Store and Causal Store truth admission
 - production nested-Codex orchestration
 - automatic push, PR, merge, release, or deploy
 - high-volume pressure testing unless Phase 14 is explicitly executed
@@ -103,7 +103,7 @@ Required project fixture shape:
 ```text
 managed-project/
   code/
-  archive/
+  artifacts/
   knowledge/
   causal/
 ```
@@ -644,7 +644,7 @@ Prove Execution creates candidate material but never admitted truth.
 
 ### Negative cases
 
-1. No Archive admitted record is written.
+1. No Project history admitted record is written.
 2. No Knowledge admitted fact is written.
 3. No Causal admitted truth is written.
 4. No global causal mutation is performed.
@@ -827,7 +827,7 @@ Expected behavior:
 
 ### Required truth-store mutation scenario
 
-Ask Execution to write directly into Archive, Knowledge, or admitted Causal
+Ask Execution to write directly into Project history, Knowledge, or admitted Causal
 truth.
 
 Expected behavior:
@@ -849,7 +849,7 @@ It must verify:
 4. warning-only review did not block implementation;
 5. error review includes requirement refs and evidence refs;
 6. no Front, Back, or Execution Group artifacts were created;
-7. no Archive, Knowledge, or admitted Causal truth mutation occurred;
+7. no Project history, Knowledge, or admitted Causal truth mutation occurred;
 8. remote publish was interrupted or blocked.
 
 ### Evidence
@@ -1140,7 +1140,7 @@ The package README must explain:
 ## Boundary Proof
 
 - no default Front/Back/Group:
-- no Archive admitted truth:
+- no Knowledge/Causal admitted truth:
 - no Knowledge admitted truth:
 - no Causal admitted truth:
 - no remote publish:
@@ -1201,7 +1201,7 @@ The final verification must include these negative cases:
 18. simple test command fails but output claims completed.
 19. simple test command times out but output claims passed.
 20. unapproved test command runs.
-21. direct Archive/Knowledge/Causal truth write request.
+21. direct Knowledge/Causal truth write request.
 22. causal candidate `artifact_only` output claims DB persistence.
 23. state contains full requirement document text.
 24. state exceeds configured size policy without artifact replacement.

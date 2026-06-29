@@ -8,11 +8,11 @@ from aegis.modules.debate import CandidatePosition, DebateInputPackage, build_de
 def test_langgraph_builder_returns_output_package(tmp_path: Path) -> None:
     root = tmp_path / "project"
     (root / "code").mkdir(parents=True)
-    (root / "archive").mkdir()
+    (root / "artifacts").mkdir()
     (root / "knowledge").mkdir()
     (root / "causal").mkdir()
-    simple_ref = root / "archive" / "simple.md"
-    adapter_ref = root / "archive" / "adapter.md"
+    simple_ref = root / "artifacts" / "simple.md"
+    adapter_ref = root / "artifacts" / "adapter.md"
     simple_ref.write_text("simple direct implementation evidence", encoding="utf-8")
     adapter_ref.write_text("structured adapter implementation evidence", encoding="utf-8")
     graph = build_debate_subgraph()

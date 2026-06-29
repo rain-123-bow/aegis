@@ -9,9 +9,9 @@ from aegis.tools import ToolCallRequest, ToolGovernance
 
 
 class ProjectStores:
-    """Local project Archive / Knowledge / Causal candidate writer."""
+    """Local project Knowledge / Causal candidate writer."""
 
-    store_names = ("archive", "knowledge", "causal")
+    store_names = ("knowledge", "causal")
 
     def __init__(self, project_root: str | Path, governance: ToolGovernance | None = None):
         self.project_root = Path(project_root)
@@ -51,7 +51,7 @@ class ProjectStores:
 
     def write_candidate(self, candidate: StoreCandidate) -> str:
         request = ToolCallRequest(
-            calling_node="archive_closeout",
+            calling_node="project_closeout",
             actor_role="master",
             tool_name="stores.write_candidate",
             arguments={"store": candidate.store, "candidate_id": candidate.candidate_id},
@@ -74,9 +74,8 @@ class ProjectStores:
             raise RuntimeError(result.decision.reason)
         return result.result
 
-    def _candidate_path(self, store: Literal["archive", "knowledge", "causal"], candidate_id: str) -> Path:
+    def _candidate_path(self, store: Literal["knowledge", "causal"], candidate_id: str) -> Path:
         return self.project_root / store / "candidates" / f"{candidate_id}.json"
 
     def read_candidate(self, artifact_ref: str) -> dict[str, Any]:
         return json.loads(Path(artifact_ref).read_text(encoding="utf-8"))
-

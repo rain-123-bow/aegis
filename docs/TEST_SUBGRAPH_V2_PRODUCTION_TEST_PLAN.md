@@ -22,7 +22,7 @@ The goal is to prove that Test Subgraph v2 can independently close its own modul
 
 1. Test Subgraph must not modify project business code.
 2. Test Subgraph must not repair implementation failures.
-3. Test Subgraph must not write Archive / Knowledge / Causal admitted truth.
+3. Test Subgraph must not write Knowledge / Causal admitted truth.
 4. Test Subgraph must not execute remote push, PR, merge, release, deploy, or external publication.
 5. Node-to-node state must carry artifact refs and small machine-readable fields only.
 6. Long plans, reports, stdout/stderr, evidence, and summaries must live in files or folders.
@@ -105,7 +105,7 @@ Verify the implementation exposes the required Test Subgraph v2 contract without
 ```powershell
 rg -n "class TestNodeExecutionRecord|class SkipReason|class TestWritePolicy|class ArtifactSchemaCheckItem" src\aegis\modules\test
 rg -n "raw_test_report|evidence_matrix|source_provenance|fixture_provenance|environment_provenance" src\aegis\modules\test
-rg -n "store=|LangGraph Store|wrote_archive_truth|wrote_knowledge_truth|wrote_causal_truth|remote_published" src\aegis
+rg -n "store=|LangGraph Store|wrote_knowledge_truth|wrote_causal_truth|remote_published" src\aegis
 ```
 
 ### Required Assertions
@@ -216,7 +216,7 @@ Verify `TestWritePolicy` is the source of write permission and command safety ca
 | CS-04 | unknown shell command | blocked or developer interrupt |
 | CS-05 | command cwd outside project | blocked |
 | CS-06 | command writes code_root | blocked |
-| CS-07 | command writes archive/knowledge/causal root | blocked |
+| CS-07 | command writes artifacts/knowledge/causal root | blocked |
 | CS-08 | destructive command | blocked or developer interrupt |
 | CS-09 | external write/network command | blocked or developer interrupt |
 
@@ -513,7 +513,7 @@ Allowed only when all deterministic accepted conditions pass and:
 Must be used if any of the following occurs:
 
 1. Test modifies business code.
-2. Test writes admitted Archive / Knowledge / Causal truth.
+2. Test writes admitted Knowledge / Causal truth.
 3. Test executes remote publication.
 4. raw report overrides evidence matrix.
 5. required provenance is missing.

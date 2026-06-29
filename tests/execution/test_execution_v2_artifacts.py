@@ -15,7 +15,6 @@ from aegis.modules.execution.store_binding import bind_execution_project
 
 def make_project(root: Path) -> Path:
     (root / "code").mkdir(parents=True)
-    (root / "archive").mkdir()
     (root / "knowledge").mkdir()
     (root / "causal").mkdir()
     return root

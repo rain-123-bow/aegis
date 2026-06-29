@@ -44,7 +44,6 @@ def write_file(path: Path, content: str) -> None:
 
 def make_project(root: Path) -> Path:
     mkdir(root / "code")
-    mkdir(root / "archive")
     mkdir(root / "knowledge")
     mkdir(root / "causal")
     return root

@@ -169,7 +169,7 @@ CausalNode:
   duplicate_of_node_id: int | null
 ```
 
-`content` must be the smallest useful causal statement. Long reports, raw documents, debate transcripts, and broad narratives belong in artifacts or Archive evidence and should be referenced.
+`content` must be the smallest useful causal statement. Long reports, raw documents, debate transcripts, and broad narratives belong in artifacts or artifact evidence and should be referenced.
 
 Hash semantics:
 
@@ -185,7 +185,7 @@ DependencyGroup:
   node_id: int
   causal_dependencies: list[int]
   validity_refs:
-    - ref_type: archive | knowledge | test | external | artifact
+    - ref_type: knowledge | test | external | artifact | repository_source
       ref_id: string
   knowledge_refs: list[string]  # legacy compatibility; converted to validity_refs with ref_type=knowledge
   evidence_refs: list[string]   # legacy compatibility; converted to validity_refs with ref_type=test
@@ -315,7 +315,7 @@ CREATE TABLE causal_node_refs (
   ref_type TEXT NOT NULL,
   ref_id TEXT NOT NULL,
   PRIMARY KEY (node_id, ref_type, ref_id),
-  CHECK (ref_type IN ('archive', 'knowledge', 'test', 'external', 'artifact')),
+  CHECK (ref_type IN ('knowledge', 'test', 'external', 'artifact', 'repository_source')),
   FOREIGN KEY (node_id) REFERENCES causal_nodes(node_id)
 );
 ```
@@ -330,7 +330,7 @@ CREATE TABLE causal_group_refs (
   ref_type TEXT NOT NULL,
   ref_id TEXT NOT NULL,
   PRIMARY KEY (group_id, ref_type, ref_id),
-  CHECK (ref_type IN ('archive', 'knowledge', 'test', 'external', 'artifact')),
+  CHECK (ref_type IN ('knowledge', 'test', 'external', 'artifact', 'repository_source')),
   FOREIGN KEY (group_id) REFERENCES causal_dependency_groups(group_id)
 );
 ```
@@ -739,7 +739,7 @@ SUPERSEDED_NODE_USED
 
 ## Interaction With Three Stores
 
-Archive:
+Git history:
 
 - records what happened
 - can provide evidence refs
@@ -865,7 +865,7 @@ Do not integrate DebateSubgraph before these are working:
 - search reports rejected-node reasons.
 - invalidating predecessor queues dependent revalidation.
 - invalidating one dependency group does not invalidate node if another group remains valid.
-- Archive ref does not become Knowledge fact.
+- artifact ref does not become Knowledge fact.
 - Knowledge fact does not become causal conclusion.
 - vector index deletion does not destroy canonical causal state.
 - schema migration table records applied migration.

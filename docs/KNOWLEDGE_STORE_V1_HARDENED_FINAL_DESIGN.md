@@ -30,9 +30,9 @@ Therefore, every admitted fact must include:
 
 ## Relationship to the Three Stores
 
-### Archive
+### Project history
 
-Archive records what happened. It may provide evidence references for Knowledge admission. Archive entries do not automatically become Knowledge facts.
+git commit history records what happened. It may provide evidence references for Knowledge admission. git commit history entries do not automatically become Knowledge facts.
 
 ### Knowledge
 
@@ -47,7 +47,7 @@ Causal stores inferred causal structures with why, evidence, scope, assumptions,
 Knowledge Store v1 does not:
 
 - optimize for direct human reading
-- replace Archive
+- replace Project history
 - replace Causal
 - infer causal truth
 - treat developer claims as facts
@@ -143,7 +143,7 @@ Typed evidence supporting a candidate or admitted fact.
 ```yaml
 EvidenceRef:
   knowledge_id: int
-  ref_type: archive|test|external|artifact|customer_written|platform_doc|repository_source
+  ref_type: test|external|artifact|customer_written|platform_doc|repository_source
   ref_id: string
   verifier: master|debate|execution|test|final_review|knowledge_review
   verified_at_utc: string
@@ -164,7 +164,7 @@ MissingKnowledgeNeed:
   subject_kind: string
   subject_id: string|null
   why_needed: string
-  blocking_level: hard_block|needs_user_clarification|request_test_measurement|request_archive_lookup|advisory
+  blocking_level: hard_block|needs_user_clarification|request_test_measurement|request_evidence_artifact_lookup|advisory
   acceptable_sources: list[string]
 ```
 
@@ -367,8 +367,7 @@ CREATE TABLE knowledge_evidence_refs (
   verification_method TEXT NOT NULL,
   PRIMARY KEY (knowledge_id, ref_type, ref_id),
   CHECK (ref_type IN (
-    'archive',
-    'test',
+        'test',
     'external',
     'artifact',
     'customer_written',
@@ -426,8 +425,7 @@ CREATE TABLE knowledge_admission_evidence_refs (
   ref_id TEXT NOT NULL,
   PRIMARY KEY (knowledge_id, ref_type, ref_id),
   CHECK (ref_type IN (
-    'archive',
-    'test',
+        'test',
     'external',
     'artifact',
     'customer_written',
@@ -489,8 +487,7 @@ CREATE TABLE knowledge_invalidation_records (
   evidence_ref_id TEXT,
   CHECK (
     evidence_ref_type IS NULL OR evidence_ref_type IN (
-      'archive',
-      'test',
+            'test',
       'external',
       'artifact',
       'customer_written',
@@ -584,7 +581,7 @@ CREATE TABLE knowledge_need_rules (
     'hard_block',
     'needs_user_clarification',
     'request_test_measurement',
-    'request_archive_lookup'
+    'request_evidence_artifact_lookup'
   ))
 );
 ```
@@ -774,7 +771,7 @@ Debate, Execution, Test, and Final Review may generate candidate facts, evidence
 
 Developer claims may create candidates. They must not directly become admitted facts.
 
-Archive refs may support admission. They do not auto-upgrade into Knowledge truth.
+artifact refs may support admission. They do not auto-upgrade into Knowledge truth.
 
 ## Fact Completeness Gate
 
@@ -1139,7 +1136,7 @@ Callers must treat hard-block missing knowledge as a blocking condition.
 - Debate, Execution, Test, and Final Review cannot directly admit Knowledge truth
 - user preference without evidence is rejected as hard constraint
 - customer written requirement becomes admitted fact only after evidence binding
-- Archive ref supports Knowledge admission but does not auto-upgrade
+- artifact ref supports Knowledge admission but does not auto-upgrade
 - Knowledge fact supports Causal candidate construction but does not auto-write Causal
 - CJK fact retrieved by CJK and mixed-language context
 - query plan proves index usage

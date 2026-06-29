@@ -20,7 +20,7 @@ gate decision, and return a machine-readable terminal output package without:
 1. modifying project code;
 2. running tests;
 3. creating workers;
-4. writing Archive / Knowledge / Causal admitted truth;
+4. writing Knowledge / Causal admitted truth;
 5. trusting raw reports over structured evidence;
 6. accepting incomplete artifacts;
 7. silently accepting hidden code changes;
@@ -62,7 +62,7 @@ Out of scope:
 - Execution internal implementation correctness
 - Test internal execution correctness beyond its structured output package
 - Debate internals
-- real Archive / Knowledge / Causal truth admission
+- real Knowledge / Causal truth admission
 - automatic push, PR, merge, release, deploy, or publication
 - production LLM/nested-Codex orchestration, except for the optional behavior
   acceptance track described below
@@ -72,7 +72,7 @@ Out of scope:
 1. Final Review must not modify code.
 2. Final Review must not run tests.
 3. Final Review must not create workers or subagents in deterministic runtime.
-4. Final Review must not write admitted Archive / Knowledge / Causal truth.
+4. Final Review must not write admitted Knowledge / Causal truth.
 5. Final Review must not infer truth from raw markdown reports alone.
 6. Final Review must consume structured refs and artifact packages.
 7. Node state must carry small machine-readable fields and artifact refs only.
@@ -247,7 +247,7 @@ PY
 Source scan:
 
 ```powershell
-rg -n "os\.system|subprocess|git push|pull_request|merge|release|deploy|archive/|knowledge/|causal/" .\src\aegis\modules\final_review .\tests\test_final_review_subgraph_v2_runtime.py
+rg -n "os\.system|subprocess|git push|pull_request|merge|release|deploy|artifacts/|knowledge/|causal/" .\src\aegis\modules\final_review .\tests\test_final_review_subgraph_v2_runtime.py
 ```
 
 Any match must be classified as expected test fixture text, read-only scan
@@ -450,7 +450,7 @@ Required tests:
 2. Destructive filesystem operation produces critical blocker.
 3. Secret read/logging produces critical blocker.
 4. Network or remote publication produces critical blocker.
-5. Archive/Knowledge/Causal truth-store direct write produces critical blocker.
+5. Knowledge/Causal truth-store direct write produces critical blocker.
 6. Governance bypass produces critical blocker.
 7. Unbounded resource/concurrency produces blocking error.
 8. Raw report trust produces blocking error.
@@ -981,7 +981,7 @@ Passing this plan does not prove:
 
 1. parent graph integration;
 2. production LLM reliability;
-3. Archive / Knowledge / Causal truth admission correctness;
+3. Knowledge / Causal truth admission correctness;
 4. Execution implementation correctness beyond its output contract;
 5. Test execution correctness beyond its output contract;
 6. release readiness;

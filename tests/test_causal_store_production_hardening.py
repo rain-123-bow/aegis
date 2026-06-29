@@ -55,7 +55,7 @@ def _candidate_with_group(content: str, predecessor: int) -> CausalNodeDraft:
             CausalDependencyGroup(
                 causal_dependencies=[predecessor],
                 validity_refs=[
-                    CausalRef(ref_type="archive", ref_id="archive/task-1"),
+                    CausalRef(ref_type="artifact", ref_id="artifact/task-1"),
                     CausalRef(ref_type="knowledge", ref_id="knowledge/fact-1"),
                     CausalRef(ref_type="test", ref_id="test/result-1"),
                     CausalRef(ref_type="external", ref_id="external/email-1"),
@@ -160,8 +160,8 @@ def test_group_validity_refs_round_trip_preserves_ref_types(tmp_path):
 
     group = store.get_node(node_id).dependency_groups[0]
     assert [(ref.ref_type, ref.ref_id) for ref in group.validity_refs] == [
-        ("archive", "archive/task-1"),
         ("artifact", "artifact/report-1"),
+        ("artifact", "artifact/task-1"),
         ("external", "external/email-1"),
         ("knowledge", "knowledge/fact-1"),
         ("test", "test/result-1"),

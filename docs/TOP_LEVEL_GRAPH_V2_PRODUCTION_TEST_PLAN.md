@@ -41,7 +41,7 @@ The parent graph must:
 9. stop the whole Aegis runtime on resident failure;
 10. preserve failure evidence before stopping;
 11. reserve runtime terminal status for Master closeout;
-12. avoid Archive / Knowledge / Causal admitted truth mutation;
+12. avoid Knowledge / Causal admitted truth mutation;
 13. avoid push, PR, merge, release, deploy, or external publication.
 
 ## Scope
@@ -76,7 +76,7 @@ Out of scope:
 - Final Review code audit quality
 - future lifecycle/token monitor implementation
 - production external Codex resource scheduling
-- real Archive / Knowledge / Causal truth admission
+- real Knowledge / Causal truth admission
 - automatic stale-lock stealing
 - remote push, PR, merge, release, deploy, or publication
 
@@ -304,13 +304,13 @@ git diff --binary *> module_test_reports\top_level\<RUN_ID>\source\source_patch.
 ### Purpose
 
 Prove that the parent graph package does not absorb business logic from Master,
-Debate, Execution, Test, Final Review, Archive, Knowledge, or Causal stores.
+Debate, Execution, Test, Final Review, Knowledge or Causal stores.
 
 ### Commands
 
 ```powershell
 rg -n "requirement|debate worker|implementation plan|test evidence|threat finding|causal truth" src\aegis\top_level
-rg -n "from aegis.modules|import aegis.modules|archive|knowledge|causal" src\aegis\top_level
+rg -n "from aegis.modules|import aegis.modules|knowledge|causal" src\aegis\top_level
 & $env:AEGIS_PYTHON -m pytest .\tests\test_top_level_graph_v2_runtime.py -k source -vv
 ```
 
@@ -319,7 +319,7 @@ rg -n "from aegis.modules|import aegis.modules|archive|knowledge|causal" src\aeg
 1. `src/aegis/top_level/` contains parent routing, registry, lock, manifest, and
    state code only.
 2. Parent graph source does not import module business implementations.
-3. Parent graph source does not write Archive / Knowledge / Causal admitted
+3. Parent graph source does not write Knowledge / Causal admitted
    truth.
 4. Source boundary tests use structural checks where possible, not brittle
    string-only acceptance.
@@ -487,7 +487,7 @@ At minimum:
 4. final_review -> execution
 5. final_review -> debate
 6. execution -> final_review without Test
-7. any module -> Archive / Knowledge / Causal admitted truth
+7. any module -> Knowledge / Causal admitted truth
 
 ### Commands
 
@@ -706,13 +706,13 @@ Each resident proof must record:
 
 ### Purpose
 
-Prove that the parent graph does not mutate Archive, Knowledge, or Causal
+Prove that the parent graph does not mutate Knowledge or Causal
 admitted truth and does not use LangGraph Store as project memory.
 
 ### Commands
 
 ```powershell
-rg -n "store=|LangGraph Store|archive|knowledge|causal|admitted_truth|global_causal" src\aegis\top_level tests\test_top_level_graph_v2_runtime.py
+rg -n "store=|LangGraph Store|knowledge|causal|admitted_truth|global_causal" src\aegis\top_level tests\test_top_level_graph_v2_runtime.py
 & $env:AEGIS_PYTHON -m pytest .\tests\test_top_level_graph_v2_runtime.py -k "store or truth or boundary" -vv
 ```
 
@@ -922,7 +922,7 @@ observations.
 Any of the following fails production acceptance:
 
 1. parent graph imports module business logic;
-2. parent graph writes Archive / Knowledge / Causal admitted truth;
+2. parent graph writes Knowledge / Causal admitted truth;
 3. parent graph carries long-form package bodies in graph state;
 4. same project membership allows an otherwise invalid route;
 5. failed resident module is silently rebuilt;

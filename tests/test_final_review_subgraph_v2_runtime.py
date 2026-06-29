@@ -37,7 +37,6 @@ def sha256_file(path: Path) -> str:
 
 def make_project(root: Path) -> Path:
     (root / "code").mkdir(parents=True)
-    (root / "archive").mkdir()
     (root / "knowledge").mkdir()
     (root / "causal").mkdir()
     write_file(root / "code" / "feature.py", "def answer():\n    return 42\n")
@@ -708,7 +707,7 @@ def test_final_review_full_manifest_mode_detects_unexpected_current_change(tmp_p
 @pytest.mark.parametrize(
     ("source", "expected_checklist_id"),
     [
-        ("from pathlib import Path\nPath('archive/fact.json').write_text('truth_written')\n", "THREAT-006-truth-store-write"),
+        ("from pathlib import Path\nPath('causal/fact.json').write_text('truth_written')\n", "THREAT-006-truth-store-write"),
         ("import requests\nrequests.post('https://example.com')\n", "THREAT-005-network-or-remote-publication"),
         ("skip_review = True\n", "THREAT-007-governance-bypass"),
         ("password = 'secret'\nprint(password)\n", "THREAT-004-secret-read-or-logging"),

@@ -46,7 +46,7 @@ Final Review must not:
 2. run tests;
 3. create worker agents;
 4. call Debate directly as an internal worker process;
-5. write Archive, Knowledge, or Causal admitted truth;
+5. write Knowledge or Causal admitted truth;
 6. merge causal candidates into global Causal;
 7. execute remote push, PR, merge, release, deploy, or publication actions;
 8. treat Test's raw report text as stronger than structured evidence;
@@ -704,7 +704,6 @@ class FinalReviewBoundaryFlags(BaseModel):
     code_modified: bool = False
     tests_run: bool = False
     workers_created: bool = False
-    archive_truth_written: bool = False
     knowledge_truth_written: bool = False
     causal_truth_written: bool = False
     remote_published: bool = False
@@ -850,7 +849,7 @@ The module must explicitly answer each item:
 3. Does any changed code delete, move, overwrite, or recursively scan files?
 4. Does any changed code read or log secrets?
 5. Does any changed code perform network calls or remote publication?
-6. Does any changed code write to Archive, Knowledge, or Causal admitted truth?
+6. Does any changed code write to Knowledge or Causal admitted truth?
 7. Does any changed code bypass parent graph, Master approval, or Tool Governance?
 8. Does any changed code create unbounded loops, unbounded memory use, or uncontrolled concurrency?
 9. Does any changed code trust raw report text instead of structured evidence?
@@ -904,7 +903,7 @@ Final Review must not route directly to Debate. If Debate is needed, it routes t
 2. Final Review blocks Execution/Test terminal inconsistency.
 3. Final Review blocks changed-file hash mismatch between Execution, Test, and current code root.
 4. Final Review refuses to run tests or modify code.
-5. Final Review refuses to write admitted Archive, Knowledge, or Causal truth.
+5. Final Review refuses to write admitted Knowledge or Causal truth.
 6. Final Review identifies critical and error-level threats as closeout blockers.
 7. Final Review produces a complete threat checklist matrix.
 8. Final Review accepts warning-only findings only with explicit scope limits.

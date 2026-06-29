@@ -137,7 +137,6 @@ class FinalReviewProjectBinding(StrictModel):
 
     project_root: Path
     code_root: Path
-    archive_store_root: str
     knowledge_store_root: str
     causal_store_root: str
     final_review_artifact_root: Path
@@ -309,7 +308,6 @@ class FinalReviewBoundaryFlags(StrictModel):
     code_modified: bool = False
     tests_run: bool = False
     workers_created: bool = False
-    archive_truth_written: bool = False
     knowledge_truth_written: bool = False
     causal_truth_written: bool = False
     remote_published: bool = False
@@ -322,7 +320,6 @@ class FinalReviewBoundaryFlags(StrictModel):
             self.code_modified
             or self.tests_run
             or self.workers_created
-            or self.archive_truth_written
             or self.knowledge_truth_written
             or self.causal_truth_written
             or self.remote_published

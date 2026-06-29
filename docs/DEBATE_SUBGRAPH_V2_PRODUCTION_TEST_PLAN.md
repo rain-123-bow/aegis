@@ -83,7 +83,7 @@ Out of scope:
 
 - Master parent graph orchestration
 - Execution/Test/Final Review internals
-- Archive Store internals
+- git history internals
 - Knowledge Store production verification beyond retrieval/admission behavior
   needed by Debate
 - Global Causal truth admission
@@ -104,7 +104,7 @@ Debate must not write:
 
 - admitted Causal truth;
 - Knowledge truth;
-- Archive records;
+- git commit history records;
 - project code;
 - parent graph decisions.
 
@@ -127,7 +127,7 @@ The managed project layout is:
 ```text
 project-root/
   code/
-  archive/
+  artifacts/
   knowledge/
   causal/
 ```
@@ -534,7 +534,7 @@ Required cases:
 
 1. Default binding resolves:
    - `project-root/code`
-   - `project-root/archive`
+   - `project-root/artifacts`
    - `project-root/knowledge`
    - `project-root/causal`
 2. Custom store root outside `project_root` is rejected.

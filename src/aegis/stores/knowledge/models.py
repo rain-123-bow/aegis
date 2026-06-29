@@ -78,7 +78,6 @@ AdmissionModule = Literal[
 ]
 AuthorizedAdmissionModule = Literal["master", "knowledge_review", "store_import"]
 EvidenceRefType = Literal[
-    "archive",
     "test",
     "external",
     "artifact",
@@ -99,7 +98,7 @@ BlockingLevel = Literal[
     "hard_block",
     "needs_user_clarification",
     "request_test_measurement",
-    "request_archive_lookup",
+    "request_evidence_artifact_lookup",
     "advisory",
 ]
 RevalidationStatus = Literal["pending", "in_progress", "resolved", "cancelled", "failed"]
@@ -370,7 +369,7 @@ class NeedRule(StrictModel):
         "hard_block",
         "needs_user_clarification",
         "request_test_measurement",
-        "request_archive_lookup",
+        "request_evidence_artifact_lookup",
     ]
     rationale: str
 

@@ -17,7 +17,6 @@ class FlowEdgeContract(StrictModel):
     required_state_fields: list[str] = Field(default_factory=list)
     forbidden_side_effects: list[str] = Field(
         default_factory=lambda: [
-            "archive_truth_mutation",
             "knowledge_truth_mutation",
             "global_causal_truth_merge",
             "remote_push",

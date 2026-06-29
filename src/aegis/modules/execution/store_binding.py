@@ -13,7 +13,6 @@ def bind_execution_project(
     *,
     run_id: str,
     code_root: str | Path | None = None,
-    archive_store_root: str | Path | None = None,
     knowledge_store_root: str | Path | None = None,
     causal_store_root: str | Path | None = None,
 ) -> ProjectStoreBinding:
@@ -22,9 +21,6 @@ def bind_execution_project(
     root = Path(project_root).resolve()
     roots = {
         "code_root": Path(code_root).resolve() if code_root else root / "code",
-        "archive_store_root": (
-            Path(archive_store_root).resolve() if archive_store_root else root / "archive"
-        ),
         "knowledge_store_root": (
             Path(knowledge_store_root).resolve() if knowledge_store_root else root / "knowledge"
         ),
@@ -39,7 +35,7 @@ def bind_execution_project(
     if missing:
         raise ExecutionRuntimeError(
             ExecutionErrorCode.PROJECT_STORE_NOT_FOUND,
-            "ExecutionSubgraph requires project-local code/archive/knowledge/causal roots.",
+            "ExecutionSubgraph requires project-local code/knowledge/causal roots.",
             context={"project_root": str(root), "missing_roots": missing},
         )
 
@@ -60,7 +56,6 @@ def bind_execution_project(
     return ProjectStoreBinding(
         project_root=root,
         code_root=roots["code_root"],
-        archive_store_root=str(roots["archive_store_root"]),
         knowledge_store_root=str(roots["knowledge_store_root"]),
         causal_store_root=str(roots["causal_store_root"]),
         candidate_write_root=str(candidate_root),

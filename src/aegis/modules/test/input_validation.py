@@ -75,8 +75,7 @@ def validate_execution_handoff(
         output_status_valid = output_payload.status == "completed"
         output_next_stage_valid = output_payload.next_stage == "test_subgraph"
         boundary_flags_valid = (
-            not output_payload.boundary.wrote_archive_truth
-            and not output_payload.boundary.wrote_knowledge_truth
+            not output_payload.boundary.wrote_knowledge_truth
             and not output_payload.boundary.wrote_causal_truth
             and not output_payload.boundary.remote_published
         )

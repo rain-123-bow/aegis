@@ -6,7 +6,7 @@ Draft design for the Aegis v0.1.2 LangGraph rebuild.
 
 ## Purpose
 
-The Causal Store is the long-term project-local store for conditional causal reasoning. It is not a Markdown archive, not a Knowledge Store replacement, and not a vector database of free text. Its core abstraction is a reusable causal node space where each node can act as a result in one reasoning chain and as a cause in another reasoning chain.
+The Causal Store is the long-term project-local store for conditional causal reasoning. It is not a Markdown history log, not a Knowledge Store replacement, and not a vector database of free text. Its core abstraction is a reusable causal node space where each node can act as a result in one reasoning chain and as a cause in another reasoning chain.
 
 The design optimizes for agent retrieval, causal reuse, invalidation, traceability, and low-complexity exact lookup. Human-readable exports are optional debugging or reporting views, not the primary storage format.
 
@@ -19,7 +19,7 @@ The Causal Store must support:
 - Reuse of one causal node across multiple reasoning chains.
 - Sparse storage that avoids recording AI-internalized common knowledge.
 - Conditional validity through scope, assumptions, conditions, confidence, and invalidation conditions.
-- Traceability to project facts, Archive evidence, Test evidence, or external evidence when such evidence is relevant.
+- Traceability to project facts, artifact evidence, Test evidence, or external evidence when such evidence is relevant.
 - Project-local operation for personal local git projects.
 - Rebuildable retrieval indexes that do not become the source of truth.
 - Admission separation between candidate causal output and admitted causal state.
@@ -28,7 +28,7 @@ The Causal Store must not:
 
 - Store common-sense or basic model-internal knowledge as explicit dependencies.
 - Treat Knowledge facts as causal conclusions by default.
-- Treat Archive records as system facts by default.
+- Treat git commit history records as system facts by default.
 - Treat Debate output as admitted global causal truth by default.
 - Use Markdown files as the canonical causal database.
 - Use vector similarity as causal truth.
@@ -135,7 +135,7 @@ CausalNode:
     artifact_ref: string | null
 ```
 
-`content` should be the smallest useful semantic statement. It should not contain long debate transcripts, raw documents, or broad narrative reports. Long source material belongs in artifacts, Archive, or external refs.
+`content` should be the smallest useful semantic statement. It should not contain long debate transcripts, raw documents, or broad narrative reports. Long source material belongs in artifacts, Project history, or external refs.
 
 ### DependencyGroup
 
@@ -158,7 +158,7 @@ Meaning:
 - A node is usable only under a dependency group whose conditions and scope match the current reasoning context.
 - A dependency group is node-owned support structure, not the primary causal object.
 - `knowledge_refs` are optional and should be used only for project-specific verified facts or constraints.
-- `evidence_refs` may point to Archive, Test results, external documents, or other evidence artifacts.
+- `evidence_refs` may point to Project history, Test results, external documents, or other evidence artifacts.
 
 ### Common Knowledge Policy
 
@@ -289,7 +289,7 @@ CREATE TABLE causal_external_refs (
 Allowed `ref_type` values:
 
 ```text
-archive
+artifact
 knowledge
 test
 external
@@ -404,7 +404,7 @@ The store must enforce:
 - invalidated nodes are excluded from normal retrieval unless explicitly requested as historical counterevidence.
 - admitted nodes must have at least one valid dependency group unless explicitly marked as a root causal observation.
 - Knowledge refs must point to verified Knowledge Store facts, not developer claims.
-- Archive refs are evidence references only, not automatic facts.
+- artifact refs are evidence references only, not automatic facts.
 - Vector index staleness must be detectable.
 
 ## API Contract
@@ -506,7 +506,7 @@ Integration tests:
 - semantic query returns relevant nodes and expands causal dependencies.
 - invalidation condition excludes stale nodes.
 - deleted vector index is rebuilt from SQLite.
-- Knowledge refs and Archive refs remain references, not truth upgrades.
+- Knowledge refs and artifact refs remain references, not truth upgrades.
 
 ## Initial Implementation Recommendation
 

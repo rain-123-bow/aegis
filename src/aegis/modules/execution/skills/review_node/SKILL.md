@@ -21,4 +21,4 @@ Review is a correctness gate, not a nitpicking loop.
 2. Do not run tests.
 3. Do not expand scope beyond Master-admitted requirements.
 4. Do not block a feasible plan for preference-only or style-only reasons.
-5. Do not write Archive, Knowledge, or Causal admitted truth.
+5. Do not write Knowledge or Causal admitted truth.
