@@ -1,0 +1,102 @@
+# Flat Node Graph
+
+## Node Graph
+
+![Aegis flat node graph](./flat_node_graph.png)
+
+## Message Contract
+
+All node-to-node messages use the same minimal structure:
+
+```json
+{
+  "source": 1,
+  "target": 2,
+  "artifact_path": "..."
+}
+```
+
+- `source`: source role enum id from `config/agent_registry.json`.
+- `target`: target role enum id from `config/agent_registry.json`.
+- `artifact_path`: path to the transferred artifact folder.
+
+The artifact folder must contain `README.md` as the entry point. Long text must not be passed through graph state.
+
+## Flow Explanation
+
+1. The Project Manager sends the complete requirement context artifact to the Requirement Designer.
+2. The Requirement Designer returns an unambiguous requirement document artifact to the Project Manager.
+3. The Project Manager sends the approved requirement document artifact to the Execution Designer and Executor.
+4. The Execution Designer and Executor sends the execution plan artifact to the Execution Plan Reviewer.
+5. The Execution Plan Reviewer returns review feedback to the Execution Designer and Executor.
+6. The Execution Designer and Executor sends implementation artifacts and the test request artifact to the Test Planner and Executor.
+7. The Test Planner and Executor sends the test plan artifact to the Test Plan Reviewer.
+8. The Test Plan Reviewer returns test plan review feedback to the Test Planner and Executor.
+9. The Test Planner and Executor sends test results and evidence artifacts to the Test Result Reviewer.
+10. The Test Result Reviewer returns result review feedback to the Test Planner and Executor.
+11. The Test Result Reviewer sends approved test evidence to the Test Report Writer.
+12. The Test Report Writer sends the final test report artifact to Final Review.
+
+## First-Principles Rationale
+
+The Project Manager has the full user interaction context, but later agents must not depend on hidden Project Manager context. Therefore, the Requirement Designer is separated from the Project Manager. Its job is to convert interaction context into an objective, standalone, unambiguous requirement document that later agents can use without private conversation state.
+
+The graph is flat by design. There is no parent graph / subgraph split in this runtime model. Each node is a long-lived role-bound agent, and graph state only carries the next message envelope.
+
+## Detailed Operating Rules
+
+### Project Manager Runtime
+
+The Project Manager is the main agent in the Codex App window, not an independent subagent.
+
+Rationale:
+
+- The Codex App main agent has the most natural user interaction surface.
+- The Codex App main agent has the most complete user conversation context.
+- Requirement clarification benefits from the Codex App interaction model.
+- This preserves the practical advantage of Codex App while keeping downstream agents context-independent.
+
+Downstream agents must not depend on the Project Manager's private conversation context. They must depend only on artifact folders and their `README.md` entry files.
+
+### Project Manager and Requirement Designer Loop
+
+The Project Manager and Requirement Designer may interact multiple times before the workflow can continue.
+
+The loop exists to produce an unambiguous requirement document that can guide later agents without hidden context. If the Requirement Designer finds missing objectives, unclear scope, unsupported technical path constraints, ambiguous success criteria, or insufficient evidence, it must return an artifact to the Project Manager. The Project Manager then asks the developer for clarification or confirmation.
+
+The workflow may continue only after:
+
+- the requirement document is objective and unambiguous;
+- unsupported preferences are separated from hard constraints;
+- technical path locks have sufficient evidence or are downgraded;
+- the developer confirms the requirement document.
+
+### Review Thresholds
+
+Execution plan review and test plan review are bounded optimization loops, not infinite review loops.
+
+The purpose of review is to find material correctness, scope, evidence, and implementation risks. It is not to keep searching for minor stylistic objections. Since an LLM can always generate additional low-value objections, the review loop must stop once the plan reaches the configured acceptance threshold.
+
+Default rule:
+
+- score >= 95 passes;
+- no `error` level issue may remain;
+- `warning` level issues may be recorded but do not block flow;
+- accepted warnings must be carried forward in the artifact package.
+
+If a reviewer returns a score below threshold, it must provide concrete, actionable issues through the artifact folder. The producer node then revises the plan and returns it for review.
+
+### Test Result Review
+
+Test result review has two distinct parts.
+
+First, the Test Plan Reviewer checks execution completeness against the approved test plan. It verifies whether any required test point, route, condition, or coverage item was missed. If anything is missing, the artifact is returned to the Test Planner and Executor for completion.
+
+Second, the Test Result Reviewer checks evidence closure. It verifies whether each test point has enough evidence, whether the evidence is coherent, and whether the evidence logically proves the claimed result. If evidence is missing or does not close logically, the artifact is returned to the Test Planner and Executor for targeted retest, evidence collection, or evidence repair.
+
+The Test Report Writer may receive the test package only after:
+
+- the test plan has no missing execution steps;
+- every required test point has evidence;
+- the evidence logically supports the result;
+- unresolved limits are explicitly recorded.

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aegis.node_message.v2",
+  "title": "Aegis Node Message Schema",
+  "description": "Minimal A-F LangGraph node message contract. Nodes exchange only an artifact folder path. The artifact folder must contain README.md as the entry point.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_path",
+    "reasoning_ledger_context_pack",
+    "status"
+  ],
+  "properties": {
+    "artifact_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to the artifact folder transferred between nodes. The folder must contain README.md."
+    },
+    "reasoning_ledger_context_pack": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to the exported reasoning ledger context pack JSON file."
+    },
+    "status": {
+      "type": "boolean",
+      "description": "Current agent processing result marker used by conditional graph routing."
+    }
+  }
+}
