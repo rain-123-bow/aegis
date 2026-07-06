@@ -4,6 +4,62 @@ description: Use when acting as Aegis TEST_RESULT_REVIEWER to audit test coverag
 ---
 
 # 测试结果审核者 Skill
+## 全局质量优先法
+
+执行本 skill 前，必须先读取并遵守 `aegis_global_quality_law/SKILL.md`。
+
+`aegis_global_quality_law` 是本地最高优先级运行法，适用于所有 Aegis agent，包括图外 Master agent、LangGraph 图内节点 agent、临时审查 agent、执行 agent 和后台自动化 agent。
+
+如果本 skill 与 `aegis_global_quality_law` 冲突，必须优先遵守 `aegis_global_quality_law`，并在当前 agent 的可写产物中记录冲突位置、冲突内容和实际采用的规则；如果当前 agent 没有文件产物权限，必须在最终回复或报告中说明。
+
+不得以速度、完成感、用户体验、交付顺滑度、实现成本、工具限制为理由降低真实性、完整性、证据闭环、覆盖标准和可复核性。
+
+## 质量自检要求
+
+当前 agent 完成任务或失败退出前，必须按 `aegis_global_quality_law` 进行质量自检。
+
+如果当前任务存在 `artifact_path` 且允许写入文件，必须写入：
+
+```text
+quality/<role_or_node_name>_quality_self_check.json
+```
+
+如果当前 skill 明确不使用 `artifact_path` 或当前 agent 没有文件写入权限，必须在其最终报告、审查意见或回复中给出等价质量自检摘要。
+
+质量自检文件至少包含：
+
+```json
+{
+  "role_or_node_name": "current-role-or-node-name",
+  "quality_score": 0,
+  "speed_bonus": 0,
+  "hard_failures": [],
+  "missing_inputs": [],
+  "evidence_files": [],
+  "status_decision": null
+}
+```
+
+`status_decision` 只在当前 skill 使用 `status` 输出协议时填写 `true` 或 `false`；不使用 `status` 的图外 agent 填 `null`。
+
+质量自检不能替代真实证据；它只声明当前 agent 是否满足质量优先法。
+
+## status 语义边界
+
+`status` 是 LangGraph 图内节点或显式声明使用 `status` 协议的 agent 的输出字段。
+
+如果本 skill 明确声明不使用 LangGraph 节点通信协议或不使用 `status`，则不得把 `status` 规则套用为当前 agent 的完成协议。
+
+任何 agent 都不得因为输入 JSON 中存在 `status=false` 而直接拒绝执行。
+
+是否调用当前 agent 由上游调度、LangGraph、Master 或用户决定。
+
+当前 agent 一旦被调用，必须基于当前职责、实际输入、文件、代码、推理库上下文、运行证据独立判断能否完成。
+
+如果当前 skill 使用 `status` 输出协议，则输入缺失、证据不足、关键依赖不可用、任务未闭环时必须返回 `status=false`。
+
+如果当前 skill 不使用 `status` 输出协议，则必须按本 skill 自身的输出协议诚实报告失败、阻塞项或待用户决策项。
+
 
 ## 角色定位
 
@@ -46,7 +102,7 @@ description: Use when acting as Aegis TEST_RESULT_REVIEWER to audit test coverag
 字段含义：
 
 - `artifact_path`：当前 LangGraph 运行的共享产物目录，也是当前节点写入输出的目录。
-- `status`：上游节点状态；如果存在且为 `false`，当前节点不得假装上游已通过。
+- `status`：当前节点最终输出字段；不得作为当前节点输入门控。
 
 `artifact_path` 语义：
 
@@ -119,7 +175,7 @@ description: Use when acting as Aegis TEST_RESULT_REVIEWER to audit test coverag
 1. 输入必须可解析为 JSON object。
 2. `artifact_path` 必须存在；不存在时必须尝试创建；创建失败则返回 `status=false`。
 3. `artifact_path` 必须是目录。
-4. 如果输入包含 `status=false`，不得声称测试执行结果完整；必须基于已存在材料进行有限审核，并通常返回 `status=false`。
+4. 不得因为输入 JSON 中存在 `status=false` 而直接拒绝审核；必须基于已存在测试方案和证据进行有限审核，并在证据不足或矩阵不完整时返回 `status=false`。
 5. 必须能定位执行使用的测试方案。
 6. 必须能定位测试覆盖矩阵。
 7. 必须能定位测试执行报告。

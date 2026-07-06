@@ -1,9 +1,65 @@
 ---
 name: aegis-master-test-workflow-preflight
-description: Use when acting as Aegis MASTER_TEST_WORKFLOW_PREFLIGHT to prepare and verify the project, artifact_path, reasoning ledger context pack, subagents, registry, schema, and runtime environment before launching the LangGraph A-F test/review workflow.
+description: Use when acting as Aegis MASTER_TEST_WORKFLOW_PREFLIGHT to prepare and verify the project, artifact_path, reasoning ledger context pack, role registry, lazy subagent provision readiness, schema, and runtime environment before launching the LangGraph A-F test/review workflow.
 ---
 
 # Aegis Master Test Workflow Preflight
+## 全局质量优先法
+
+执行本 skill 前，必须先读取并遵守 `aegis_global_quality_law/SKILL.md`。
+
+`aegis_global_quality_law` 是本地最高优先级运行法，适用于所有 Aegis agent，包括图外 Master agent、LangGraph 图内节点 agent、临时审查 agent、执行 agent 和后台自动化 agent。
+
+如果本 skill 与 `aegis_global_quality_law` 冲突，必须优先遵守 `aegis_global_quality_law`，并在当前 agent 的可写产物中记录冲突位置、冲突内容和实际采用的规则；如果当前 agent 没有文件产物权限，必须在最终回复或报告中说明。
+
+不得以速度、完成感、用户体验、交付顺滑度、实现成本、工具限制为理由降低真实性、完整性、证据闭环、覆盖标准和可复核性。
+
+## 质量自检要求
+
+当前 agent 完成任务或失败退出前，必须按 `aegis_global_quality_law` 进行质量自检。
+
+如果当前任务存在 `artifact_path` 且允许写入文件，必须写入：
+
+```text
+quality/<role_or_node_name>_quality_self_check.json
+```
+
+如果当前 skill 明确不使用 `artifact_path` 或当前 agent 没有文件写入权限，必须在其最终报告、审查意见或回复中给出等价质量自检摘要。
+
+质量自检文件至少包含：
+
+```json
+{
+  "role_or_node_name": "current-role-or-node-name",
+  "quality_score": 0,
+  "speed_bonus": 0,
+  "hard_failures": [],
+  "missing_inputs": [],
+  "evidence_files": [],
+  "status_decision": null
+}
+```
+
+`status_decision` 只在当前 skill 使用 `status` 输出协议时填写 `true` 或 `false`；不使用 `status` 的图外 agent 填 `null`。
+
+质量自检不能替代真实证据；它只声明当前 agent 是否满足质量优先法。
+
+## status 语义边界
+
+`status` 是 LangGraph 图内节点或显式声明使用 `status` 协议的 agent 的输出字段。
+
+如果本 skill 明确声明不使用 LangGraph 节点通信协议或不使用 `status`，则不得把 `status` 规则套用为当前 agent 的完成协议。
+
+任何 agent 都不得因为输入 JSON 中存在 `status=false` 而直接拒绝执行。
+
+是否调用当前 agent 由上游调度、LangGraph、Master 或用户决定。
+
+当前 agent 一旦被调用，必须基于当前职责、实际输入、文件、代码、推理库上下文、运行证据独立判断能否完成。
+
+如果当前 skill 使用 `status` 输出协议，则输入缺失、证据不足、关键依赖不可用、任务未闭环时必须返回 `status=false`。
+
+如果当前 skill 不使用 `status` 输出协议，则必须按本 skill 自身的输出协议诚实报告失败、阻塞项或待用户决策项。
+
 
 ## 定位
 
@@ -11,7 +67,7 @@ description: Use when acting as Aegis MASTER_TEST_WORKFLOW_PREFLIGHT to prepare 
 
 你运行在当前 Codex 会话窗口内，不是 LangGraph 节点。
 
-你负责在启动 LangGraph A-F 测试审核流程前，检查并准备所有必要输入、运行条件、通信目录、推理库上下文包、subagent registry 和 runtime 环境。
+你负责在启动 LangGraph A-F 测试审核流程前，检查并准备所有必要输入、运行条件、通信目录、推理库上下文包、subagent role registry、懒创建能力和 runtime 环境。
 
 你不负责写需求。
 
@@ -377,7 +433,7 @@ degraded_no_ledger
 
 ## 运行层检查
 
-运行层用于确认 LangGraph runtime 可以启动并找到 A-F subagent。
+运行层用于确认 LangGraph runtime 可以启动，并能根据 A-F role spec 按需创建、复用或调用对应 subagent。
 
 必须检查：
 
@@ -399,7 +455,7 @@ src/main.py 或等价入口存在
 
 必须存在并可解析。
 
-必须包含 A-F 六个 agent：
+必须包含 A-F 六个 role spec：
 
 ```text
 A TEST_PLAN_AUTHOR
@@ -410,43 +466,55 @@ E TEST_REPORT_WRITER
 F FINAL_REVIEWER
 ```
 
-每个 agent 必须包含：
+每个 role spec 必须包含：
 
 ```text
 role_id
 role_key
 graph_node
 role_description
-thread_id
 name
 artifact_path
+```
+
+`thread_id` 可以存在，也可以为空。
+
+含义：
+
+```text
+thread_id 非空：已有可复用候选 subagent，preflight 可以尝试验证。
+thread_id 为空：该角色等待 LangGraph 进入节点时懒创建。
 ```
 
 必须检查：
 
 1. role_id 与 role_key 一致。
 2. graph_node 为 A-F。
-3. thread_id 非空。
-4. thread_id 不重复。
-5. name 非空。
-6. artifact_path 与当前启动使用的 artifact_path 一致。
-7. 不包含 MASTER_REVIEWER。
-8. JSON schema 正确。
+3. name 非空。
+4. artifact_path 与当前启动使用的 artifact_path 一致。
+5. 不包含 MASTER_REVIEWER。
+6. JSON schema 正确。
+7. 没有重复 role_key。
+8. 没有重复 graph_node。
+9. 非空 thread_id 不重复。
 
 如果 registry artifact_path 与当前 artifact_path 不一致，必须询问用户是否更新 registry。
 
 不得静默改写。
 
-### subagent resume 检查
+不得因为 A-F 的 `thread_id` 为空而阻塞 preflight；这表示使用懒创建。
 
-必须检查 A-F 六个 subagent 是否可 resume。
+### subagent lazy provision 检查
 
-检查方法：
+preflight 不要求 A-F 六个 subagent 已经创建或可 resume。
 
-1. 读取 `thread_id`。
-2. 通过 multi-agent / Codex 工具发送轻量 ping 或读取状态。
-3. 验证返回 role_key 与 name 匹配。
-4. 不匹配则视为不可用。
+preflight 必须检查的是“进入节点时能否创建或复用”：
+
+1. `agent_registry.json` 中 A-F role spec 完整。
+2. 对于非空 thread_id，可以尝试轻量 ping；失败时标记为 stale，不得直接阻塞整个 preflight。
+3. 对于空 thread_id，标记为 `pending_creation`。
+4. 当前环境具备后续创建 subagent 的必要工具，或 runtime 有明确的创建/降级策略。
+5. 如果当前流程配置要求“必须预创建 subagent”，则必须由用户明确确认，不得默认要求。
 
 推荐 ping：
 
@@ -455,14 +523,13 @@ Return only this JSON:
 {"role_key":"<ROLE_KEY>","name":"<NAME>","alive":true}
 ```
 
-如果某个 subagent 不可用，不能启动。
-
-必须让用户选择：
+如果某个已有 thread_id 不可用，必须让用户选择：
 
 ```text
-1. 重新 provision subagent
-2. 更新 agent_registry.json
-3. 停止
+1. 保留 role spec，并把该 thread_id 标记为 stale，后续节点懒创建新 subagent
+2. 立即重新 provision 该 subagent
+3. 更新 agent_registry.json
+4. 停止
 ```
 
 ### node_message_schema.json
@@ -579,7 +646,7 @@ PREFLIGHT_CHECK_RESULT.json
 ## Runtime Layer
 ## Reasoning Ledger Context Pack
 ## Agent Registry
-## Subagent Resume Check
+## Subagent Lazy Provision Check
 ## Environment Check
 ## Blocking Issues
 ## Warnings
@@ -609,8 +676,8 @@ PREFLIGHT_CHECK_RESULT.json
       "graph_node": "A",
       "role_key": "TEST_PLAN_AUTHOR",
       "name": "Plato",
-      "thread_id": "...",
-      "resume_ok": true
+      "thread_id": null,
+      "provision_state": "pending_creation"
     }
   ],
   "blocking_issues": [],
@@ -676,7 +743,7 @@ BLOCKED
 2. 通信层通过。
 3. 运行层通过。
 4. context pack 已生成且可读。
-5. A-F subagent 可 resume。
+5. A-F role spec 完整，且 lazy provision 能力可用或已有可复用 subagent 已验证。
 6. LangGraph 和 Codex 环境可用。
 7. 无阻塞项。
 
@@ -691,7 +758,9 @@ BLOCKED
 3. 存在非阻塞 warning。
 4. 用户明确接受某个降级条件。
 
-不得把缺失确认需求文档、缺失实现方案、缺 subagent、缺 registry、缺 context pack 归为 DEGRADED_READY。
+不得把缺失确认需求文档、缺失实现方案、缺 registry、缺 context pack 归为 DEGRADED_READY。
+
+A-F thread_id 为空不是缺 subagent；如果 lazy provision 能力可用，可以是 READY 或 DEGRADED_READY。
 
 ### BLOCKED
 
@@ -704,7 +773,7 @@ BLOCKED
 3. 缺 `artifact_path` 且用户未授权创建。
 4. 缺 `REASONING_LEDGER_CONTEXT_PACK.json` 且无法生成。
 5. 缺 agent registry。
-6. A-F subagent 不可 resume。
+6. A-F role spec 缺失或 lazy provision 能力不可用且无可复用 subagent。
 7. 缺 A-F skill。
 8. Python 不能 import langgraph。
 9. codex 命令不可用。
@@ -747,8 +816,8 @@ A-F 节点由 LangGraph runtime 和其自身 skill 处理。
 4. 缺最终需求文档仍启动。
 5. 缺最终实现方案仍启动。
 6. 缺 agent registry 仍启动。
-7. 缺 subagent thread_id 仍启动。
-8. subagent 不可 resume 仍启动。
+7. 缺 A-F role spec 仍启动。
+8. role spec 缺失、lazy provision 不可用且无可复用 subagent 时仍启动。
 9. Python 环境不可用仍启动。
 10. codex 不可用仍启动。
 11. main.py 不存在仍启动。
@@ -799,7 +868,7 @@ Preflight 完成后必须向用户报告：
 - requirement document path
 - implementation plan path
 - agent_registry path
-- subagent resume status
+- subagent lazy provision status
 - blocking issues
 - warnings
 - start command path

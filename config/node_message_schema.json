@@ -7,6 +7,7 @@
   "additionalProperties": false,
   "required": [
     "artifact_path",
+    "quality_law_path",
     "reasoning_ledger_context_pack",
     "status"
   ],
@@ -15,6 +16,11 @@
       "type": "string",
       "minLength": 1,
       "description": "Path to the artifact folder transferred between nodes. The folder must contain README.md."
+    },
+    "quality_law_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute path to aegis_global_quality_law/SKILL.md. Every node must read this before its role skill."
     },
     "reasoning_ledger_context_pack": {
       "type": "string",

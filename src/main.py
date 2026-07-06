@@ -15,6 +15,7 @@ from langgraph.graph import END, START, StateGraph
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AGENT_REGISTRY_PATH = PROJECT_ROOT / "config" / "agent_registry.json"
 NODE_MESSAGE_SCHEMA_PATH = PROJECT_ROOT / "config" / "node_message_schema.json"
+QUALITY_LAW_PATH = PROJECT_ROOT / "skills" / "aegis_global_quality_law" / "SKILL.md"
 NODE_TIMEOUT_SECONDS = int(os.environ.get("AEGIS_NODE_TIMEOUT_SECONDS", "1800"))
 
 
@@ -68,6 +69,8 @@ def initialize_state(
     }
     if state.get("artifact_path") is None:
         state["artifact_path"] = agent_config.get("artifact_path")
+    if state.get("quality_law_path") is None:
+        state["quality_law_path"] = str(QUALITY_LAW_PATH)
     if state.get("reasoning_ledger_context_pack") is None and state.get("artifact_path"):
         state["reasoning_ledger_context_pack"] = str(
             Path(state["artifact_path"]) / "REASONING_LEDGER_CONTEXT_PACK.json"

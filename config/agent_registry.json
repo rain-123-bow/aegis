@@ -14,8 +14,9 @@
       "role_key": "TEST_PLAN_AUTHOR",
       "graph_node": "A",
       "role_description": "Test plan author. Receives the requirement document and design document, then writes a complete requirement-oriented test plan.",
-      "thread_id": "019f179d-26bd-7460-836d-f83e0ce2d692",
-      "name": "Plato",
+      "thread_id": "019f3638-3bb0-7221-926f-b1cbdf067e9a",
+      "name": "Bohr",
+      "role_spec_name": "Plato",
       "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
     },
     {
@@ -23,8 +24,9 @@
       "role_key": "TEST_PLAN_REVIEWER",
       "graph_node": "B",
       "role_description": "Test plan reviewer. Reviews the test plan; passes only when score is at least 95 and no error-level issue remains. Warnings may be recorded without blocking.",
-      "thread_id": "019f179d-4e25-7c01-b175-c3014bbd6dc8",
-      "name": "Hume",
+      "thread_id": "019f3638-6008-75e3-a22b-5aabdcbc050c",
+      "name": "Locke",
+      "role_spec_name": "Hume",
       "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
     },
     {
@@ -32,8 +34,9 @@
       "role_key": "TEST_EXECUTOR",
       "graph_node": "C",
       "role_description": "Test executor. Executes the approved test plan in the real target environment and preserves complete raw test data and evidence.",
-      "thread_id": "019f179d-97e7-7b80-9eb9-031c453d3193",
-      "name": "Russell",
+      "thread_id": "019f3638-90a3-7f72-b28f-92b9fa17eee9",
+      "name": "Kant",
+      "role_spec_name": "Russell",
       "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
     },
     {
@@ -41,8 +44,9 @@
       "role_key": "TEST_RESULT_REVIEWER",
       "graph_node": "D",
       "role_description": "Test result reviewer. First checks whether the approved test plan was fully executed, then checks whether the evidence logically closes every claim. Sends incomplete work back to the test executor.",
-      "thread_id": "019f179d-cf94-75a2-9b5c-16517337c148",
-      "name": "Wegener",
+      "thread_id": "019f3638-b9ae-7330-af6d-0497bd154053",
+      "name": "Lorentz",
+      "role_spec_name": "Wegener",
       "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
     },
     {
@@ -50,8 +54,9 @@
       "role_key": "TEST_REPORT_WRITER",
       "graph_node": "E",
       "role_description": "Test report writer. Writes the final test report package from the approved plan, complete raw test data, and reviewed evidence.",
-      "thread_id": "019f179d-f5ab-7f33-b858-492c88445291",
-      "name": "Parfit",
+      "thread_id": "019f3638-dc73-7190-8692-1b5d63e95aba",
+      "name": "Wegener",
+      "role_spec_name": "Parfit",
       "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
     },
     {
@@ -59,8 +64,9 @@
       "role_key": "FINAL_REVIEWER",
       "graph_node": "F",
       "role_description": "Final reviewer. Performs the final gate review over requirements, design, implementation plan, final code, test plan, raw test data, and test report.",
-      "thread_id": "019f179e-2c37-7570-afb6-74c40466dab4",
-      "name": "Kepler",
+      "thread_id": "019f3639-0ce7-7360-aec2-b08a45448610",
+      "name": "Singer",
+      "role_spec_name": "Kepler",
       "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
     }
   ]
