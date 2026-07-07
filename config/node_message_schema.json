@@ -1,21 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "aegis.node_message.v2",
-  "title": "Aegis Node Message Schema",
-  "description": "Minimal A-F LangGraph node message contract. Nodes exchange only an artifact folder path. The artifact folder must contain README.md as the entry point.",
+  "$id": "aegis.node_message.v3.json_first",
+  "title": "Aegis LangGraph JSON-First Node Message Schema",
+  "description": "A-F LangGraph node message contract. JSON control files and graph gate state are the machine authority; README.md is not a control surface.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "artifact_path",
     "quality_law_path",
     "reasoning_ledger_context_pack",
-    "status"
+    "status",
+    "gate_status",
+    "gate_route",
+    "current_node",
+    "control_files",
+    "open_blockers",
+    "author_constraints",
+    "review_pass_score",
+    "max_test_plan_review_failures"
   ],
   "properties": {
     "artifact_path": {
       "type": "string",
       "minLength": 1,
-      "description": "Path to the artifact folder transferred between nodes. The folder must contain README.md."
+      "description": "Shared artifact folder for the current LangGraph run. JSON control files in this folder are authoritative. README.md is ignored by graph gates."
     },
     "quality_law_path": {
       "type": "string",
@@ -27,9 +35,279 @@
       "minLength": 1,
       "description": "Path to the exported reasoning ledger context pack JSON file."
     },
+    "current_node": {
+      "type": "string",
+      "description": "Current graph node id: START, A, B, C, D, E, or F."
+    },
     "status": {
       "type": "boolean",
-      "description": "Current agent processing result marker used by conditional graph routing."
+      "description": "Agent raw status after gate rewriting. Nodes may output it, but graph routing uses gate_route. Open blockers force effective status=false."
+    },
+    "gate_status": {
+      "type": "boolean",
+      "description": "Program gate verdict. Agent output cannot set this authoritatively."
+    },
+    "gate_route": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Program-selected next route. Only graph gate may choose it."
+    },
+    "raw_status": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Last node's raw status before graph gate rewriting."
+    },
+    "review_score": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Reviewer-provided raw score. Diagnostic only; it cannot override open blockers."
+    },
+    "effective_score": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Gate-effective score. Any open P0 blocker makes this 0."
+    },
+    "review_pass_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Minimum review score required for pass. Default 90."
+    },
+    "control_files": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Stable machine-readable control files. Nodes must read and write these files instead of using README.md as contract."
+    },
+    "open_blockers": {
+      "type": "array",
+      "description": "Current unresolved reviewer blockers. Only reviewer/master closure can clear them.",
+      "items": {
+        "$ref": "#/$defs/blocker"
+      }
+    },
+    "blocker_history": {
+      "type": "array",
+      "description": "Append-only history of blocker appearances maintained by the graph gate.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "same_blocker_counts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "description": "Stable blocker id -> repeated appearance count. Maintained by the graph gate."
+    },
+    "author_constraints": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Machine gate constraints for author nodes. Author must treat these as hard constraints, not suggestions."
+    },
+    "test_plan_author_review_failures": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of failed B->A test-plan review loops. Reaches max_test_plan_review_failures => END."
+    },
+    "test_plan_author_gate_failures": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of A-side patch gate failures before B review. Reaches max_test_plan_review_failures => END."
+    },
+    "test_execution_review_failures": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of failed D->C test-result review loops. Reaches max_test_result_review_failures => END."
+    },
+    "max_test_plan_review_failures": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Hard stop budget for test plan author review/gate failures. Default 5."
+    },
+    "max_test_result_review_failures": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Hard stop budget for test execution review failures. Default 5."
+    },
+    "gate_violations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Latest graph gate violations."
+    },
+    "stop_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Human-readable reason when graph routes to END before success."
+    },
+    "changed_required_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Required files whose content hash changed after the author patch gate."
+    },
+    "project_root": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional target project root."
+    },
+    "requirement_design_doc": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional requirement design document path."
+    },
+    "implementation_plan_doc": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional implementation plan document path."
+    },
+    "test_plan_doc": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional candidate test plan path."
+    },
+    "approved_test_plan_doc": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional approved test plan path."
+    },
+    "executed_test_plan_doc": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional executed test plan path."
+    },
+    "coverage_matrix_doc": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional coverage matrix path."
+    },
+    "execution_report_doc": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional execution report path."
+    },
+    "test_result_review_doc": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional test result review path."
+    },
+    "test_report_doc": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional test report path."
+    },
+    "evidence_dir": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional evidence directory path."
+    },
+    "last_reviewer_node": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Last reviewer node that produced a review decision."
+    }
+  },
+  "$defs": {
+    "blocker": {
+      "type": "object",
+      "required": [
+        "blocker_id",
+        "stable_id",
+        "severity",
+        "finding",
+        "required_files",
+        "status"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "blocker_id": {
+          "type": "string"
+        },
+        "stable_id": {
+          "type": "string"
+        },
+        "source_node": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "requirement_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finding": {
+          "type": "string"
+        },
+        "required_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_change": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "forbidden_substitute": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_atoms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string"
+        }
+      }
     }
   }
 }

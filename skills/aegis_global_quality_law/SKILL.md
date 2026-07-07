@@ -46,7 +46,7 @@ description: Highest-priority local law for all Aegis agents. Use before every A
 4. 为了返回通过结论而降低判断标准。
 5. 用合理假设补齐缺失输入。
 6. 用文本完整性伪装运行完整性。
-7. 用 README、报告、总结替代真实证据。
+7. 用 README、报告、总结、author patch claim 替代真实证据。
 8. 用局部成功掩盖矩阵遗漏。
 9. 把工具限制、环境限制、权限限制包装成任务完成。
 
@@ -98,6 +98,21 @@ LangGraph 图内节点
 
 当前 agent 一旦被调用，必须基于自身职责、实际输入、文件、代码、推理库上下文、运行证据独立判断能否完成。
 
+
+## LangGraph JSON 控制法
+
+适用于 LangGraph 图内节点。
+
+1. 机器入口是 JSON 控制文件，不是 README。
+2. README 只能做人类导航，不能关闭 blocker，不能证明覆盖，不能覆盖 JSON 决策。
+3. `status=true` 只是 agent 自报；graph gate 可以并且必须基于 open blockers、closure、score、diff 覆盖它。
+4. `open_blockers.length > 0` 时，流程有效状态必须为失败。
+5. 任一 P0 blocker 未关闭时，有效质量分为 0。
+6. reviewer blocker 是未闭合合同；author/executor 只能修复或补证，不能重解释、降级、关闭。
+7. 同一测试方案 author 连续 5 次被 reviewer 打回时，必须停止自动流程并要求开发者介入。
+8. JSON 控制文件缺失、非法、互相矛盾，默认 fail closed。
+9. 严格 JSON 响应不允许 Markdown fence、解释性前后缀、自然语言混排。
+
 ## artifact_path 语义边界
 
 `artifact_path` 的含义由当前 skill 或当前 workflow 契约决定。
@@ -109,9 +124,9 @@ LangGraph 图内节点
 1. `artifact_path` 表示当前 LangGraph 共享产物目录。
 2. agent 不创建自己的专属 artifact 根目录。
 3. agent 可以创建功能子目录，例如 `evidence/`、`reports/`、`skipped_tests/`、`quality/`。
-4. 写 `README.md` 前必须清空旧内容。
+4. 如写 `README.md`，写入前必须清空旧内容。
 5. 不得删除其他节点历史产物。
-6. `README.md` 只描述当前节点输出入口、当前结论、失败原因和下游阅读路径。
+6. `README.md` 只描述人类阅读路径；机器入口、当前结论和失败原因必须写入 JSON 控制文件。
 
 如果当前 skill 是图外 Master skill，必须遵守该 skill 对 `artifact_path` 的专门定义；不得把 LangGraph 共享 README 协议强行套用。
 
@@ -147,7 +162,7 @@ LangGraph 图内节点
 9. 把工具限制、环境限制、权限限制伪装成任务完成。
 10. 提前创建当前阶段不需要的 agent、线程、进程、连接或资源。
 11. 把角色清单理解成启动时必须全部创建。
-12. 用 README 或报告掩盖证据缺失。
+12. 用 README、报告或 author 自证 JSON 掩盖证据缺失。
 13. 用格式完整性掩盖流程不完整。
 14. 用局部成功掩盖矩阵遗漏。
 15. 用低价值边角项掩盖关键路径缺失。

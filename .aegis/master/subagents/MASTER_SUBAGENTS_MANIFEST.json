@@ -3,7 +3,7 @@
   "project_root": "C:\\Users\\playm\\Documents\\self-git\\aegis",
   "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication",
   "created_at": "2026-07-06T14:59:29+08:00",
-  "updated_at": "2026-07-06T15:10:52+08:00",
+  "updated_at": "2026-07-06T16:12:32+08:00",
   "created_by": "aegis-master-subagent-provisioner",
   "keep_alive_default": true,
   "close_requires_user_confirmation": true,
@@ -46,8 +46,11 @@
       "created_via": "multi_agent_v1.spawn_agent",
       "created_at": "2026-07-06T14:59:29+08:00",
       "last_verified_at": "2026-07-06T14:59:29+08:00",
-      "status": "alive",
-      "ready_response": "READY TEST_PLAN_AUTHOR Plato"
+      "status": "closed",
+      "ready_response": "READY TEST_PLAN_AUTHOR Plato",
+      "closed_at": "2026-07-06T16:12:32+08:00",
+      "close_reason": "user_requested_close_all_subagents",
+      "closed_by": "aegis-master-subagent-provisioner"
     },
     {
       "role_key": "TEST_PLAN_REVIEWER",
@@ -67,8 +70,11 @@
       "created_via": "multi_agent_v1.spawn_agent",
       "created_at": "2026-07-06T14:59:29+08:00",
       "last_verified_at": "2026-07-06T14:59:29+08:00",
-      "status": "alive",
-      "ready_response": "READY TEST_PLAN_REVIEWER Hume"
+      "status": "closed",
+      "ready_response": "READY TEST_PLAN_REVIEWER Hume",
+      "closed_at": "2026-07-06T16:12:32+08:00",
+      "close_reason": "user_requested_close_all_subagents",
+      "closed_by": "aegis-master-subagent-provisioner"
     },
     {
       "role_key": "TEST_EXECUTOR",
@@ -88,8 +94,11 @@
       "created_via": "multi_agent_v1.spawn_agent",
       "created_at": "2026-07-06T14:59:29+08:00",
       "last_verified_at": "2026-07-06T14:59:29+08:00",
-      "status": "alive",
-      "ready_response": "READY TEST_EXECUTOR Russell"
+      "status": "closed",
+      "ready_response": "READY TEST_EXECUTOR Russell",
+      "closed_at": "2026-07-06T16:12:32+08:00",
+      "close_reason": "user_requested_close_all_subagents",
+      "closed_by": "aegis-master-subagent-provisioner"
     },
     {
       "role_key": "TEST_RESULT_REVIEWER",
@@ -109,8 +118,11 @@
       "created_via": "multi_agent_v1.spawn_agent",
       "created_at": "2026-07-06T14:59:29+08:00",
       "last_verified_at": "2026-07-06T14:59:29+08:00",
-      "status": "alive",
-      "ready_response": "READY TEST_RESULT_REVIEWER Wegener"
+      "status": "closed",
+      "ready_response": "READY TEST_RESULT_REVIEWER Wegener",
+      "closed_at": "2026-07-06T16:12:32+08:00",
+      "close_reason": "user_requested_close_all_subagents",
+      "closed_by": "aegis-master-subagent-provisioner"
     },
     {
       "role_key": "TEST_REPORT_WRITER",
@@ -130,8 +142,11 @@
       "created_via": "multi_agent_v1.spawn_agent",
       "created_at": "2026-07-06T14:59:29+08:00",
       "last_verified_at": "2026-07-06T14:59:29+08:00",
-      "status": "alive",
-      "ready_response": "READY TEST_REPORT_WRITER Parfit"
+      "status": "closed",
+      "ready_response": "READY TEST_REPORT_WRITER Parfit",
+      "closed_at": "2026-07-06T16:12:32+08:00",
+      "close_reason": "user_requested_close_all_subagents",
+      "closed_by": "aegis-master-subagent-provisioner"
     },
     {
       "role_key": "FINAL_REVIEWER",
@@ -151,8 +166,11 @@
       "created_via": "multi_agent_v1.spawn_agent",
       "created_at": "2026-07-06T14:59:29+08:00",
       "last_verified_at": "2026-07-06T14:59:29+08:00",
-      "status": "alive",
-      "ready_response": "READY FINAL_REVIEWER Kepler"
+      "status": "closed",
+      "ready_response": "READY FINAL_REVIEWER Kepler",
+      "closed_at": "2026-07-06T16:12:32+08:00",
+      "close_reason": "user_requested_close_all_subagents",
+      "closed_by": "aegis-master-subagent-provisioner"
     }
   ],
   "creation_failures": []

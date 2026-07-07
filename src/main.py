@@ -11,6 +11,27 @@ from typing import Any, TypeAlias
 
 from langgraph.graph import END, START, StateGraph
 
+from langgraph_contract import (
+    CONTROL_FILES,
+    NODE_A,
+    NODE_B,
+    NODE_C,
+    NODE_D,
+    NODE_E,
+    NODE_F,
+    ROUTE_END,
+    before_author_hashes,
+    fail_state,
+    gate_author,
+    gate_executor,
+    gate_final_reviewer,
+    gate_report_writer,
+    gate_reviewer,
+    prepare_node_input,
+    strict_json_object,
+    validate_agent_output,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AGENT_REGISTRY_PATH = PROJECT_ROOT / "config" / "agent_registry.json"
@@ -21,25 +42,16 @@ NODE_TIMEOUT_SECONDS = int(os.environ.get("AEGIS_NODE_TIMEOUT_SECONDS", "1800"))
 
 State: TypeAlias = dict[str, Any]
 TEST_PLAN_AUTHOR_ROLE = "TEST_PLAN_AUTHOR"
-TEST_PLAN_AUTHOR_NODE = "A"
 TEST_PLAN_REVIEWER_ROLE = "TEST_PLAN_REVIEWER"
-TEST_PLAN_REVIEWER_NODE = "B"
 TEST_EXECUTOR_ROLE = "TEST_EXECUTOR"
-TEST_EXECUTOR_NODE = "C"
 TEST_RESULT_REVIEWER_ROLE = "TEST_RESULT_REVIEWER"
-TEST_RESULT_REVIEWER_NODE = "D"
 TEST_REPORT_WRITER_ROLE = "TEST_REPORT_WRITER"
-TEST_REPORT_WRITER_NODE = "E"
 FINAL_REVIEWER_ROLE = "FINAL_REVIEWER"
-FINAL_REVIEWER_NODE = "F"
 
 
 def load_agent_thread_map(config_path: Path = AGENT_REGISTRY_PATH) -> dict[str, str]:
     registry = json.loads(config_path.read_text(encoding="utf-8"))
-    return {
-        agent["role_key"]: agent["thread_id"]
-        for agent in registry["agents"]
-    }
+    return {agent["role_key"]: agent["thread_id"] for agent in registry["agents"]}
 
 
 def load_agent_config(role_key: str, config_path: Path = AGENT_REGISTRY_PATH) -> dict[str, Any]:
@@ -75,7 +87,35 @@ def initialize_state(
         state["reasoning_ledger_context_pack"] = str(
             Path(state["artifact_path"]) / "REASONING_LEDGER_CONTEXT_PACK.json"
         )
-    state["current_node"] = current_node
+    state.update(
+        {
+            "current_node": current_node,
+            "status": values.get("status", True),
+            "gate_status": values.get("gate_status", True),
+            "gate_route": values.get("gate_route"),
+            "control_files": values.get("control_files", CONTROL_FILES),
+            "open_blockers": values.get("open_blockers", []),
+            "blocker_history": values.get("blocker_history", []),
+            "same_blocker_counts": values.get("same_blocker_counts", {}),
+            "test_plan_author_review_failures": values.get("test_plan_author_review_failures", 0),
+            "test_plan_author_gate_failures": values.get("test_plan_author_gate_failures", 0),
+            "test_execution_review_failures": values.get("test_execution_review_failures", 0),
+            "max_test_plan_review_failures": values.get(
+                "max_test_plan_review_failures",
+                int(os.environ.get("AEGIS_MAX_TEST_PLAN_REVIEW_FAILURES", "5")),
+            ),
+            "max_test_result_review_failures": values.get(
+                "max_test_result_review_failures",
+                int(os.environ.get("AEGIS_MAX_TEST_RESULT_REVIEW_FAILURES", "5")),
+            ),
+            "review_pass_score": values.get(
+                "review_pass_score",
+                int(os.environ.get("AEGIS_REVIEW_PASS_SCORE", "90")),
+            ),
+            "stop_reason": values.get("stop_reason"),
+            "gate_violations": values.get("gate_violations", []),
+        }
+    )
     return state
 
 
@@ -133,11 +173,6 @@ def send_prompt_to_thread(thread_id: str, prompt: str) -> str:
             output_path.unlink(missing_ok=True)
 
 
-def require_node_success(node_name: str, node_output: State) -> None:
-    if node_output.get("status") is False:
-        raise RuntimeError(f"{node_name} returned status=false")
-
-
 def log_node_event(node_name: str, event: str) -> None:
     print(f"[aegis] node={node_name} event={event}", file=sys.stderr, flush=True)
 
@@ -147,151 +182,147 @@ def build_node_prompt(node_input: State) -> str:
     payload = {
         field_name: node_input.get(field_name)
         for field_name in schema.get("properties", {})
+        if field_name in node_input
     }
     return json.dumps(payload, ensure_ascii=False)
 
 
-def test_plan_author_node(state: State) -> State:
-    log_node_event(TEST_PLAN_AUTHOR_NODE, "start")
+def invoke_codex_node(state: State, *, node_name: str, role_key: str) -> tuple[State, State]:
+    log_node_event(node_name, "start")
     agent_thread_map = load_agent_thread_map()
-    node_input = dict(state)
-    node_input["status"] = True
-    node_input["current_node"] = TEST_PLAN_AUTHOR_NODE
+    node_input = prepare_node_input(state, node_name=node_name)
     prompt = build_node_prompt(node_input)
-    response = send_prompt_to_thread(agent_thread_map[TEST_PLAN_AUTHOR_ROLE], prompt)
-    node_output = json.loads(response)
-    require_node_success(TEST_PLAN_AUTHOR_NODE, node_output)
-    log_node_event(TEST_PLAN_AUTHOR_NODE, "done")
-    return {
-        **node_input,
-        **node_output,
-        "current_node": TEST_PLAN_AUTHOR_NODE,
-    }
+    response = send_prompt_to_thread(agent_thread_map[role_key], prompt)
+    node_output = strict_json_object(response, source=node_name)
+    validate_agent_output(node_input, node_output, node_name=node_name)
+    log_node_event(node_name, "done")
+    return node_input, node_output
+
+
+def fail_closed_node(state: State, *, node_name: str, exc: Exception) -> State:
+    node_input = prepare_node_input(state, node_name=node_name)
+    return fail_state(node_input, node_name, reason=str(exc), route=ROUTE_END)
+
+
+def test_plan_author_node(state: State) -> State:
+    try:
+        node_input = prepare_node_input(state, node_name=NODE_A)
+        before_hashes = before_author_hashes(node_input)
+        _node_input, node_output = invoke_codex_node(node_input, node_name=NODE_A, role_key=TEST_PLAN_AUTHOR_ROLE)
+        return gate_author(node_input, node_output, before_hashes=before_hashes)
+    except Exception as exc:
+        return fail_closed_node(state, node_name=NODE_A, exc=exc)
 
 
 def test_plan_reviewer_node(state: State) -> State:
-    log_node_event(TEST_PLAN_REVIEWER_NODE, "start")
-    agent_thread_map = load_agent_thread_map()
-    node_input = dict(state)
-    node_input["status"] = True
-    node_input["current_node"] = TEST_PLAN_REVIEWER_NODE
-    prompt = build_node_prompt(node_input)
-    response = send_prompt_to_thread(agent_thread_map[TEST_PLAN_REVIEWER_ROLE], prompt)
-    node_output = json.loads(response)
-    log_node_event(TEST_PLAN_REVIEWER_NODE, "done")
-    return {
-        **node_input,
-        **node_output,
-        "current_node": TEST_PLAN_REVIEWER_NODE,
-    }
+    try:
+        node_input, node_output = invoke_codex_node(state, node_name=NODE_B, role_key=TEST_PLAN_REVIEWER_ROLE)
+        return gate_reviewer(node_input, node_output, node_name=NODE_B)
+    except Exception as exc:
+        return fail_closed_node(state, node_name=NODE_B, exc=exc)
 
 
 def test_executor_node(state: State) -> State:
-    log_node_event(TEST_EXECUTOR_NODE, "start")
-    agent_thread_map = load_agent_thread_map()
-    node_input = dict(state)
-    node_input["status"] = True
-    node_input["current_node"] = TEST_EXECUTOR_NODE
-    prompt = build_node_prompt(node_input)
-    response = send_prompt_to_thread(agent_thread_map[TEST_EXECUTOR_ROLE], prompt)
-    node_output = json.loads(response)
-    require_node_success(TEST_EXECUTOR_NODE, node_output)
-    log_node_event(TEST_EXECUTOR_NODE, "done")
-    return {
-        **node_input,
-        **node_output,
-        "current_node": TEST_EXECUTOR_NODE,
-    }
+    try:
+        node_input, node_output = invoke_codex_node(state, node_name=NODE_C, role_key=TEST_EXECUTOR_ROLE)
+        return gate_executor(node_input, node_output)
+    except Exception as exc:
+        return fail_closed_node(state, node_name=NODE_C, exc=exc)
 
 
 def test_result_reviewer_node(state: State) -> State:
-    log_node_event(TEST_RESULT_REVIEWER_NODE, "start")
-    agent_thread_map = load_agent_thread_map()
-    node_input = dict(state)
-    node_input["status"] = True
-    node_input["current_node"] = TEST_RESULT_REVIEWER_NODE
-    prompt = build_node_prompt(node_input)
-    response = send_prompt_to_thread(agent_thread_map[TEST_RESULT_REVIEWER_ROLE], prompt)
-    node_output = json.loads(response)
-    log_node_event(TEST_RESULT_REVIEWER_NODE, "done")
-    return {
-        **node_input,
-        **node_output,
-        "current_node": TEST_RESULT_REVIEWER_NODE,
-    }
+    try:
+        node_input, node_output = invoke_codex_node(state, node_name=NODE_D, role_key=TEST_RESULT_REVIEWER_ROLE)
+        return gate_reviewer(node_input, node_output, node_name=NODE_D)
+    except Exception as exc:
+        return fail_closed_node(state, node_name=NODE_D, exc=exc)
 
 
 def test_report_writer_node(state: State) -> State:
-    log_node_event(TEST_REPORT_WRITER_NODE, "start")
-    agent_thread_map = load_agent_thread_map()
-    node_input = dict(state)
-    node_input["status"] = True
-    node_input["current_node"] = TEST_REPORT_WRITER_NODE
-    prompt = build_node_prompt(node_input)
-    response = send_prompt_to_thread(agent_thread_map[TEST_REPORT_WRITER_ROLE], prompt)
-    node_output = json.loads(response)
-    log_node_event(TEST_REPORT_WRITER_NODE, "done")
-    return {
-        **node_input,
-        **node_output,
-        "current_node": TEST_REPORT_WRITER_NODE,
-    }
+    try:
+        node_input, node_output = invoke_codex_node(state, node_name=NODE_E, role_key=TEST_REPORT_WRITER_ROLE)
+        return gate_report_writer(node_input, node_output)
+    except Exception as exc:
+        return fail_closed_node(state, node_name=NODE_E, exc=exc)
 
 
 def final_reviewer_node(state: State) -> State:
-    log_node_event(FINAL_REVIEWER_NODE, "start")
-    agent_thread_map = load_agent_thread_map()
-    node_input = dict(state)
-    node_input["status"] = True
-    node_input["current_node"] = FINAL_REVIEWER_NODE
-    prompt = build_node_prompt(node_input)
-    response = send_prompt_to_thread(agent_thread_map[FINAL_REVIEWER_ROLE], prompt)
-    node_output = json.loads(response)
-    log_node_event(FINAL_REVIEWER_NODE, "done")
-    return {
-        **node_input,
-        **node_output,
-        "current_node": FINAL_REVIEWER_NODE,
-    }
+    try:
+        node_input, node_output = invoke_codex_node(state, node_name=NODE_F, role_key=FINAL_REVIEWER_ROLE)
+        return gate_final_reviewer(node_input, node_output)
+    except Exception as exc:
+        return fail_closed_node(state, node_name=NODE_F, exc=exc)
 
 
-def route_by_status(state: State) -> bool:
-    return bool(state["status"])
+def route_by_gate(state: State) -> str:
+    route = state.get("gate_route")
+    if route in {NODE_A, NODE_B, NODE_C, NODE_D, NODE_E, NODE_F, ROUTE_END}:
+        return str(route)
+    return ROUTE_END
 
 
 def create_graph():
     graph = StateGraph(State)
-    
-    graph.add_node(TEST_PLAN_AUTHOR_NODE, test_plan_author_node)
-    graph.add_node(TEST_PLAN_REVIEWER_NODE, test_plan_reviewer_node)
-    graph.add_node(TEST_EXECUTOR_NODE, test_executor_node)
-    graph.add_node(TEST_RESULT_REVIEWER_NODE, test_result_reviewer_node)
-    graph.add_node(TEST_REPORT_WRITER_NODE, test_report_writer_node)
-    graph.add_node(FINAL_REVIEWER_NODE, final_reviewer_node)
 
-    graph.add_edge(START, TEST_PLAN_AUTHOR_NODE)
-    graph.add_edge(TEST_PLAN_AUTHOR_NODE, TEST_PLAN_REVIEWER_NODE)
-    graph.add_edge(TEST_EXECUTOR_NODE, TEST_RESULT_REVIEWER_NODE)
-    graph.add_edge(TEST_REPORT_WRITER_NODE, FINAL_REVIEWER_NODE)
-    graph.add_edge(FINAL_REVIEWER_NODE, END)
+    graph.add_node(NODE_A, test_plan_author_node)
+    graph.add_node(NODE_B, test_plan_reviewer_node)
+    graph.add_node(NODE_C, test_executor_node)
+    graph.add_node(NODE_D, test_result_reviewer_node)
+    graph.add_node(NODE_E, test_report_writer_node)
+    graph.add_node(NODE_F, final_reviewer_node)
+
+    graph.add_edge(START, NODE_A)
     graph.add_conditional_edges(
-        TEST_PLAN_REVIEWER_NODE,
-        route_by_status,
+        NODE_A,
+        route_by_gate,
         {
-            True: TEST_EXECUTOR_NODE,
-            False: TEST_PLAN_AUTHOR_NODE,
+            NODE_A: NODE_A,
+            NODE_B: NODE_B,
+            ROUTE_END: END,
         },
     )
     graph.add_conditional_edges(
-        TEST_RESULT_REVIEWER_NODE,
-        route_by_status,
+        NODE_B,
+        route_by_gate,
         {
-            True: TEST_REPORT_WRITER_NODE,
-            False: TEST_EXECUTOR_NODE,
+            NODE_A: NODE_A,
+            NODE_C: NODE_C,
+            ROUTE_END: END,
+        },
+    )
+    graph.add_conditional_edges(
+        NODE_C,
+        route_by_gate,
+        {
+            NODE_D: NODE_D,
+            ROUTE_END: END,
+        },
+    )
+    graph.add_conditional_edges(
+        NODE_D,
+        route_by_gate,
+        {
+            NODE_C: NODE_C,
+            NODE_E: NODE_E,
+            ROUTE_END: END,
+        },
+    )
+    graph.add_conditional_edges(
+        NODE_E,
+        route_by_gate,
+        {
+            NODE_F: NODE_F,
+            ROUTE_END: END,
+        },
+    )
+    graph.add_conditional_edges(
+        NODE_F,
+        route_by_gate,
+        {
+            ROUTE_END: END,
         },
     )
     return graph.compile()
-
 
 
 def main() -> dict[str, Any]:
@@ -300,5 +331,18 @@ def main() -> dict[str, Any]:
     return graph.invoke(state)
 
 
-if __name__ == "__main__":
+def cli_main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "ledger":
+        from reasoning_ledger.cli import main as ledger_main
+
+        return ledger_main(args[1:])
+    if args:
+        print(json.dumps({"error": f"unsupported command: {args[0]}"}, ensure_ascii=False))
+        return 2
     print(json.dumps(main(), ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli_main())

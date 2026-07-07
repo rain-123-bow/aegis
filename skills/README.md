@@ -22,6 +22,30 @@ aegis_global_quality_law/SKILL.md
 
 速度只在质量门槛满足后才有价值。
 
+
+## LangGraph JSON-first 控制面
+
+LangGraph 图内节点必须使用 JSON 控制文件作为机器入口。
+
+`README.md` 只能做人类导航；不能作为 blocker closure、覆盖证明、通过依据、路由依据。
+
+关键控制文件：
+
+```text
+TEST_PLAN_REVIEW_RESULT.json
+TEST_PLAN_REVIEW_BLOCKERS.json
+TEST_PLAN_BLOCKER_CLOSURE.json
+AUTHOR_PATCH_CLAIM.json
+TEST_EXECUTION_CLAIM.json
+TEST_RESULT_REVIEW_RESULT.json
+TEST_RESULT_REVIEW_BLOCKERS.json
+TEST_RESULT_BLOCKER_CLOSURE.json
+GRAPH_GATE_RESULT.json
+GRAPH_STATE_SNAPSHOT.json
+```
+
+图内 agent 最终回复必须是纯 JSON object；不得使用 Markdown 代码块；不得附加解释文本。
+
 ## 通用运行约束
 
 - 不得用“看起来完成”替代真实完成。
