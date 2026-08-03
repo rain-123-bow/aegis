@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import argparse
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,14 @@ TEST_REPORT_WRITER_ROLE = "TEST_REPORT_WRITER"
 TEST_REPORT_WRITER_NODE = "E"
 FINAL_REVIEWER_ROLE = "FINAL_REVIEWER"
 FINAL_REVIEWER_NODE = "F"
+GRAPH_NODE_CHOICES = (
+    TEST_PLAN_AUTHOR_NODE,
+    TEST_PLAN_REVIEWER_NODE,
+    TEST_EXECUTOR_NODE,
+    TEST_RESULT_REVIEWER_NODE,
+    TEST_REPORT_WRITER_NODE,
+    FINAL_REVIEWER_NODE,
+)
 
 
 def load_agent_thread_map(config_path: Path = AGENT_REGISTRY_PATH) -> dict[str, str]:
@@ -256,7 +265,10 @@ def route_by_status(state: State) -> bool:
     return bool(state["status"])
 
 
-def create_graph():
+def create_graph(start_node: str = TEST_PLAN_AUTHOR_NODE):
+    if start_node not in GRAPH_NODE_CHOICES:
+        raise ValueError(f"unsupported start node: {start_node}")
+
     graph = StateGraph(State)
     
     graph.add_node(TEST_PLAN_AUTHOR_NODE, test_plan_author_node)
@@ -266,7 +278,7 @@ def create_graph():
     graph.add_node(TEST_REPORT_WRITER_NODE, test_report_writer_node)
     graph.add_node(FINAL_REVIEWER_NODE, final_reviewer_node)
 
-    graph.add_edge(START, TEST_PLAN_AUTHOR_NODE)
+    graph.add_edge(START, start_node)
     graph.add_edge(TEST_PLAN_AUTHOR_NODE, TEST_PLAN_REVIEWER_NODE)
     graph.add_edge(TEST_EXECUTOR_NODE, TEST_RESULT_REVIEWER_NODE)
     graph.add_edge(TEST_REPORT_WRITER_NODE, FINAL_REVIEWER_NODE)
@@ -290,10 +302,35 @@ def create_graph():
     return graph.compile()
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the Aegis A-F test workflow.")
+    parser.add_argument(
+        "--start-node",
+        choices=GRAPH_NODE_CHOICES,
+        default=TEST_PLAN_AUTHOR_NODE,
+        help="Graph node to start from. Use C to rerun tests and continue with D/E/F.",
+    )
+    parser.add_argument(
+        "--artifact-path",
+        help="Override artifact folder path passed to graph nodes.",
+    )
+    parser.add_argument(
+        "--reasoning-ledger-context-pack",
+        help="Override reasoning ledger context pack path passed to graph nodes.",
+    )
+    return parser.parse_args(argv)
 
-def main() -> dict[str, Any]:
-    state = initialize_state(initial_values={"status": True})
-    graph = create_graph()
+
+def main(argv: list[str] | None = None) -> dict[str, Any]:
+    args = parse_args(argv)
+    initial_values: dict[str, Any] = {"status": True}
+    if args.artifact_path:
+        initial_values["artifact_path"] = args.artifact_path
+    if args.reasoning_ledger_context_pack:
+        initial_values["reasoning_ledger_context_pack"] = args.reasoning_ledger_context_pack
+
+    state = initialize_state(initial_values=initial_values)
+    graph = create_graph(start_node=args.start_node)
     return graph.invoke(state)
 
 
