@@ -1,0 +1,11 @@
+{
+  "component": "AegisSealCore",
+  "source_repository": "git@github.com:rain-123-bow/AegisSealCore.git",
+  "source_commit": "90281bce2fe48f2c30ab9158e28f43f96aaded8c",
+  "build_configuration": "Release",
+  "target": "Windows 11 x64",
+  "binary_path": "windows-x64/aegis-seal.exe",
+  "binary_size_bytes": 322560,
+  "binary_sha256": "256b71015465a7a57b648753834583e095383d77d88d2140e5e970a174375023",
+  "interface_version": "ASC-1"
+}
