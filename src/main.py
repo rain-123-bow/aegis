@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
-import argparse
 import shutil
 import subprocess
 import sys
@@ -11,6 +11,17 @@ from pathlib import Path
 from typing import Any, TypeAlias
 
 from langgraph.graph import END, START, StateGraph
+
+from aegis_runtime import (
+    RuntimeCoordinator,
+    TraceRelayClient,
+    active_runtime_coordinator,
+    load_run_state,
+    new_run_id,
+    open_graph_checkpointer,
+    parse_loopback_proxy_port,
+    resolve_tracerelay_command,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -103,23 +114,30 @@ def send_prompt_to_thread(thread_id: str, prompt: str) -> str:
         ) as output_file:
             output_path = Path(output_file.name)
 
+        command = [
+            resolve_codex_command(),
+            "exec",
+            "resume",
+            "--output-last-message",
+            str(output_path),
+            thread_id,
+            prompt,
+        ]
         try:
-            completed = subprocess.run(
-                [
-                    resolve_codex_command(),
-                    "exec",
-                    "resume",
-                    "--output-last-message",
-                    str(output_path),
-                    thread_id,
-                    prompt,
-                ],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                check=False,
-                timeout=NODE_TIMEOUT_SECONDS,
-            )
+            coordinator = active_runtime_coordinator()
+            if coordinator is None:
+                completed = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    check=False,
+                    timeout=NODE_TIMEOUT_SECONDS,
+                )
+            else:
+                completed = coordinator.run_codex_process(
+                    command, timeout_seconds=NODE_TIMEOUT_SECONDS
+                )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
                 "codex exec resume timed out "
@@ -265,18 +283,50 @@ def route_by_status(state: State) -> bool:
     return bool(state["status"])
 
 
-def create_graph(start_node: str = TEST_PLAN_AUTHOR_NODE):
+def create_graph(
+    start_node: str = TEST_PLAN_AUTHOR_NODE,
+    *,
+    checkpointer: Any | None = None,
+    coordinator: RuntimeCoordinator | None = None,
+):
     if start_node not in GRAPH_NODE_CHOICES:
         raise ValueError(f"unsupported start node: {start_node}")
 
     graph = StateGraph(State)
     
-    graph.add_node(TEST_PLAN_AUTHOR_NODE, test_plan_author_node)
-    graph.add_node(TEST_PLAN_REVIEWER_NODE, test_plan_reviewer_node)
-    graph.add_node(TEST_EXECUTOR_NODE, test_executor_node)
-    graph.add_node(TEST_RESULT_REVIEWER_NODE, test_result_reviewer_node)
-    graph.add_node(TEST_REPORT_WRITER_NODE, test_report_writer_node)
-    graph.add_node(FINAL_REVIEWER_NODE, final_reviewer_node)
+    def managed_node(node_name: str, operation: Any) -> Any:
+        if coordinator is None:
+            return operation
+
+        def run(state: State) -> State:
+            return coordinator.execute_node(node_name, operation, state)
+
+        return run
+
+    graph.add_node(
+        TEST_PLAN_AUTHOR_NODE,
+        managed_node(TEST_PLAN_AUTHOR_NODE, test_plan_author_node),
+    )
+    graph.add_node(
+        TEST_PLAN_REVIEWER_NODE,
+        managed_node(TEST_PLAN_REVIEWER_NODE, test_plan_reviewer_node),
+    )
+    graph.add_node(
+        TEST_EXECUTOR_NODE,
+        managed_node(TEST_EXECUTOR_NODE, test_executor_node),
+    )
+    graph.add_node(
+        TEST_RESULT_REVIEWER_NODE,
+        managed_node(TEST_RESULT_REVIEWER_NODE, test_result_reviewer_node),
+    )
+    graph.add_node(
+        TEST_REPORT_WRITER_NODE,
+        managed_node(TEST_REPORT_WRITER_NODE, test_report_writer_node),
+    )
+    graph.add_node(
+        FINAL_REVIEWER_NODE,
+        managed_node(FINAL_REVIEWER_NODE, final_reviewer_node),
+    )
 
     graph.add_edge(START, start_node)
     graph.add_edge(TEST_PLAN_AUTHOR_NODE, TEST_PLAN_REVIEWER_NODE)
@@ -299,7 +349,7 @@ def create_graph(start_node: str = TEST_PLAN_AUTHOR_NODE):
             False: TEST_EXECUTOR_NODE,
         },
     )
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -307,8 +357,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--start-node",
         choices=GRAPH_NODE_CHOICES,
-        default=TEST_PLAN_AUTHOR_NODE,
+        default=None,
         help="Graph node to start from. Use C to rerun tests and continue with D/E/F.",
+    )
+    parser.add_argument(
+        "--project-root",
+        default=str(Path.cwd()),
+        help="Project whose src/include files and checkpoints are managed.",
     )
     parser.add_argument(
         "--artifact-path",
@@ -318,7 +373,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--reasoning-ledger-context-pack",
         help="Override reasoning ledger context pack path passed to graph nodes.",
     )
-    return parser.parse_args(argv)
+    run_group = parser.add_mutually_exclusive_group()
+    run_group.add_argument(
+        "--run-id",
+        help="Optional caller-provided ID for a new run; a unique ID is generated otherwise.",
+    )
+    run_group.add_argument(
+        "--resume-run-id",
+        help="Resume the existing LangGraph checkpoint for this run ID.",
+    )
+    parser.add_argument(
+        "--tracerelay-command",
+        help="Absolute path to the installed tracerelay.exe.",
+    )
+    parser.add_argument(
+        "--tracerelay-upstream-port",
+        type=int,
+        help="Loopback HTTP proxy port used as TraceRelay's upstream.",
+    )
+    arguments = parser.parse_args(argv)
+    if arguments.resume_run_id and arguments.start_node is not None:
+        parser.error("--start-node cannot be used with --resume-run-id")
+    return arguments
 
 
 def main(argv: list[str] | None = None) -> dict[str, Any]:
@@ -330,8 +406,78 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
         initial_values["reasoning_ledger_context_pack"] = args.reasoning_ledger_context_pack
 
     state = initialize_state(initial_values=initial_values)
-    graph = create_graph(start_node=args.start_node)
-    return graph.invoke(state)
+    artifact_value = state.get("artifact_path")
+    if not isinstance(artifact_value, str) or not artifact_value:
+        raise RuntimeError("artifact_path is required for durable run state")
+    artifact_path = Path(artifact_value).resolve()
+    project_root = Path(args.project_root).resolve()
+    if not project_root.is_dir():
+        raise RuntimeError(f"project root is not a directory: {project_root}")
+
+    prior_state: dict[str, object] | None = None
+    if args.resume_run_id:
+        run_id = args.resume_run_id
+        prior_state = load_run_state(artifact_path, run_id)
+        if prior_state.get("status") == "completed":
+            raise RuntimeError(f"Aegis run is already completed: {run_id}")
+        stored_root = prior_state.get("project_root")
+        if not isinstance(stored_root, str) or Path(stored_root).resolve() != project_root:
+            raise RuntimeError("resume project root does not match the saved run")
+        stored_start_node = prior_state.get("start_node")
+        if stored_start_node not in GRAPH_NODE_CHOICES:
+            raise RuntimeError("saved run contains an invalid start node")
+        start_node = str(stored_start_node)
+        graph_input: State | None = None
+    else:
+        run_id = args.run_id or new_run_id()
+        start_node = args.start_node or TEST_PLAN_AUTHOR_NODE
+        graph_input = state
+
+    upstream_port = args.tracerelay_upstream_port
+    if upstream_port is None:
+        proxy_url = (
+            os.environ.get("HTTPS_PROXY")
+            or os.environ.get("https_proxy")
+            or os.environ.get("HTTP_PROXY")
+            or os.environ.get("http_proxy")
+        )
+        if not proxy_url:
+            raise RuntimeError(
+                "TraceRelay requires --tracerelay-upstream-port or a loopback HTTP proxy"
+            )
+        upstream_port = parse_loopback_proxy_port(proxy_url)
+
+    relay_command = resolve_tracerelay_command(args.tracerelay_command)
+    relay_client = TraceRelayClient(command=relay_command)
+    coordinator = RuntimeCoordinator(
+        project_root=project_root,
+        artifact_path=artifact_path,
+        run_id=run_id,
+        upstream_port=upstream_port,
+        relay_client=relay_client,
+        start_node=start_node,
+        prior_state=prior_state,
+    )
+    coordinator.preflight()
+
+    config = {"configurable": {"thread_id": run_id}}
+    try:
+        with open_graph_checkpointer(project_root) as checkpointer:
+            graph = create_graph(
+                start_node=start_node,
+                checkpointer=checkpointer,
+                coordinator=coordinator,
+            )
+            result = graph.invoke(
+                graph_input,
+                config=config,
+                durability="sync",
+            )
+    except BaseException as error:
+        coordinator.fail(error)
+        raise
+    coordinator.complete(result)
+    return result
 
 
 if __name__ == "__main__":
