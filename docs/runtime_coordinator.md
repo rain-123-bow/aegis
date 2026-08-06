@@ -105,7 +105,9 @@ A writes `TEST_PLAN.md`. The coordinator freezes its SHA-256 together with the
 verified project seal and reasoning-context SHA-256 before B starts. B reviews
 only that hash and writes the complete result to the separate
 `TEST_PLAN_REVIEW.md`. The structured response carries the reviewed hash,
-score, error count, warning count, and verdict.
+score, error count, warning count, and verdict. The coordinator requires the
+reviewed hash to equal the frozen plan hash during live review and every
+restore. The same binding is retained in `PLANNING_HANDOFF.json`.
 
 The coordinator ignores the reviewer's routing `status`. It passes the round
 only when score is at least 95, error count is zero, verdict is `PASS`, both
@@ -125,10 +127,11 @@ closed; it never guesses by resubmitting. Raw final responses and SHA-256 values
 are saved under `<run>/responses/`. A known pending turn is read from its saved
 persistent thread on resume, while a completed turn is replayed from its hashed
 local response.
-`planning_stage_status` remains `active` across an interrupted A/B stage and
-changes to `completed` only after its TraceRelay session closes as verified
-`VALID_COMPLETE` evidence. Later C-F resume operations therefore cannot reopen
-the planning App Server.
+`planning_stage_status` remains `active` across an interrupted A/B stage. It
+changes to `completed` only when an approved handoff exists and every planning
+TraceRelay session recorded for the run is `VALID_COMPLETE`. A newer valid
+session cannot hide an older incomplete session. Later C-F resume operations
+therefore cannot reopen the planning App Server.
 
 Round allocation and approval publication are recoverable state transitions.
 An `allocating` round is recorded before its directory is created. An accepted
@@ -180,10 +183,10 @@ $env:TRACERELAY_UPSTREAM_PORT = '7899'
 .\.venv\Scripts\python.exe -B test\test_traced_app_server_real_integration.py
 ```
 
-It creates a sealed synthetic project, two persistent Codex threads, two real
-turns, a real plan file, an independent review report, one TraceRelay session,
-and an external `ACCEPTANCE_REPORT.json`. It does not start the A-F graph or use
-a user project.
+It creates a sealed synthetic project, two persistent Codex threads, real
+author/reviewer turns for every attempted round, a real plan file, an
+independent review report, one TraceRelay session, and an external
+`ACCEPTANCE_REPORT.json`. It does not start the A-F graph or use a user project.
 
 Current Windows acceptance:
 
@@ -192,10 +195,12 @@ verdict: PASS
 codex-cli: 0.145.0
 model: gpt-5.6-sol
 reasoning effort: high
-report: C:\code\aegis_artifacts\as_pilot\eb9307a51278\ACCEPTANCE_REPORT.json
-report SHA-256: D4851057B49A40224A858A64CB5D1279793FEC7C548827302E9680B5FF17B5A5
+report: C:\code\aegis_artifacts\as_pilot\30e2dd36b774\ACCEPTANCE_REPORT.json
+report SHA-256: A3443BD4CC23A83C2BC63C91DAA6B85AAE67DC4AAC33229EA42DF2AD237AAB84
 TraceRelay evidence: VALID_COMPLETE
-planning review: PASS, score 100, error count 0
+planning rounds: 2 (first rejected, second approved)
+planning review: PASS, score 98, error count 0
+approved plan SHA-256 equals reviewed plan SHA-256
 ```
 
 ## Recorded follow-up work

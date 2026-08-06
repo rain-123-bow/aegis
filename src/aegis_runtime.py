@@ -646,17 +646,14 @@ class RuntimeCoordinator:
             raise RuntimeStateError(
                 "completed planning stage has no approved handoff"
             )
-        if not any(
-            entry.get("node") == "planning"
-            and entry.get("verification_status") == "VALID_COMPLETE"
-            for entry in self._evidence_sessions
-        ):
-            raise RuntimeStateError(
-                "completed planning stage has no verified TraceRelay evidence"
-            )
+        self._validate_all_planning_evidence_complete()
         self._validate_closed_planning_rounds()
 
     def _validate_review_decision(self, record: Mapping[str, object]) -> None:
+        if record.get("reviewed_plan_sha256") != record.get("plan_sha256"):
+            raise RuntimeStateError(
+                "reviewed plan SHA-256 does not match frozen plan"
+            )
         accepted = _planning_review_is_accepted(record)
         status = record.get("status")
         if status == "rejected" and accepted:
@@ -683,6 +680,7 @@ class RuntimeCoordinator:
             "context_pack_sha256": record["context_pack_sha256"],
             "approved_plan_path": str(approved_path),
             "approved_plan_sha256": record["plan_sha256"],
+            "reviewed_plan_sha256": record["reviewed_plan_sha256"],
             "review_report_path": record["review_report_path"],
             "review_report_sha256": record["review_report_sha256"],
             "score": record["score"],
@@ -746,17 +744,19 @@ class RuntimeCoordinator:
             raise RuntimeStateError("planning handoff does not match approved round")
 
     def complete_planning_stage(self) -> None:
-        if self._planning_rounds:
-            current = self._planning_rounds[-1]
-            if current["status"] != "approved":
-                raise RuntimeStateError("planning stage has no approved handoff")
-            self._validate_frozen_plan(current)
-            self._validate_planning_context(current)
-            self._validate_planning_project_seal(current)
-            self._validate_review_report(current)
-            self._validate_review_decision(current)
-            self._validate_published_planning_handoff(current)
-            self._validate_closed_planning_rounds()
+        if (
+            not self._planning_rounds
+            or self._planning_rounds[-1]["status"] != "approved"
+        ):
+            raise RuntimeStateError("planning stage has no approved handoff")
+        current = self._planning_rounds[-1]
+        self._validate_frozen_plan(current)
+        self._validate_planning_context(current)
+        self._validate_planning_project_seal(current)
+        self._validate_review_report(current)
+        self._validate_review_decision(current)
+        self._validate_published_planning_handoff(current)
+        self._validate_closed_planning_rounds()
         self._finish_planning_stage(mark_completed=True)
 
     def finish_planning_stage(self) -> None:
@@ -798,10 +798,33 @@ class RuntimeCoordinator:
         self._planning_process = None
         self._planning_ready_roles.clear()
         if primary is None and mark_completed:
-            self._planning_stage_status = "completed"
+            try:
+                self._validate_all_planning_evidence_complete()
+            except BaseException as error:
+                primary = error
+            else:
+                self._planning_stage_status = "completed"
         self._write_state("running")
         if primary is not None:
             raise primary
+
+    def _validate_all_planning_evidence_complete(self) -> None:
+        planning_evidence = [
+            entry
+            for entry in self._evidence_sessions
+            if entry.get("node") == "planning"
+        ]
+        if not planning_evidence:
+            raise RuntimeStateError(
+                "completed planning stage has no verified TraceRelay evidence"
+            )
+        if any(
+            entry.get("verification_status") != "VALID_COMPLETE"
+            for entry in planning_evidence
+        ):
+            raise RuntimeStateError(
+                "planning stage has incomplete TraceRelay evidence"
+            )
 
     def _ensure_planning_app_server(self) -> AppServerClient:
         if self._planning_stage_status == "completed":
@@ -1311,6 +1334,10 @@ def _validate_planning_rounds(rounds: Sequence[Mapping[str, object]]) -> None:
             _require_sha256(
                 record.get("reviewed_plan_sha256"), "reviewed_plan_sha256"
             )
+            if record.get("reviewed_plan_sha256") != record.get("plan_sha256"):
+                raise RuntimeStateError(
+                    "reviewed plan SHA-256 does not match frozen plan"
+                )
             _require_bounded_integer(record.get("score"), "score", 0, 100)
             _require_bounded_integer(
                 record.get("error_count"), "error_count", 0, None

@@ -603,6 +603,63 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         )
         return project
 
+    def approve_planning_round(
+        self,
+        coordinator: aegis_runtime.RuntimeCoordinator,
+        artifact_path: Path,
+    ) -> dict[str, object]:
+        artifact_path.mkdir(parents=True, exist_ok=True)
+        context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
+        context_path.write_text("{}\n", encoding="utf-8")
+        author = coordinator.prepare_planning_author(context_path)
+        Path(str(author["plan_path"])).write_text(
+            "# Approved plan\n", encoding="utf-8"
+        )
+        frozen = coordinator.freeze_planning_plan(str(author["round_id"]))
+        review = coordinator.prepare_planning_review()
+        Path(str(review["review_report_path"])).write_text(
+            "# Approved review\n", encoding="utf-8"
+        )
+        accepted = coordinator.record_planning_review(
+            str(review["round_id"]),
+            {
+                "reviewed_plan_sha256": frozen["plan_sha256"],
+                "score": 95,
+                "error_count": 0,
+                "warning_count": 0,
+                "verdict": "PASS",
+            },
+        )
+        self.assertTrue(accepted)
+        return frozen
+
+    def attach_planning_evidence_process(
+        self,
+        coordinator: aegis_runtime.RuntimeCoordinator,
+        root: Path,
+        *,
+        session_id: str,
+        verification_status: str = "VALID_COMPLETE",
+    ) -> None:
+        registration = aegis_runtime.TraceRelayRegistration(
+            session_id=session_id,
+            proxy_host="127.0.0.1",
+            proxy_port=45000,
+            upstream_port=7899,
+            session_path=root / "sessions" / session_id,
+        )
+        coordinator._planning_app_server = SimpleNamespace(  # type: ignore[assignment]
+            close=lambda: None
+        )
+        coordinator._planning_process = SimpleNamespace(  # type: ignore[assignment]
+            registration=registration,
+            finalize=lambda: {
+                "status": verification_status,
+                "final_hash": "ef" * 32,
+            },
+        )
+        coordinator._planning_stage_status = "active"
+
     def test_node_failure_is_saved_atomically_after_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -772,6 +829,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 start_node="A",
             )
             coordinator.preflight()
+            artifact_path = root / "artifacts"
+            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
+            context_path.write_text("{}\n", encoding="utf-8")
             with (
                 patch.object(aegis_runtime, "AppServerClient", side_effect=make_app_server),
                 patch.object(
@@ -785,18 +845,41 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     return_value="codex-cli 0.145.0",
                 ),
             ):
+                author_control = coordinator.prepare_planning_author(context_path)
                 author_response = coordinator.run_planning_agent(
                     "TEST_PLAN_AUTHOR",
                     "author prompt",
                     output_schema={"type": "object"},
                     developer_instructions="author",
                 )
+                Path(str(author_control["plan_path"])).write_text(
+                    "# Plan\n", encoding="utf-8"
+                )
+                frozen = coordinator.freeze_planning_plan(
+                    str(author_control["round_id"])
+                )
                 interim = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
+                review_control = coordinator.prepare_planning_review()
                 reviewer_response = coordinator.run_planning_agent(
                     "TEST_PLAN_REVIEWER",
                     "reviewer prompt",
                     output_schema={"type": "object"},
                     developer_instructions="reviewer",
+                )
+                Path(str(review_control["review_report_path"])).write_text(
+                    "# Approved\n", encoding="utf-8"
+                )
+                self.assertTrue(
+                    coordinator.record_planning_review(
+                        str(review_control["round_id"]),
+                        {
+                            "reviewed_plan_sha256": frozen["plan_sha256"],
+                            "score": 95,
+                            "error_count": 0,
+                            "warning_count": 0,
+                            "verdict": "PASS",
+                        },
+                    )
                 )
                 coordinator.complete_planning_stage()
 
@@ -818,6 +901,29 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertEqual(final_state["codex_cli_version"], "codex-cli 0.145.0")
             self.assertEqual(final_state["evidence_sessions"][0]["node"], "planning")
             self.assertEqual(final_state["planning_stage_status"], "completed")
+
+    def test_planning_stage_cannot_complete_without_an_approved_round(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="planning-zero-round",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError, "no approved handoff"
+            ):
+                coordinator.complete_planning_stage()
+
+            saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["planning_rounds"], [])
+            self.assertNotEqual(saved["planning_stage_status"], "completed")
 
     def test_planning_handoff_freezes_each_round_and_derives_the_review_result(
         self,
@@ -898,6 +1004,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             )
             self.assertEqual(handoff["round_id"], "round-0002")
             self.assertEqual(handoff["approved_plan_sha256"], second_frozen["plan_sha256"])
+            self.assertEqual(
+                handoff["reviewed_plan_sha256"], second_frozen["plan_sha256"]
+            )
             self.assertEqual(handoff["score"], 95)
             self.assertEqual(handoff["error_count"], 0)
             saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
@@ -1401,6 +1510,151 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 aegis_runtime.RuntimeStateError, "approved test plan"
             ):
                 resumed.prepare_planning_review()
+
+    def test_restored_closed_round_rejects_a_different_reviewed_plan_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifact_path = root / "artifacts"
+            first = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id="planning-reviewed-hash-binding",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            first.preflight()
+            self.approve_planning_round(first, artifact_path)
+            approved_state = aegis_runtime.load_run_state(
+                artifact_path, "planning-reviewed-hash-binding"
+            )
+
+            for status in ("rejected", "publishing", "approved"):
+                with self.subTest(status=status):
+                    tampered = json.loads(json.dumps(approved_state))
+                    round_record = tampered["planning_rounds"][0]
+                    round_record["status"] = status
+                    round_record["reviewed_plan_sha256"] = "cd" * 32
+                    if status == "rejected":
+                        round_record.update(
+                            score=90,
+                            error_count=1,
+                            verdict="FAIL",
+                        )
+                    with self.assertRaisesRegex(
+                        aegis_runtime.RuntimeStateError,
+                        "reviewed plan SHA-256 does not match frozen plan",
+                    ):
+                        aegis_runtime.RuntimeCoordinator(
+                            project_root=project,
+                            artifact_path=artifact_path,
+                            run_id="planning-reviewed-hash-binding",
+                            upstream_port=7899,
+                            relay_client=FakeRelayClient(),
+                            start_node="A",
+                            prior_state=tampered,
+                        )
+
+    def test_incomplete_historical_planning_evidence_blocks_completion(self) -> None:
+        for incomplete_status in ("UNVERIFIED", "INVALID"):
+            with (
+                self.subTest(status=incomplete_status),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                project = self.make_sealed_project(root)
+                artifact_path = root / "artifacts"
+                run_id = f"planning-evidence-{incomplete_status.lower()}"
+                coordinator = aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=artifact_path,
+                    run_id=run_id,
+                    upstream_port=7899,
+                    relay_client=FakeRelayClient(),
+                    start_node="A",
+                )
+                coordinator.preflight()
+                self.approve_planning_round(coordinator, artifact_path)
+                coordinator._evidence_sessions = [
+                    {
+                        "node": "planning",
+                        "session_id": "older-session",
+                        "session_path": str(root / "sessions" / "older-session"),
+                        "verification_status": incomplete_status,
+                        "final_hash": None,
+                    }
+                ]
+                self.attach_planning_evidence_process(
+                    coordinator, root, session_id="new-valid-session"
+                )
+
+                with self.assertRaisesRegex(
+                    aegis_runtime.RuntimeStateError,
+                    "incomplete TraceRelay evidence",
+                ):
+                    coordinator.complete_planning_stage()
+
+                saved = aegis_runtime.load_run_state(artifact_path, run_id)
+                self.assertEqual(saved["planning_stage_status"], "active")
+                self.assertEqual(
+                    [
+                        entry["verification_status"]
+                        for entry in saved["evidence_sessions"]
+                    ],
+                    [incomplete_status, "VALID_COMPLETE"],
+                )
+
+    def test_all_planning_evidence_sessions_allow_completion_and_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifact_path = root / "artifacts"
+            run_id = "planning-all-evidence-valid"
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id=run_id,
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+            self.approve_planning_round(coordinator, artifact_path)
+            coordinator._evidence_sessions = [
+                {
+                    "node": "planning",
+                    "session_id": "older-valid-session",
+                    "session_path": str(root / "sessions" / "older-valid-session"),
+                    "verification_status": "VALID_COMPLETE",
+                    "final_hash": "ab" * 32,
+                }
+            ]
+            self.attach_planning_evidence_process(
+                coordinator, root, session_id="new-valid-session"
+            )
+
+            coordinator.complete_planning_stage()
+
+            saved = aegis_runtime.load_run_state(artifact_path, run_id)
+            self.assertEqual(saved["planning_stage_status"], "completed")
+            self.assertTrue(
+                all(
+                    entry["verification_status"] == "VALID_COMPLETE"
+                    for entry in saved["evidence_sessions"]
+                    if entry["node"] == "planning"
+                )
+            )
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id=run_id,
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+                prior_state=saved,
+            )
+            resumed.preflight()
 
     def test_relay_failure_saves_the_registered_session_location(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

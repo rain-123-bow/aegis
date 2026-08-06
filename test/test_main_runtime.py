@@ -267,6 +267,86 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
         self.assertFalse(result["status"])
         self.assertFalse(closed["value"])
 
+    def test_planning_completion_gate_failure_stops_before_executor(self) -> None:
+        executor_calls: list[dict[str, Any]] = []
+
+        class FakePlanningCoordinator:
+            def prepare_planning_review(self) -> dict[str, object]:
+                return {
+                    "schema": "aegis.planning_review_control.v1",
+                    "round_id": "round-0001",
+                    "job_id": "run:round-0001:review",
+                    "reviewed_plan_sha256": "ab" * 32,
+                    "review_report_path": "C:/artifacts/review.md",
+                    "skip_turn": False,
+                }
+
+            def run_planning_agent(self, *args: object, **kwargs: object) -> str:
+                del args, kwargs
+                return json.dumps(
+                    {
+                        "artifact_path": "C:/artifacts",
+                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                        "status": True,
+                        "reviewed_plan_sha256": "ab" * 32,
+                        "score": 95,
+                        "error_count": 0,
+                        "warning_count": 0,
+                        "verdict": "PASS",
+                    }
+                )
+
+            def record_planning_review(
+                self, round_id: str, node_output: dict[str, object]
+            ) -> bool:
+                del round_id, node_output
+                return True
+
+            def complete_planning_stage(self) -> None:
+                raise aegis_runtime.RuntimeStateError(
+                    "planning stage has no approved handoff"
+                )
+
+        def executor(state: dict[str, Any]) -> dict[str, Any]:
+            executor_calls.append(state)
+            return state
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "artifact_path": {"type": "string"},
+                "reasoning_ledger_context_pack": {"type": "string"},
+                "status": {"type": "boolean"},
+            },
+        }
+        with (
+            patch.object(
+                main,
+                "active_runtime_coordinator",
+                return_value=FakePlanningCoordinator(),
+            ),
+            patch.object(main, "load_node_message_schema", return_value=schema),
+            patch.object(
+                main,
+                "load_agent_config",
+                return_value={"role_description": "reviewer role"},
+            ),
+            patch.object(main, "test_executor_node", side_effect=executor),
+        ):
+            graph = main.create_graph(start_node=main.TEST_PLAN_REVIEWER_NODE)
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError, "no approved handoff"
+            ):
+                graph.invoke(
+                    {
+                        "artifact_path": "C:/artifacts",
+                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                        "status": True,
+                    }
+                )
+
+        self.assertEqual(executor_calls, [])
+
     def test_failed_plan_review_keeps_planning_app_server_open(self) -> None:
         closed = {"value": False}
 
