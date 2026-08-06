@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+.aegis/master/
+.aegis/runtime/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+
+*.bak.*
