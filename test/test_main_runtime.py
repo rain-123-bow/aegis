@@ -77,14 +77,59 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 *,
                 output_schema: dict[str, Any],
                 developer_instructions: str,
+                job_id: str | None = None,
             ) -> str:
-                events.append(("planning", role_key, prompt, developer_instructions))
-                return json.dumps(
-                    {
-                        "artifact_path": "C:/artifacts",
-                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
-                        "status": True,
-                    }
+                events.append(
+                    ("planning", role_key, prompt, developer_instructions, job_id)
+                )
+                payload: dict[str, object] = {
+                    "artifact_path": "C:/artifacts",
+                    "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                    "status": True,
+                }
+                if role_key == main.TEST_PLAN_REVIEWER_ROLE:
+                    payload.update(
+                        reviewed_plan_sha256="ab" * 32,
+                        score=95,
+                        error_count=0,
+                        warning_count=1,
+                        verdict="PASS",
+                    )
+                return json.dumps(payload)
+
+            def prepare_planning_author(self, context_path: str) -> dict[str, object]:
+                events.append(("prepare_author", context_path))
+                return {
+                    "schema": "aegis.planning_author_control.v1",
+                    "round_id": "round-0001",
+                    "job_id": "run:round-0001:author",
+                    "plan_path": "C:/artifacts/round-0001/TEST_PLAN.md",
+                    "skip_turn": False,
+                }
+
+            def freeze_planning_plan(self, round_id: str) -> dict[str, object]:
+                events.append(("freeze", round_id))
+                return {"plan_sha256": "ab" * 32}
+
+            def prepare_planning_review(self) -> dict[str, object]:
+                events.append("prepare_review")
+                return {
+                    "schema": "aegis.planning_review_control.v1",
+                    "round_id": "round-0001",
+                    "job_id": "run:round-0001:review",
+                    "plan_path": "C:/artifacts/round-0001/TEST_PLAN.md",
+                    "reviewed_plan_sha256": "ab" * 32,
+                    "review_report_path": "C:/artifacts/round-0001/TEST_PLAN_REVIEW.md",
+                }
+
+            def record_planning_review(
+                self, round_id: str, node_output: dict[str, object]
+            ) -> bool:
+                events.append(("record_review", round_id, node_output["score"]))
+                return bool(
+                    node_output["score"] >= 95
+                    and node_output["error_count"] == 0
+                    and node_output["verdict"] == "PASS"
                 )
 
             def complete_planning_stage(self) -> None:
@@ -129,18 +174,96 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             reviewed = main.test_plan_reviewer_node(authored)
 
         self.assertTrue(reviewed["status"])
+        self.assertNotIn("score", reviewed)
+        self.assertNotIn("reviewed_plan_sha256", reviewed)
         self.assertEqual(
-            [event[1] for event in events if isinstance(event, tuple)],
+            [
+                event[1]
+                for event in events
+                if isinstance(event, tuple) and event[0] == "planning"
+            ],
             [main.TEST_PLAN_AUTHOR_ROLE, main.TEST_PLAN_REVIEWER_ROLE],
         )
         self.assertEqual(events[-1], "planning_closed")
-        self.assertIn("author role", events[0][3])
-        self.assertIn("Do not use Aegis-specific skills", events[0][3])
+        planning_events = [event for event in events if isinstance(event, tuple) and event[0] == "planning"]
+        self.assertIn("author role", planning_events[0][3])
+        self.assertIn("Do not use Aegis-specific skills", planning_events[0][3])
+        self.assertIn("planning_author_control", planning_events[0][2])
+        self.assertIn("planning_review_control", planning_events[1][2])
+
+    def test_review_model_status_cannot_bypass_coordinator_threshold(self) -> None:
+        closed = {"value": False}
+
+        class FakePlanningCoordinator:
+            def prepare_planning_review(self) -> dict[str, object]:
+                return {
+                    "schema": "aegis.planning_review_control.v1",
+                    "round_id": "round-0001",
+                    "job_id": "run:round-0001:review",
+                    "reviewed_plan_sha256": "ab" * 32,
+                    "review_report_path": "C:/artifacts/review.md",
+                }
+
+            def run_planning_agent(self, *args: object, **kwargs: object) -> str:
+                del args, kwargs
+                return json.dumps(
+                    {
+                        "artifact_path": "C:/artifacts",
+                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                        "status": True,
+                        "reviewed_plan_sha256": "ab" * 32,
+                        "score": 94,
+                        "error_count": 0,
+                        "warning_count": 0,
+                        "verdict": "PASS",
+                    }
+                )
+
+            def record_planning_review(
+                self, round_id: str, node_output: dict[str, object]
+            ) -> bool:
+                del round_id
+                return bool(
+                    node_output["score"] >= 95
+                    and node_output["error_count"] == 0
+                    and node_output["verdict"] == "PASS"
+                )
+
+            def complete_planning_stage(self) -> None:
+                closed["value"] = True
+
+        config = {"thread_id": "old-reviewer", "role_description": "reviewer role"}
+        with (
+            patch.object(
+                main, "active_runtime_coordinator", return_value=FakePlanningCoordinator()
+            ),
+            patch.object(main, "load_agent_config", return_value=config),
+        ):
+            result = main.test_plan_reviewer_node(
+                {
+                    "artifact_path": "C:/artifacts",
+                    "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                    "status": True,
+                }
+            )
+
+        self.assertFalse(result["status"])
+        self.assertFalse(closed["value"])
 
     def test_failed_plan_review_keeps_planning_app_server_open(self) -> None:
         closed = {"value": False}
 
         class FakePlanningCoordinator:
+            def prepare_planning_review(self) -> dict[str, object]:
+                return {
+                    "schema": "aegis.planning_review_control.v1",
+                    "round_id": "round-0001",
+                    "job_id": "run:round-0001:review",
+                    "reviewed_plan_sha256": "ab" * 32,
+                    "review_report_path": "C:/artifacts/review.md",
+                    "skip_turn": False,
+                }
+
             def run_planning_agent(self, role_key: str, prompt: str, **kwargs: Any) -> str:
                 del role_key, prompt, kwargs
                 return json.dumps(
@@ -148,8 +271,19 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                         "artifact_path": "C:/artifacts",
                         "reasoning_ledger_context_pack": "C:/artifacts/context.json",
                         "status": False,
+                        "reviewed_plan_sha256": "ab" * 32,
+                        "score": 90,
+                        "error_count": 1,
+                        "warning_count": 0,
+                        "verdict": "FAIL",
                     }
                 )
+
+            def record_planning_review(
+                self, round_id: str, node_output: dict[str, object]
+            ) -> bool:
+                del round_id, node_output
+                return False
 
             def finish_planning_stage(self) -> None:
                 closed["value"] = True

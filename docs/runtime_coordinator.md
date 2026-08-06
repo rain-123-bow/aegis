@@ -79,7 +79,7 @@ Windows Job Object; a relay fault terminates the full `cmd/node/codex/tool`
 descendant tree. Proxy bypass variables are removed and all HTTP proxy selectors
 are pinned to the registered relay endpoint.
 
-### A/B App Server pilot
+### A/B App Server and frozen planning handoff
 
 When the graph starts at A or B, the coordinator starts one traced
 `codex app-server` before `graph.invoke` and creates two persistent top-level
@@ -94,6 +94,27 @@ different Codex thread IDs. A failed review keeps the same process and role
 threads for the B -> A loop. A passing review stops the App Server and requires
 `VALID_COMPLETE` evidence with bytes in both directions before node C can start.
 C-F retain the existing per-node `codex exec resume` path during this pilot.
+
+Each A attempt receives a unique directory:
+
+```text
+<artifact_path>/.aegis/planning/<run-id>/round-NNNN/
+```
+
+A writes `TEST_PLAN.md`. The coordinator freezes its SHA-256 together with the
+verified project seal and reasoning-context SHA-256 before B starts. B reviews
+only that hash and writes the complete result to the separate
+`TEST_PLAN_REVIEW.md`. The structured response carries the reviewed hash,
+score, error count, warning count, and verdict.
+
+The coordinator ignores the reviewer's routing `status`. It passes the round
+only when score is at least 95, error count is zero, verdict is `PASS`, both
+files still match their hashes, and the project seal and reasoning context are
+unchanged. Passing publishes exact-byte `APPROVED_TEST_PLAN.md` plus the
+machine-readable `PLANNING_HANDOFF.json`. A rejected round is retained and the
+next A turn receives its review-report path. Completed author or reviewer turns
+are replayed from their hashed response files after interruption; they are not
+resubmitted.
 
 The installed Codex CLI path and version are saved when the App Server starts.
 A resumed run rejects a different CLI version. Each `turn/start` receipt is
@@ -144,8 +165,9 @@ $env:TRACERELAY_UPSTREAM_PORT = '7899'
 ```
 
 It creates a sealed synthetic project, two persistent Codex threads, two real
-turns, one TraceRelay session, and an external `ACCEPTANCE_REPORT.json`. It does
-not start the A-F graph or use a user project.
+turns, a real plan file, an independent review report, one TraceRelay session,
+and an external `ACCEPTANCE_REPORT.json`. It does not start the A-F graph or use
+a user project.
 
 Current Windows acceptance:
 
@@ -154,9 +176,10 @@ verdict: PASS
 codex-cli: 0.145.0
 model: gpt-5.6-sol
 reasoning effort: high
-report: C:\code\aegis_artifacts\as_pilot\8528efd6a6b6\ACCEPTANCE_REPORT.json
-report SHA-256: D172F9FC2F2159062006408A862BF6F35ECB6322B594771B29D233EC9AE2C4CA
+report: C:\code\aegis_artifacts\as_pilot\839d7144b5a7\ACCEPTANCE_REPORT.json
+report SHA-256: A28C1F1B44253E30AC63D755C170944888603DAE8B867F83EFF29CA61984A1E4
 TraceRelay evidence: VALID_COMPLETE
+planning review: PASS, score 95, error count 0
 ```
 
 ## Recorded follow-up work

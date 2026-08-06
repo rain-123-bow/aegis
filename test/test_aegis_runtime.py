@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import io
 import sqlite3
@@ -818,6 +819,150 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertEqual(final_state["evidence_sessions"][0]["node"], "planning")
             self.assertEqual(final_state["planning_stage_status"], "completed")
 
+    def test_planning_handoff_freezes_each_round_and_derives_the_review_result(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifact_path = root / "artifacts"
+            artifact_path.mkdir()
+            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
+            context_path.write_text('{"accepted":true}\n', encoding="utf-8")
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id="planning-handoff",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+
+            first = coordinator.prepare_planning_author(context_path)
+            self.assertEqual(first["round_id"], "round-0001")
+            self.assertFalse(first["skip_turn"])
+            first_plan = Path(str(first["plan_path"]))
+            first_plan.write_text("# Plan v1\n", encoding="utf-8")
+            frozen = coordinator.freeze_planning_plan("round-0001")
+            self.assertEqual(
+                frozen["plan_sha256"],
+                hashlib.sha256(first_plan.read_bytes()).hexdigest(),
+            )
+
+            review = coordinator.prepare_planning_review()
+            self.assertEqual(review["reviewed_plan_sha256"], frozen["plan_sha256"])
+            first_report = Path(str(review["review_report_path"]))
+            first_report.write_text("# Review\n\nOne blocking issue.\n", encoding="utf-8")
+            accepted = coordinator.record_planning_review(
+                "round-0001",
+                {
+                    "status": True,
+                    "reviewed_plan_sha256": frozen["plan_sha256"],
+                    "score": 94,
+                    "error_count": 1,
+                    "warning_count": 0,
+                    "verdict": "PASS",
+                },
+            )
+            self.assertFalse(accepted)
+
+            second = coordinator.prepare_planning_author(context_path)
+            self.assertEqual(second["round_id"], "round-0002")
+            self.assertEqual(
+                second["previous_review_report_path"], str(first_report.resolve())
+            )
+            second_plan = Path(str(second["plan_path"]))
+            second_plan.write_text("# Plan v2\n", encoding="utf-8")
+            second_frozen = coordinator.freeze_planning_plan("round-0002")
+            second_review = coordinator.prepare_planning_review()
+            second_report = Path(str(second_review["review_report_path"]))
+            second_report.write_text("# Review\n\nApproved.\n", encoding="utf-8")
+            accepted = coordinator.record_planning_review(
+                "round-0002",
+                {
+                    "status": False,
+                    "reviewed_plan_sha256": second_frozen["plan_sha256"],
+                    "score": 95,
+                    "error_count": 0,
+                    "warning_count": 2,
+                    "verdict": "PASS",
+                },
+            )
+
+            self.assertTrue(accepted)
+            approved_path = artifact_path / "APPROVED_TEST_PLAN.md"
+            self.assertEqual(approved_path.read_bytes(), second_plan.read_bytes())
+            handoff = json.loads(
+                (artifact_path / "PLANNING_HANDOFF.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(handoff["round_id"], "round-0002")
+            self.assertEqual(handoff["approved_plan_sha256"], second_frozen["plan_sha256"])
+            self.assertEqual(handoff["score"], 95)
+            self.assertEqual(handoff["error_count"], 0)
+            saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [item["status"] for item in saved["planning_rounds"]],
+                ["rejected", "approved"],
+            )
+
+    def test_planning_handoff_rejects_a_plan_changed_after_freeze(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifact_path = root / "artifacts"
+            artifact_path.mkdir()
+            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
+            context_path.write_text("{}\n", encoding="utf-8")
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id="planning-tamper",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+
+            author = coordinator.prepare_planning_author(context_path)
+            plan_path = Path(str(author["plan_path"]))
+            plan_path.write_text("# Frozen\n", encoding="utf-8")
+            coordinator.freeze_planning_plan("round-0001")
+            plan_path.write_text("# Changed\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError, "changed after it was frozen"
+            ):
+                coordinator.prepare_planning_review()
+
+    def test_completed_author_handoff_is_reused_without_a_new_round(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifact_path = root / "artifacts"
+            artifact_path.mkdir()
+            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
+            context_path.write_text("{}\n", encoding="utf-8")
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id="planning-author-recovery",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+            author = coordinator.prepare_planning_author(context_path)
+            Path(str(author["plan_path"])).write_text("# Plan\n", encoding="utf-8")
+            coordinator.freeze_planning_plan("round-0001")
+
+            recovered = coordinator.prepare_planning_author(context_path)
+
+            self.assertEqual(recovered["round_id"], "round-0001")
+            self.assertTrue(recovered["skip_turn"])
+            saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(saved["planning_rounds"]), 1)
+
     def test_resume_recovers_a_pending_planning_turn_without_resubmitting(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -878,6 +1023,66 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertEqual(client.recovered, ("thread-recover", "turn-recover"))
             saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["planning_turns"][0]["status"], "completed")
+
+    def test_resume_replays_a_completed_planning_turn_without_resubmitting(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="planning-completed-replay",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+            response = '{"status":true}'
+            response_path = coordinator.run_state_path.parent / "responses" / "saved.json"
+            response_path.parent.mkdir(parents=True)
+            response_path.write_text(response, encoding="utf-8")
+            coordinator._planning_agents = {
+                "TEST_PLAN_AUTHOR": {
+                    "codex_thread_id": "thread-replay",
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "high",
+                }
+            }
+            coordinator._planning_turns = [
+                {
+                    "job_id": "planning-completed-replay:round-0001:author",
+                    "node": "A",
+                    "role": "TEST_PLAN_AUTHOR",
+                    "client_message_id": "message-replay",
+                    "codex_thread_id": "thread-replay",
+                    "codex_turn_id": "turn-replay",
+                    "status": "completed",
+                    "raw_response_path": str(response_path),
+                    "raw_response_sha256": hashlib.sha256(
+                        response.encode("utf-8")
+                    ).hexdigest(),
+                }
+            ]
+            coordinator._planning_ready_roles = {"TEST_PLAN_AUTHOR"}
+
+            class ReplayOnlyClient:
+                def start_turn(self, *args: object, **kwargs: object) -> object:
+                    raise AssertionError("completed turn was resubmitted")
+
+                def recover_turn(self, *args: object, **kwargs: object) -> object:
+                    raise AssertionError("completed turn was recovered remotely")
+
+            coordinator._planning_app_server = ReplayOnlyClient()  # type: ignore[assignment]
+
+            replayed = coordinator.run_planning_agent(
+                "TEST_PLAN_AUTHOR",
+                "must not be sent",
+                output_schema={"type": "object"},
+                developer_instructions="author",
+                job_id="planning-completed-replay:round-0001:author",
+            )
+
+            self.assertEqual(replayed, response)
 
     def test_relay_failure_saves_the_registered_session_location(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -184,6 +184,48 @@ def build_node_prompt(node_input: State) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def build_planning_prompt(node_input: State, control: dict[str, object]) -> str:
+    schema_name = control.get("schema")
+    if not isinstance(schema_name, str) or not schema_name:
+        raise RuntimeError("planning control has no schema identifier")
+    return json.dumps(
+        {
+            "node_message": json.loads(build_node_prompt(node_input)),
+            schema_name: control,
+        },
+        ensure_ascii=False,
+    )
+
+
+def planning_review_output_schema() -> dict[str, Any]:
+    schema = json.loads(json.dumps(load_node_message_schema()))
+    properties = schema.setdefault("properties", {})
+    properties.update(
+        {
+            "reviewed_plan_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+            },
+            "score": {"type": "integer", "minimum": 0, "maximum": 100},
+            "error_count": {"type": "integer", "minimum": 0},
+            "warning_count": {"type": "integer", "minimum": 0},
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+        }
+    )
+    required = list(schema.setdefault("required", []))
+    for field_name in (
+        "reviewed_plan_sha256",
+        "score",
+        "error_count",
+        "warning_count",
+        "verdict",
+    ):
+        if field_name not in required:
+            required.append(field_name)
+    schema["required"] = required
+    return schema
+
+
 def build_planning_role_instructions(agent_config: dict[str, Any]) -> str:
     role_key = agent_config.get("role_key", "unknown")
     description = agent_config.get("role_description", "")
@@ -199,7 +241,13 @@ def build_planning_role_instructions(agent_config: dict[str, Any]) -> str:
     )
 
 
-def send_planning_prompt(role_key: str, prompt: str) -> str:
+def send_planning_prompt(
+    role_key: str,
+    prompt: str,
+    *,
+    output_schema: dict[str, Any] | None = None,
+    job_id: str | None = None,
+) -> str:
     if role_key not in PLANNING_APP_SERVER_ROLES:
         raise ValueError(f"unsupported planning role: {role_key}")
     agent_config = load_agent_config(role_key)
@@ -212,9 +260,22 @@ def send_planning_prompt(role_key: str, prompt: str) -> str:
     return coordinator.run_planning_agent(
         role_key,
         prompt,
-        output_schema=load_node_message_schema(),
+        output_schema=output_schema or load_node_message_schema(),
         developer_instructions=build_planning_role_instructions(agent_config),
+        job_id=job_id,
     )
+
+
+def require_planning_paths_unchanged(
+    node_name: str, node_input: State, node_output: State
+) -> None:
+    for field_name in ("artifact_path", "reasoning_ledger_context_pack"):
+        expected = node_input.get(field_name)
+        actual = node_output.get(field_name)
+        if not isinstance(expected, str) or not isinstance(actual, str):
+            raise RuntimeError(f"{node_name} returned an invalid {field_name}")
+        if Path(actual).resolve() != Path(expected).resolve():
+            raise RuntimeError(f"{node_name} changed coordinator-owned {field_name}")
 
 
 def test_plan_author_node(state: State) -> State:
@@ -222,10 +283,34 @@ def test_plan_author_node(state: State) -> State:
     node_input = dict(state)
     node_input["status"] = True
     node_input["current_node"] = TEST_PLAN_AUTHOR_NODE
-    prompt = build_node_prompt(node_input)
-    response = send_planning_prompt(TEST_PLAN_AUTHOR_ROLE, prompt)
+    coordinator = active_runtime_coordinator()
+    control: dict[str, object] | None = None
+    if coordinator is not None:
+        context_path = node_input.get("reasoning_ledger_context_pack")
+        if not isinstance(context_path, str) or not context_path:
+            raise RuntimeError("A requires reasoning_ledger_context_pack")
+        control = coordinator.prepare_planning_author(context_path)
+        if control.get("skip_turn") is True:
+            log_node_event(TEST_PLAN_AUTHOR_NODE, "recovered_frozen_round")
+            return node_input
+    prompt = (
+        build_planning_prompt(node_input, control)
+        if control is not None
+        else build_node_prompt(node_input)
+    )
+    response = send_planning_prompt(
+        TEST_PLAN_AUTHOR_ROLE,
+        prompt,
+        job_id=str(control["job_id"]) if control is not None else None,
+    )
     node_output = json.loads(response)
     require_node_success(TEST_PLAN_AUTHOR_NODE, node_output)
+    if coordinator is not None:
+        require_planning_paths_unchanged(
+            TEST_PLAN_AUTHOR_NODE, node_input, node_output
+        )
+        assert control is not None
+        coordinator.freeze_planning_plan(str(control["round_id"]))
     log_node_event(TEST_PLAN_AUTHOR_NODE, "done")
     return {
         **node_input,
@@ -239,13 +324,40 @@ def test_plan_reviewer_node(state: State) -> State:
     node_input = dict(state)
     node_input["status"] = True
     node_input["current_node"] = TEST_PLAN_REVIEWER_NODE
-    prompt = build_node_prompt(node_input)
-    response = send_planning_prompt(TEST_PLAN_REVIEWER_ROLE, prompt)
-    node_output = json.loads(response)
-    if node_output.get("status") is True:
-        coordinator = active_runtime_coordinator()
-        if coordinator is not None:
+    coordinator = active_runtime_coordinator()
+    control: dict[str, object] | None = None
+    if coordinator is not None:
+        control = coordinator.prepare_planning_review()
+        if control.get("skip_turn") is True:
+            accepted = control.get("accepted") is True
+            node_output = {"status": accepted}
+        else:
+            prompt = build_planning_prompt(node_input, control)
+            response = send_planning_prompt(
+                TEST_PLAN_REVIEWER_ROLE,
+                prompt,
+                output_schema=planning_review_output_schema(),
+                job_id=str(control["job_id"]),
+            )
+            node_output = json.loads(response)
+            require_planning_paths_unchanged(
+                TEST_PLAN_REVIEWER_NODE, node_input, node_output
+            )
+            accepted = coordinator.record_planning_review(
+                str(control["round_id"]), node_output
+            )
+            node_output = {
+                field_name: node_output[field_name]
+                for field_name in load_node_message_schema().get("properties", {})
+                if field_name in node_output
+            }
+            node_output["status"] = accepted
+        if accepted:
             coordinator.complete_planning_stage()
+    else:
+        prompt = build_node_prompt(node_input)
+        response = send_planning_prompt(TEST_PLAN_REVIEWER_ROLE, prompt)
+        node_output = json.loads(response)
     log_node_event(TEST_PLAN_REVIEWER_NODE, "done")
     return {
         **node_input,

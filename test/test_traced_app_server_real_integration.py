@@ -34,6 +34,32 @@ NODE_SCHEMA = {
     },
 }
 
+REVIEW_NODE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "artifact_path",
+        "reasoning_ledger_context_pack",
+        "status",
+        "reviewed_plan_sha256",
+        "score",
+        "error_count",
+        "warning_count",
+        "verdict",
+    ],
+    "properties": {
+        **NODE_SCHEMA["properties"],
+        "reviewed_plan_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+        },
+        "score": {"type": "integer", "minimum": 0, "maximum": 100},
+        "error_count": {"type": "integer", "minimum": 0},
+        "warning_count": {"type": "integer", "minimum": 0},
+        "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+    },
+}
+
 
 @unittest.skipUnless(
     os.environ.get("TRACERELAY_COMMAND"),
@@ -99,35 +125,69 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             coordinator.prepare_planning_agents(
                 {
                     "TEST_PLAN_AUTHOR": (
-                        "Acceptance author. Do not call tools. Return only schema-valid JSON."
+                        "Acceptance author. Use tools only to write the coordinator-provided "
+                        "plan_path. Do not use Aegis-specific skills. Return only schema-valid "
+                        "JSON after the file is durable."
                     ),
                     "TEST_PLAN_REVIEWER": (
-                        "Independent acceptance reviewer. Do not call tools. Return only "
-                        "schema-valid JSON."
+                        "Independent acceptance reviewer. Use tools only to read plan_path and "
+                        "write review_report_path. Do not use Aegis-specific skills. Return only "
+                        "schema-valid JSON after the report is durable."
                     ),
                 }
             )
             expected_json = json.dumps(expected, ensure_ascii=False, separators=(",", ":"))
+            author_control = coordinator.prepare_planning_author(context_path)
             author_raw = coordinator.run_planning_agent(
                 "TEST_PLAN_AUTHOR",
-                f"Return exactly this JSON object: {expected_json}",
+                (
+                    "Execute this acceptance control object exactly. Write a non-empty Markdown "
+                    "test plan to plan_path containing one test for ACCEPTANCE_TARGET. Then "
+                    f"return exactly this JSON object: {expected_json}\n"
+                    f"CONTROL={json.dumps(author_control, ensure_ascii=False)}"
+                ),
                 output_schema=NODE_SCHEMA,
                 developer_instructions="author",
+                job_id=str(author_control["job_id"]),
+            )
+            frozen = coordinator.freeze_planning_plan(str(author_control["round_id"]))
+            review_control = coordinator.prepare_planning_review()
+            reviewer_expected = {
+                **expected,
+                "reviewed_plan_sha256": frozen["plan_sha256"],
+                "score": 95,
+                "error_count": 0,
+                "warning_count": 0,
+                "verdict": "PASS",
+            }
+            reviewer_expected_json = json.dumps(
+                reviewer_expected, ensure_ascii=False, separators=(",", ":")
             )
             reviewer_raw = coordinator.run_planning_agent(
                 "TEST_PLAN_REVIEWER",
                 (
-                    "Verify that the author response matches the requested object, then return "
-                    f"exactly the same JSON object. AUTHOR={author_raw}"
+                    "Execute this acceptance control object exactly. Read plan_path without "
+                    "modifying it. Write a non-empty Markdown approval report to "
+                    "review_report_path. Then return exactly this JSON object: "
+                    f"{reviewer_expected_json}\n"
+                    f"CONTROL={json.dumps(review_control, ensure_ascii=False)}\n"
+                    f"AUTHOR={author_raw}"
                 ),
-                output_schema=NODE_SCHEMA,
+                output_schema=REVIEW_NODE_SCHEMA,
                 developer_instructions="reviewer",
+                job_id=str(review_control["job_id"]),
+            )
+            reviewer_output = json.loads(reviewer_raw)
+            self.assertTrue(
+                coordinator.record_planning_review(
+                    str(review_control["round_id"]), reviewer_output
+                )
             )
             coordinator.complete_planning_stage()
             coordinator.complete(expected)
 
             self.assertEqual(json.loads(author_raw), expected)
-            self.assertEqual(json.loads(reviewer_raw), expected)
+            self.assertEqual(reviewer_output, reviewer_expected)
             state = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
             threads = {
                 value["codex_thread_id"]
@@ -138,6 +198,9 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             self.assertEqual(len(turns), 2)
             self.assertEqual(state["status"], "completed")
             self.assertEqual(state["planning_stage_status"], "completed")
+            self.assertEqual(state["planning_rounds"][0]["status"], "approved")
+            self.assertTrue((artifact_path / "APPROVED_TEST_PLAN.md").is_file())
+            self.assertTrue((artifact_path / "PLANNING_HANDOFF.json").is_file())
             self.assertEqual(len(state["evidence_sessions"]), 1)
             evidence = state["evidence_sessions"][0]
             self.assertEqual(evidence["node"], "planning")
@@ -145,7 +208,7 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             self.assertTrue(all(Path(item["raw_response_path"]).is_file() for item in state["planning_turns"]))
 
             report = {
-                "schema": "aegis.planning_app_server_acceptance.v1",
+                "schema": "aegis.planning_handoff_acceptance.v1",
                 "verdict": "PASS",
                 "created_at_utc": stamp,
                 "run_id": run_id,
@@ -155,6 +218,11 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 "codex_thread_ids": sorted(threads),
                 "codex_turn_ids": sorted(turns),
                 "evidence_session": evidence,
+                "planning_handoff": json.loads(
+                    (artifact_path / "PLANNING_HANDOFF.json").read_text(
+                        encoding="utf-8"
+                    )
+                ),
                 "source_sha256": {
                     str(path.relative_to(PROJECT_ROOT)).replace("\\", "/"): hashlib.sha256(
                         path.read_bytes()

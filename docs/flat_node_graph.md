@@ -10,15 +10,15 @@ All node-to-node messages use the same minimal structure:
 
 ```json
 {
-  "source": 1,
-  "target": 2,
-  "artifact_path": "..."
+  "artifact_path": "...",
+  "reasoning_ledger_context_pack": "...",
+  "status": true
 }
 ```
 
-- `source`: source role enum id from `config/agent_registry.json`.
-- `target`: target role enum id from `config/agent_registry.json`.
 - `artifact_path`: path to the transferred artifact folder.
+- `reasoning_ledger_context_pack`: path to the exported reasoning context.
+- `status`: coordinator-controlled routing result where a coordinator contract exists.
 
 The artifact folder must contain `README.md` as the entry point. Long text must not be passed through graph state.
 
@@ -85,6 +85,15 @@ Default rule:
 - accepted warnings must be carried forward in the artifact package.
 
 If a reviewer returns a score below threshold, it must provide concrete, actionable issues through the artifact folder. The producer node then revises the plan and returns it for review.
+
+For A/B test-plan review, the coordinator enforces this rule mechanically:
+
+- each author attempt writes to a new `round-NNNN` directory;
+- the plan, project seal, and reasoning context are hashed before review;
+- the reviewer writes a separate `TEST_PLAN_REVIEW.md` and identifies the exact plan hash;
+- model-provided `status` cannot pass the gate;
+- only `score >= 95`, `error_count == 0`, and `verdict == PASS` publishes `APPROVED_TEST_PLAN.md` and `PLANNING_HANDOFF.json`;
+- rejected and approved rounds remain immutable evidence in `RUN_STATE.json`.
 
 ### Test Result Review
 
