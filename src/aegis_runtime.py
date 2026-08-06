@@ -778,9 +778,11 @@ class RuntimeCoordinator:
             except BaseException as error:
                 primary = error
         verification: Mapping[str, object] | None = None
+        application_verification_status = "INVALID"
         if process is not None:
             try:
                 verification = process.finalize()
+                application_verification_status = "VALID_COMPLETE"
             except BaseException as error:
                 if primary is None:
                     primary = error
@@ -793,6 +795,7 @@ class RuntimeCoordinator:
                 process.registration,
                 verification,
                 node="planning",
+                application_verification_status=application_verification_status,
             )
         self._planning_app_server = None
         self._planning_process = None
@@ -820,6 +823,7 @@ class RuntimeCoordinator:
             )
         if any(
             entry.get("verification_status") != "VALID_COMPLETE"
+            or entry.get("application_verification_status") != "VALID_COMPLETE"
             for entry in planning_evidence
         ):
             raise RuntimeStateError(
@@ -1008,6 +1012,7 @@ class RuntimeCoordinator:
         verification: Mapping[str, object] | None,
         *,
         node: str | None = None,
+        application_verification_status: str | None = None,
     ) -> None:
         entry = {
             "node": node or self._current_node,
@@ -1016,6 +1021,7 @@ class RuntimeCoordinator:
             "verification_status": (
                 verification.get("status") if verification else "UNVERIFIED"
             ),
+            "application_verification_status": application_verification_status,
             "final_hash": verification.get("final_hash") if verification else None,
         }
         for index, existing in enumerate(self._evidence_sessions):

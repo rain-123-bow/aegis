@@ -900,6 +900,12 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             final_state = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
             self.assertEqual(final_state["codex_cli_version"], "codex-cli 0.145.0")
             self.assertEqual(final_state["evidence_sessions"][0]["node"], "planning")
+            self.assertEqual(
+                final_state["evidence_sessions"][0][
+                    "application_verification_status"
+                ],
+                "VALID_COMPLETE",
+            )
             self.assertEqual(final_state["planning_stage_status"], "completed")
 
     def test_planning_stage_cannot_complete_without_an_approved_round(self) -> None:
@@ -1605,6 +1611,144 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     [incomplete_status, "VALID_COMPLETE"],
                 )
 
+    def test_zero_byte_application_failure_cannot_be_hidden_by_a_later_session(
+        self,
+    ) -> None:
+        class ManagedRelay(FakeRelayClient):
+            def __init__(self, observed_bytes: dict[str, int]) -> None:
+                super().__init__()
+                self.monitor_interval_seconds = 0
+                self.last_verification: dict[str, object] | None = None
+                self.verification = {
+                    "status": "VALID_COMPLETE",
+                    "final_hash": "ab" * 32,
+                    "observed_bytes": observed_bytes,
+                }
+
+            def _finish(
+                self, registration: aegis_runtime.TraceRelayRegistration
+            ) -> dict[str, object]:
+                del registration
+                return dict(self.verification)
+
+            def _assert_healthy(
+                self, registration: aegis_runtime.TraceRelayRegistration
+            ) -> bool:
+                del registration
+                return False
+
+        def attach_managed_process(
+            coordinator: aegis_runtime.RuntimeCoordinator,
+            relay: ManagedRelay,
+            root: Path,
+            session_id: str,
+        ) -> None:
+            registration = aegis_runtime.TraceRelayRegistration(
+                session_id=session_id,
+                proxy_host="127.0.0.1",
+                proxy_port=45000,
+                upstream_port=7899,
+                session_path=root / "sessions" / session_id,
+            )
+            stopped_process = SimpleNamespace(
+                returncode=0,
+                poll=lambda: 0,
+                terminate=lambda: None,
+                kill=lambda: None,
+            )
+            coordinator._planning_app_server = SimpleNamespace(  # type: ignore[assignment]
+                close=lambda: None
+            )
+            coordinator._planning_process = aegis_runtime.ManagedEvidenceProcess(  # type: ignore[arg-type]
+                client=relay,
+                process=stopped_process,
+                registration=registration,
+            )
+            coordinator._planning_stage_status = "active"
+
+        for zero_direction in ("client_to_upstream", "upstream_to_client"):
+            with (
+                self.subTest(zero_direction=zero_direction),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                project = self.make_sealed_project(root)
+                artifact_path = root / "artifacts"
+                run_id = f"planning-zero-{zero_direction}"
+                first_bytes = {
+                    "client_to_upstream": 10,
+                    "upstream_to_client": 10,
+                }
+                first_bytes[zero_direction] = 0
+                first_relay = ManagedRelay(first_bytes)
+                first = aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=artifact_path,
+                    run_id=run_id,
+                    upstream_port=7899,
+                    relay_client=first_relay,  # type: ignore[arg-type]
+                    start_node="A",
+                )
+                first.preflight()
+                self.approve_planning_round(first, artifact_path)
+                attach_managed_process(
+                    first, first_relay, root, "zero-byte-session"
+                )
+
+                with self.assertRaisesRegex(
+                    aegis_runtime.TraceRelayError,
+                    "no bidirectional TraceRelay traffic evidence",
+                ):
+                    first.complete_planning_stage()
+
+                interim = aegis_runtime.load_run_state(artifact_path, run_id)
+                self.assertEqual(
+                    interim["evidence_sessions"][0]["verification_status"],
+                    "VALID_COMPLETE",
+                )
+                self.assertEqual(
+                    interim["evidence_sessions"][0][
+                        "application_verification_status"
+                    ],
+                    "INVALID",
+                )
+
+                second_relay = ManagedRelay(
+                    {
+                        "client_to_upstream": 10,
+                        "upstream_to_client": 10,
+                    }
+                )
+                resumed = aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=artifact_path,
+                    run_id=run_id,
+                    upstream_port=7899,
+                    relay_client=second_relay,  # type: ignore[arg-type]
+                    start_node="A",
+                    prior_state=interim,
+                )
+                resumed.preflight()
+                attach_managed_process(
+                    resumed, second_relay, root, "later-valid-session"
+                )
+
+                with self.assertRaisesRegex(
+                    aegis_runtime.RuntimeStateError,
+                    "incomplete TraceRelay evidence",
+                ):
+                    resumed.complete_planning_stage()
+
+                final_state = aegis_runtime.load_run_state(artifact_path, run_id)
+                self.assertEqual(final_state["planning_stage_status"], "active")
+                self.assertEqual(
+                    [
+                        entry["application_verification_status"]
+                        for entry in final_state["evidence_sessions"]
+                    ],
+                    ["INVALID", "VALID_COMPLETE"],
+                )
+
     def test_all_planning_evidence_sessions_allow_completion_and_resume(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1627,6 +1771,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     "session_id": "older-valid-session",
                     "session_path": str(root / "sessions" / "older-valid-session"),
                     "verification_status": "VALID_COMPLETE",
+                    "application_verification_status": "VALID_COMPLETE",
                     "final_hash": "ab" * 32,
                 }
             ]
@@ -1641,6 +1786,13 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertTrue(
                 all(
                     entry["verification_status"] == "VALID_COMPLETE"
+                    for entry in saved["evidence_sessions"]
+                    if entry["node"] == "planning"
+                )
+            )
+            self.assertTrue(
+                all(
+                    entry["application_verification_status"] == "VALID_COMPLETE"
                     for entry in saved["evidence_sessions"]
                     if entry["node"] == "planning"
                 )

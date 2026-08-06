@@ -129,9 +129,13 @@ persistent thread on resume, while a completed turn is replayed from its hashed
 local response.
 `planning_stage_status` remains `active` across an interrupted A/B stage. It
 changes to `completed` only when an approved handoff exists and every planning
-TraceRelay session recorded for the run is `VALID_COMPLETE`. A newer valid
-session cannot hide an older incomplete session. Later C-F resume operations
-therefore cannot reopen the planning App Server.
+TraceRelay session recorded for the run has both raw journal
+`verification_status=VALID_COMPLETE` and
+`application_verification_status=VALID_COMPLETE`. The application status is
+set only when managed finalization returns after its bidirectional-byte check;
+an exception records `INVALID` even if the raw journal closed as valid. A newer
+valid session cannot hide an older incomplete session. Later C-F resume
+operations therefore cannot reopen the planning App Server.
 
 Round allocation and approval publication are recoverable state transitions.
 An `allocating` round is recorded before its directory is created. An accepted
@@ -195,11 +199,12 @@ verdict: PASS
 codex-cli: 0.145.0
 model: gpt-5.6-sol
 reasoning effort: high
-report: C:\code\aegis_artifacts\as_pilot\30e2dd36b774\ACCEPTANCE_REPORT.json
-report SHA-256: A3443BD4CC23A83C2BC63C91DAA6B85AAE67DC4AAC33229EA42DF2AD237AAB84
-TraceRelay evidence: VALID_COMPLETE
-planning rounds: 2 (first rejected, second approved)
-planning review: PASS, score 98, error count 0
+report: C:\code\aegis_artifacts\as_pilot\56c02b59628e\ACCEPTANCE_REPORT.json
+report SHA-256: 2F2B9F9CDC7AD8011481D62092591AFC9103049E87B198608BCCBF7E4CC745DA
+TraceRelay journal evidence: VALID_COMPLETE
+application evidence: VALID_COMPLETE
+planning rounds: 1 (approved)
+planning review: PASS, score 100, error count 0
 approved plan SHA-256 equals reviewed plan SHA-256
 ```
 

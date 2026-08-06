@@ -207,6 +207,9 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             evidence = state["evidence_sessions"][0]
             self.assertEqual(evidence["node"], "planning")
             self.assertEqual(evidence["verification_status"], "VALID_COMPLETE")
+            self.assertEqual(
+                evidence["application_verification_status"], "VALID_COMPLETE"
+            )
             self.assertTrue(all(Path(item["raw_response_path"]).is_file() for item in state["planning_turns"]))
 
             report = {

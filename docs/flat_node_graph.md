@@ -95,7 +95,7 @@ For A/B test-plan review, the coordinator enforces this rule mechanically:
 - live and restored state require the reviewed hash to equal the frozen plan hash;
 - model-provided `status` cannot pass the gate;
 - only `score >= 95`, `error_count == 0`, and `verdict == PASS` publishes `APPROVED_TEST_PLAN.md` and `PLANNING_HANDOFF.json`;
-- zero-round completion is rejected, and every planning TraceRelay session must be `VALID_COMPLETE` before C;
+- zero-round completion is rejected, and every planning TraceRelay session must have valid journal and bidirectional application evidence before C;
 - rejected and approved rounds remain immutable evidence in `RUN_STATE.json`.
 - uncertain remote turn submission fails closed instead of being resubmitted;
 - approval is published in a recoverable `publishing -> approved` transition.
