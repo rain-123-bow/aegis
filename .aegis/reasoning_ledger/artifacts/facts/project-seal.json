@@ -9,6 +9,15 @@
       "expected_seal": "ASC1:3fdd63361ff151ad946a5e9e03a983dfeb1b6ee189a26832dab265dab2f26f57",
       "created_at_utc": "2026-08-05T08:06:07.228461Z",
       "git_head_before_record": "8820f68f001e7c69f5472685f2f8570485068753"
+    },
+    {
+      "project_id_hex": "5339f0f6f03b4d3c8059fcfd314b2423",
+      "run_id_hex": "47edfaa69160488d8e6ed6ac1b4c3a49",
+      "sequence": 1,
+      "previous_seal_hex": "3fdd63361ff151ad946a5e9e03a983dfeb1b6ee189a26832dab265dab2f26f57",
+      "expected_seal": "ASC1:67d8f30ae19db753e32fd30207b6925e6c3f9fd257f3156735a0612fd577db84",
+      "created_at_utc": "2026-08-06T06:31:23.992636Z",
+      "git_head_before_record": "920db7d6843b3bbcc16dc72839a5fa25af3899a9"
     }
   ]
 }
