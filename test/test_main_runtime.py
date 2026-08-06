@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -15,12 +16,16 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import aegis_runtime
 import main
+import project_seal_store
 
 
 class FakeRelayProcessClient:
     def __init__(self, session_path: Path) -> None:
         self.session_path = session_path
         self.commands: list[list[str]] = []
+
+    def start(self) -> dict[str, object]:
+        return {"ok": True, "state": "IDLE"}
 
     def run_process(
         self,
@@ -61,9 +66,124 @@ class PassthroughCoordinator:
 
 
 class MainRuntimeIntegrationTests(unittest.TestCase):
+    def test_planning_nodes_use_app_server_roles_and_close_before_executor(self) -> None:
+        events: list[object] = []
+
+        class FakePlanningCoordinator:
+            def run_planning_agent(
+                self,
+                role_key: str,
+                prompt: str,
+                *,
+                output_schema: dict[str, Any],
+                developer_instructions: str,
+            ) -> str:
+                events.append(("planning", role_key, prompt, developer_instructions))
+                return json.dumps(
+                    {
+                        "artifact_path": "C:/artifacts",
+                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                        "status": True,
+                    }
+                )
+
+            def complete_planning_stage(self) -> None:
+                events.append("planning_closed")
+
+        coordinator = FakePlanningCoordinator()
+        state = {
+            "artifact_path": "C:/artifacts",
+            "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+            "status": True,
+        }
+        schema = {
+            "type": "object",
+            "properties": {
+                "artifact_path": {"type": "string"},
+                "reasoning_ledger_context_pack": {"type": "string"},
+                "status": {"type": "boolean"},
+            },
+        }
+        configs = {
+            main.TEST_PLAN_AUTHOR_ROLE: {
+                "thread_id": "old-author",
+                "role_description": "author role",
+            },
+            main.TEST_PLAN_REVIEWER_ROLE: {
+                "thread_id": "old-reviewer",
+                "role_description": "reviewer role",
+            },
+        }
+
+        with (
+            patch.object(main, "active_runtime_coordinator", return_value=coordinator),
+            patch.object(main, "load_node_message_schema", return_value=schema),
+            patch.object(main, "load_agent_config", side_effect=lambda role: configs[role]),
+            patch.object(
+                main,
+                "send_prompt_to_thread",
+                side_effect=AssertionError("legacy planning thread was used"),
+            ),
+        ):
+            authored = main.test_plan_author_node(state)
+            reviewed = main.test_plan_reviewer_node(authored)
+
+        self.assertTrue(reviewed["status"])
+        self.assertEqual(
+            [event[1] for event in events if isinstance(event, tuple)],
+            [main.TEST_PLAN_AUTHOR_ROLE, main.TEST_PLAN_REVIEWER_ROLE],
+        )
+        self.assertEqual(events[-1], "planning_closed")
+        self.assertIn("author role", events[0][3])
+        self.assertIn("Do not use Aegis-specific skills", events[0][3])
+
+    def test_failed_plan_review_keeps_planning_app_server_open(self) -> None:
+        closed = {"value": False}
+
+        class FakePlanningCoordinator:
+            def run_planning_agent(self, role_key: str, prompt: str, **kwargs: Any) -> str:
+                del role_key, prompt, kwargs
+                return json.dumps(
+                    {
+                        "artifact_path": "C:/artifacts",
+                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                        "status": False,
+                    }
+                )
+
+            def finish_planning_stage(self) -> None:
+                closed["value"] = True
+
+        config = {"thread_id": "old-reviewer", "role_description": "reviewer role"}
+        with (
+            patch.object(
+                main, "active_runtime_coordinator", return_value=FakePlanningCoordinator()
+            ),
+            patch.object(main, "load_agent_config", return_value=config),
+        ):
+            result = main.test_plan_reviewer_node(
+                {
+                    "artifact_path": "C:/artifacts",
+                    "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                    "status": True,
+                }
+            )
+
+        self.assertFalse(result["status"])
+        self.assertFalse(closed["value"])
+
     def test_node_codex_call_uses_the_active_runtime_coordinator(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            source = root / "src" / "module.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("VALUE = 1\n", encoding="utf-8")
+            project_seal_store.record_project_seal(
+                root,
+                git_head_before_record="a" * 40,
+                project_id=bytes(range(16)),
+                run_id=bytes(range(16, 32)),
+            )
             relay = FakeRelayProcessClient(root / "session")
             coordinator = aegis_runtime.RuntimeCoordinator(
                 project_root=root,
@@ -73,6 +193,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 relay_client=relay,
                 start_node="A",
             )
+            coordinator.preflight()
 
             with patch.object(
                 main.subprocess,
@@ -92,6 +213,13 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
 
             self.assertEqual(result["response"], "proxied response")
             self.assertEqual(len(relay.commands), 1)
+            response_files = list(
+                coordinator.run_state_path.parent.glob("responses/A-*.txt")
+            )
+            self.assertEqual(len(response_files), 1)
+            self.assertEqual(
+                response_files[0].read_text(encoding="utf-8"), "proxied response"
+            )
 
     def test_sqlite_checkpoint_resumes_at_the_failed_node(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -144,8 +272,16 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             invocation: dict[str, Any] = {}
 
             class FakeCoordinator:
+                planning_stage_status = "not_started"
+
                 def preflight(self) -> None:
                     events.append("preflight")
+
+                def prepare_planning_agents(
+                    self, role_instructions: dict[str, str]
+                ) -> None:
+                    self.role_instructions = role_instructions
+                    events.append("prepare_planning")
 
                 def complete(self, state: dict[str, Any]) -> None:
                     events.append("complete")
@@ -209,6 +345,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 events,
                 [
                     "preflight",
+                    "prepare_planning",
                     "checkpoint_open",
                     "invoke",
                     "checkpoint_close",
@@ -303,6 +440,93 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 invocation["config"],
                 {"configurable": {"thread_id": "run-resume"}},
             )
+
+    def test_resume_after_completed_planning_does_not_restart_app_server(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact_path = root / "artifacts"
+            events: list[str] = []
+
+            class FakeCoordinator:
+                planning_stage_status = "completed"
+
+                def preflight(self) -> None:
+                    events.append("preflight")
+
+                def prepare_planning_agents(
+                    self, role_instructions: dict[str, str]
+                ) -> None:
+                    del role_instructions
+                    raise AssertionError("completed planning stage was restarted")
+
+                def complete(self, state: dict[str, Any]) -> None:
+                    del state
+                    events.append("complete")
+
+                def fail(self, error: BaseException) -> None:
+                    raise AssertionError(f"unexpected failure: {error}")
+
+            class FakeGraph:
+                def invoke(self, value: object, **kwargs: Any) -> dict[str, Any]:
+                    self.value = value
+                    self.kwargs = kwargs
+                    events.append("invoke")
+                    return {"status": True, "current_node": "F"}
+
+            @contextmanager
+            def checkpoint(_project_root: Path):
+                yield object()
+
+            saved = {
+                "schema": "aegis.run_state.v1",
+                "run_id": "run-resume-after-planning",
+                "status": "failed",
+                "project_root": str(root.resolve()),
+                "start_node": "A",
+                "graph_state": {"status": True, "current_node": "C"},
+                "evidence_sessions": [
+                    {
+                        "node": "planning",
+                        "verification_status": "VALID_COMPLETE",
+                    }
+                ],
+                "planning_stage_status": "completed",
+                "created_at_utc": "2026-08-05T00:00:00.000000Z",
+            }
+            with (
+                patch.object(
+                    main,
+                    "initialize_state",
+                    return_value={
+                        "status": True,
+                        "artifact_path": str(artifact_path),
+                    },
+                ),
+                patch.object(main, "load_run_state", return_value=saved),
+                patch.object(
+                    main, "resolve_tracerelay_command", return_value="tracerelay.exe"
+                ),
+                patch.object(main, "TraceRelayClient", return_value=object()),
+                patch.object(
+                    main, "RuntimeCoordinator", return_value=FakeCoordinator()
+                ),
+                patch.object(main, "open_graph_checkpointer", checkpoint),
+                patch.object(main, "create_graph", return_value=FakeGraph()),
+            ):
+                main.main(
+                    [
+                        "--project-root",
+                        str(root),
+                        "--artifact-path",
+                        str(artifact_path),
+                        "--resume-run-id",
+                        "run-resume-after-planning",
+                        "--tracerelay-upstream-port",
+                        "7899",
+                    ]
+                )
+
+            self.assertEqual(events, ["preflight", "invoke", "complete"])
 
 
 if __name__ == "__main__":

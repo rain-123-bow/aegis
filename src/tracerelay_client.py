@@ -5,6 +5,8 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -20,6 +22,16 @@ VALID_STATES = {"IDLE", "WAITING", "CONNECTING", "RELAYING", "FAULT"}
 ACTIVE_STATES = {"WAITING", "CONNECTING", "RELAYING"}
 STATUS_TIMEOUT_SECONDS = 2.0
 CLI_TIMEOUT_SECONDS = 15.0
+VERIFY_TIMEOUT_SECONDS = 1_800.0
+PROXY_ENVIRONMENT_NAMES = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+)
+BYPASS_PROXY_ENVIRONMENT_NAMES = ("NO_PROXY", "no_proxy")
 
 
 class TraceRelayError(RuntimeError):
@@ -59,12 +71,120 @@ class EvidenceProcessResult:
     verification: dict[str, object]
 
 
+class ManagedEvidenceProcess:
+    """Popen-compatible process with continuous TraceRelay health monitoring."""
+
+    def __init__(
+        self,
+        *,
+        client: "TraceRelayClient",
+        process: ProcessLike,
+        registration: TraceRelayRegistration,
+    ) -> None:
+        self._client = client
+        self._process = process
+        self.registration = registration
+        self.stdin = getattr(process, "stdin", None)
+        self.stdout = getattr(process, "stdout", None)
+        self.stderr = getattr(process, "stderr", None)
+        self.pid = getattr(process, "pid", None)
+        self._stop = threading.Event()
+        self._failure_lock = threading.Lock()
+        self._failure: BaseException | None = None
+        self._finalize_lock = threading.Lock()
+        self._verification: dict[str, object] | None = None
+        self._monitor = threading.Thread(
+            target=self._monitor_loop,
+            name="tracerelay-managed-process-monitor",
+            daemon=True,
+        )
+        self._monitor.start()
+
+    @property
+    def returncode(self) -> int | None:
+        return self._process.returncode
+
+    def poll(self) -> int | None:
+        return self._process.poll()
+
+    def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+        return self._process.communicate(timeout=timeout)
+
+    def wait(self, timeout: float | None = None) -> int:
+        waiter = getattr(self._process, "wait", None)
+        if not callable(waiter):
+            deadline = None if timeout is None else time.monotonic() + timeout
+            while self.poll() is None:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired("managed process", timeout)
+                time.sleep(0.01)
+            return int(self.returncode if self.returncode is not None else -1)
+        return int(waiter(timeout=timeout))
+
+    def terminate(self) -> None:
+        self._process.terminate()
+
+    def kill(self) -> None:
+        self._process.kill()
+
+    def failure(self) -> BaseException | None:
+        with self._failure_lock:
+            return self._failure
+
+    def finalize(self) -> dict[str, object]:
+        with self._finalize_lock:
+            if self._verification is not None:
+                return dict(self._verification)
+            if self.poll() is None:
+                raise TraceRelayError(
+                    "managed process must stop before evidence finalization"
+                )
+            self._stop.set()
+            self._monitor.join(timeout=5)
+            primary = self.failure()
+            try:
+                verification = self._client._finish(self.registration)
+                self._client.last_verification = verification
+                _require_bidirectional_evidence(verification)
+            except BaseException as cleanup_error:
+                if primary is not None:
+                    primary.add_note(
+                        f"TraceRelay evidence finalization also failed: {cleanup_error}"
+                    )
+                    raise primary
+                raise
+            self._verification = dict(verification)
+            if primary is not None:
+                raise primary
+            return dict(verification)
+
+    def _monitor_loop(self) -> None:
+        interval = max(self._client.monitor_interval_seconds, 0.01)
+        while not self._stop.wait(interval):
+            if self.poll() is not None:
+                return
+            try:
+                completed = self._client._assert_healthy(self.registration)
+                if completed:
+                    if self.poll() is not None:
+                        return
+                    raise TraceRelayError(
+                        "TraceRelay session ended while the managed process was running"
+                    )
+            except BaseException as error:
+                with self._failure_lock:
+                    if self._failure is None:
+                        self._failure = error
+                _terminate_interactive_preserving_error(self._process, error)
+                return
+
+
 def parse_loopback_proxy_port(proxy_url: str) -> int:
     parsed = urlsplit(proxy_url)
     if parsed.scheme.lower() != "http":
         raise ValueError("TraceRelay upstream proxy must use the http scheme")
-    if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        raise ValueError("TraceRelay upstream proxy must be loopback-local")
+    if parsed.hostname != CONTROL_HOST:
+        raise ValueError("TraceRelay upstream proxy must use 127.0.0.1")
     try:
         port = parsed.port
     except ValueError as error:
@@ -100,6 +220,7 @@ class TraceRelayClient:
         popen_factory: PopenFactory | None = None,
         alarm_directory: str | Path | None = None,
         monitor_interval_seconds: float = 1.0,
+        verification_timeout_seconds: float = VERIFY_TIMEOUT_SECONDS,
     ) -> None:
         self.command = str(command)
         self._cli_runner = cli_runner or _run_cli
@@ -112,7 +233,10 @@ class TraceRelayClient:
         )
         if monitor_interval_seconds < 0:
             raise ValueError("monitor_interval_seconds must not be negative")
+        if verification_timeout_seconds <= 0:
+            raise ValueError("verification_timeout_seconds must be positive")
         self.monitor_interval_seconds = monitor_interval_seconds
+        self.verification_timeout_seconds = verification_timeout_seconds
         self._service_pid: int | None = None
         self._supervisor_pid: int | None = None
         self._alarm_baseline: set[str] = set()
@@ -153,16 +277,15 @@ class TraceRelayClient:
         self.last_registration = registration
         proxy_url = f"http://{registration.proxy_host}:{registration.proxy_port}"
         environment = dict(os.environ if base_environment is None else base_environment)
-        environment.update(
-            HTTP_PROXY=proxy_url,
-            HTTPS_PROXY=proxy_url,
-            http_proxy=proxy_url,
-            https_proxy=proxy_url,
-        )
+        for name in BYPASS_PROXY_ENVIRONMENT_NAMES:
+            environment.pop(name, None)
+        for name in PROXY_ENVIRONMENT_NAMES:
+            environment[name] = proxy_url
+        managed_command = _windows_job_command(command)
 
         try:
             process = self._popen_factory(
-                list(command),
+                managed_command,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -171,8 +294,11 @@ class TraceRelayClient:
                 errors="strict",
                 env=environment,
             )
-        except OSError:
-            self.last_verification = self._finish(registration)
+        except OSError as error:
+            try:
+                self.last_verification = self._finish(registration)
+            except BaseException as cleanup_error:
+                error.add_note(f"TraceRelay evidence finalization also failed: {cleanup_error}")
             raise
 
         deadline = time.monotonic() + timeout_seconds
@@ -183,12 +309,15 @@ class TraceRelayClient:
                 self._assert_healthy(registration)
                 if self.monitor_interval_seconds:
                     time.sleep(self.monitor_interval_seconds)
-        except subprocess.TimeoutExpired:
-            _terminate(process)
-            self.last_verification = self._finish(registration)
+        except subprocess.TimeoutExpired as error:
+            _terminate_preserving_error(process, error)
+            try:
+                self.last_verification = self._finish(registration)
+            except BaseException as cleanup_error:
+                error.add_note(f"TraceRelay evidence finalization also failed: {cleanup_error}")
             raise
-        except BaseException:
-            _terminate(process)
+        except BaseException as error:
+            _terminate_preserving_error(process, error)
             raise
 
         stdout, stderr = process.communicate()
@@ -211,6 +340,64 @@ class TraceRelayClient:
                 "the successful child process produced no TraceRelay traffic evidence"
             )
         return EvidenceProcessResult(completed, registration, verification)
+
+    def open_managed_process(
+        self,
+        command: Sequence[str],
+        *,
+        upstream_port: int,
+        base_environment: Mapping[str, str] | None = None,
+        **popen_options: object,
+    ) -> ManagedEvidenceProcess:
+        if self._service_pid is None or self._supervisor_pid is None:
+            raise TraceRelayError("TraceRelay start must complete before registration")
+        if not command:
+            raise ValueError("process command must not be empty")
+        caller_environment = popen_options.pop("env", None)
+        if base_environment is not None and caller_environment is not None:
+            raise ValueError("base_environment and env cannot both be supplied")
+        if caller_environment is not None and not isinstance(
+            caller_environment, Mapping
+        ):
+            raise TypeError("env must be a mapping")
+
+        self.last_registration = None
+        self.last_verification = None
+        self._require_idle()
+        registration = self._register(upstream_port)
+        self.last_registration = registration
+        environment_source = (
+            base_environment
+            if base_environment is not None
+            else caller_environment
+            if isinstance(caller_environment, Mapping)
+            else os.environ
+        )
+        environment = _proxy_environment(registration, environment_source)
+        options = dict(popen_options)
+        options.setdefault("stdin", subprocess.PIPE)
+        options.setdefault("stdout", subprocess.PIPE)
+        options.setdefault("stderr", subprocess.PIPE)
+        options.setdefault("text", True)
+        options.setdefault("encoding", "utf-8")
+        options.setdefault("errors", "strict")
+        options["env"] = environment
+        managed_command = _windows_job_command(command)
+        try:
+            process = self._popen_factory(managed_command, **options)
+        except BaseException as error:
+            try:
+                self.last_verification = self._finish(registration)
+            except BaseException as cleanup_error:
+                error.add_note(
+                    f"TraceRelay evidence finalization also failed: {cleanup_error}"
+                )
+            raise
+        return ManagedEvidenceProcess(
+            client=self,
+            process=process,
+            registration=registration,
+        )
 
     def _require_idle(self) -> None:
         payload = self._status_requester()
@@ -249,10 +436,14 @@ class TraceRelayClient:
             session_path=Path(_string(payload, "session_path")).resolve(),
         )
 
-    def _assert_healthy(self, registration: TraceRelayRegistration) -> None:
+    def _assert_healthy(self, registration: TraceRelayRegistration) -> bool:
         payload = self._status_requester()
         self._validate_identity(payload, "status")
         self._assert_no_new_alarms()
+        if payload["state"] == "IDLE":
+            if payload.get("last_session_id") != registration.session_id:
+                raise TraceRelayError("TraceRelay completed a different session")
+            return True
         if payload["state"] not in ACTIVE_STATES:
             raise TraceRelayError(
                 "TraceRelay session stopped while the child process was running: "
@@ -260,6 +451,7 @@ class TraceRelayClient:
             )
         if payload.get("session_id") != registration.session_id:
             raise TraceRelayError("TraceRelay active session identity changed")
+        return False
 
     def _finish(self, registration: TraceRelayRegistration) -> dict[str, object]:
         payload = self._status_requester()
@@ -268,9 +460,12 @@ class TraceRelayClient:
         if payload["state"] in ACTIVE_STATES:
             closed = self._invoke(["close"])
             self._validate_identity(closed, "close")
-            if closed.get("closed") is not True or closed.get("state") != "IDLE":
+            if closed.get("state") != "IDLE":
                 raise TraceRelayError("TraceRelay did not close the active session")
-        elif payload["state"] == "IDLE":
+            payload = self._status_requester()
+            self._validate_identity(payload, "status")
+            self._assert_no_new_alarms()
+        if payload["state"] == "IDLE":
             if payload.get("last_session_id") != registration.session_id:
                 raise TraceRelayError("TraceRelay completed a different session")
         else:
@@ -326,7 +521,12 @@ class TraceRelayClient:
     ) -> dict[str, object]:
         command = [self.command, *arguments]
         try:
-            completed = self._cli_runner(command, CLI_TIMEOUT_SECONDS)
+            timeout = (
+                self.verification_timeout_seconds
+                if arguments[0] == "verify"
+                else CLI_TIMEOUT_SECONDS
+            )
+            completed = self._cli_runner(command, timeout)
         except (OSError, subprocess.TimeoutExpired, UnicodeError) as error:
             raise TraceRelayError(f"TraceRelay CLI failed: {error}") from error
         raw = completed.stdout.strip() or completed.stderr.strip()
@@ -411,6 +611,97 @@ def _terminate(process: ProcessLike) -> None:
     except subprocess.TimeoutExpired:
         process.kill()
         process.communicate(timeout=5)
+
+
+def _terminate_preserving_error(process: ProcessLike, primary: BaseException) -> None:
+    try:
+        _terminate(process)
+    except BaseException as cleanup_error:
+        primary.add_note(f"managed child termination also failed: {cleanup_error}")
+
+
+def _terminate_interactive_preserving_error(
+    process: ProcessLike, primary: BaseException
+) -> None:
+    try:
+        if process.poll() is not None:
+            return
+        process.terminate()
+        waiter = getattr(process, "wait", None)
+        if callable(waiter):
+            try:
+                waiter(timeout=5)
+            except (subprocess.TimeoutExpired, TimeoutError):
+                process.kill()
+                waiter(timeout=5)
+    except BaseException as cleanup_error:
+        primary.add_note(f"interactive child termination also failed: {cleanup_error}")
+
+
+def _proxy_environment(
+    registration: TraceRelayRegistration,
+    base_environment: Mapping[str, str],
+) -> dict[str, str]:
+    proxy_url = f"http://{registration.proxy_host}:{registration.proxy_port}"
+    environment = dict(base_environment)
+    for name in BYPASS_PROXY_ENVIRONMENT_NAMES:
+        environment.pop(name, None)
+    for name in PROXY_ENVIRONMENT_NAMES:
+        environment[name] = proxy_url
+    return environment
+
+
+def _require_bidirectional_evidence(verification: Mapping[str, object]) -> None:
+    observed = verification.get("observed_bytes")
+    if not isinstance(observed, Mapping):
+        raise TraceRelayError("TraceRelay verification has no observed byte counts")
+    client_to_upstream = observed.get("client_to_upstream")
+    upstream_to_client = observed.get("upstream_to_client")
+    if (
+        isinstance(client_to_upstream, bool)
+        or not isinstance(client_to_upstream, int)
+        or client_to_upstream <= 0
+        or isinstance(upstream_to_client, bool)
+        or not isinstance(upstream_to_client, int)
+        or upstream_to_client <= 0
+    ):
+        raise TraceRelayError(
+            "managed process produced no bidirectional TraceRelay traffic evidence"
+        )
+
+
+def _windows_job_command(command: Sequence[str]) -> list[str]:
+    if os.name != "nt":
+        raise TraceRelayError("Aegis managed Codex execution requires Windows")
+    runner = Path(__file__).resolve().with_name("windows_job_runner.py")
+    if not runner.is_file():
+        raise TraceRelayError(f"Windows Job runner is missing: {runner}")
+    return [
+        _base_python_executable(),
+        "-I",
+        "-S",
+        str(runner),
+        "--",
+        *map(str, command),
+    ]
+
+
+def _base_python_executable() -> str:
+    candidate = getattr(sys, "_base_executable", None)
+    if not isinstance(candidate, str) or not candidate:
+        raise TraceRelayError("CPython did not expose a base interpreter path")
+    path = Path(candidate)
+    if not path.is_absolute():
+        raise TraceRelayError("CPython base interpreter path is not absolute")
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise TraceRelayError(
+            f"CPython base interpreter is unavailable: {path}"
+        ) from error
+    if not resolved.is_file():
+        raise TraceRelayError(f"CPython base interpreter is not a file: {resolved}")
+    return str(resolved)
 
 
 def _default_alarm_directory() -> Path:

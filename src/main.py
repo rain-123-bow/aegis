@@ -51,6 +51,10 @@ GRAPH_NODE_CHOICES = (
     TEST_REPORT_WRITER_NODE,
     FINAL_REVIEWER_NODE,
 )
+PLANNING_APP_SERVER_ROLES = {
+    TEST_PLAN_AUTHOR_ROLE,
+    TEST_PLAN_REVIEWER_ROLE,
+}
 
 
 def load_agent_thread_map(config_path: Path = AGENT_REGISTRY_PATH) -> dict[str, str]:
@@ -105,14 +109,20 @@ def resolve_codex_command() -> str:
 
 def send_prompt_to_thread(thread_id: str, prompt: str) -> str:
     output_path: Path | None = None
+    retain_output = False
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            suffix=".txt",
-            delete=False,
-        ) as output_file:
-            output_path = Path(output_file.name)
+        coordinator = active_runtime_coordinator()
+        if coordinator is None:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                suffix=".txt",
+                delete=False,
+            ) as output_file:
+                output_path = Path(output_file.name)
+        else:
+            output_path = coordinator.new_response_path()
+            retain_output = True
 
         command = [
             resolve_codex_command(),
@@ -124,7 +134,6 @@ def send_prompt_to_thread(thread_id: str, prompt: str) -> str:
             prompt,
         ]
         try:
-            coordinator = active_runtime_coordinator()
             if coordinator is None:
                 completed = subprocess.run(
                     command,
@@ -153,7 +162,7 @@ def send_prompt_to_thread(thread_id: str, prompt: str) -> str:
 
         return output_path.read_text(encoding="utf-8")
     finally:
-        if output_path is not None:
+        if output_path is not None and not retain_output:
             output_path.unlink(missing_ok=True)
 
 
@@ -175,14 +184,46 @@ def build_node_prompt(node_input: State) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def build_planning_role_instructions(agent_config: dict[str, Any]) -> str:
+    role_key = agent_config.get("role_key", "unknown")
+    description = agent_config.get("role_description", "")
+    return (
+        f"You are the persistent {role_key} role in a coordinator-controlled test "
+        f"planning stage. {description}\n"
+        "Read the JSON node message and the artifact folder's README.md before acting. "
+        "Write durable work products into artifact_path. Return only JSON matching the "
+        "provided output schema. Treat coordinator-provided paths and identifiers as "
+        "accepted control facts; independently verify claims made by another role. "
+        "Do not communicate directly with other agent threads. Do not use Aegis-specific "
+        "skills. Do not trade correctness or coverage for speed."
+    )
+
+
+def send_planning_prompt(role_key: str, prompt: str) -> str:
+    if role_key not in PLANNING_APP_SERVER_ROLES:
+        raise ValueError(f"unsupported planning role: {role_key}")
+    agent_config = load_agent_config(role_key)
+    coordinator = active_runtime_coordinator()
+    if coordinator is None:
+        thread_id = agent_config.get("thread_id")
+        if not isinstance(thread_id, str) or not thread_id:
+            raise RuntimeError(f"planning role has no fallback thread_id: {role_key}")
+        return send_prompt_to_thread(thread_id, prompt)
+    return coordinator.run_planning_agent(
+        role_key,
+        prompt,
+        output_schema=load_node_message_schema(),
+        developer_instructions=build_planning_role_instructions(agent_config),
+    )
+
+
 def test_plan_author_node(state: State) -> State:
     log_node_event(TEST_PLAN_AUTHOR_NODE, "start")
-    agent_thread_map = load_agent_thread_map()
     node_input = dict(state)
     node_input["status"] = True
     node_input["current_node"] = TEST_PLAN_AUTHOR_NODE
     prompt = build_node_prompt(node_input)
-    response = send_prompt_to_thread(agent_thread_map[TEST_PLAN_AUTHOR_ROLE], prompt)
+    response = send_planning_prompt(TEST_PLAN_AUTHOR_ROLE, prompt)
     node_output = json.loads(response)
     require_node_success(TEST_PLAN_AUTHOR_NODE, node_output)
     log_node_event(TEST_PLAN_AUTHOR_NODE, "done")
@@ -195,13 +236,16 @@ def test_plan_author_node(state: State) -> State:
 
 def test_plan_reviewer_node(state: State) -> State:
     log_node_event(TEST_PLAN_REVIEWER_NODE, "start")
-    agent_thread_map = load_agent_thread_map()
     node_input = dict(state)
     node_input["status"] = True
     node_input["current_node"] = TEST_PLAN_REVIEWER_NODE
     prompt = build_node_prompt(node_input)
-    response = send_prompt_to_thread(agent_thread_map[TEST_PLAN_REVIEWER_ROLE], prompt)
+    response = send_planning_prompt(TEST_PLAN_REVIEWER_ROLE, prompt)
     node_output = json.loads(response)
+    if node_output.get("status") is True:
+        coordinator = active_runtime_coordinator()
+        if coordinator is not None:
+            coordinator.complete_planning_stage()
     log_node_event(TEST_PLAN_REVIEWER_NODE, "done")
     return {
         **node_input,
@@ -462,6 +506,21 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
 
     config = {"configurable": {"thread_id": run_id}}
     try:
+        if (
+            start_node in {TEST_PLAN_AUTHOR_NODE, TEST_PLAN_REVIEWER_NODE}
+            and coordinator.planning_stage_status != "completed"
+        ):
+            coordinator.prepare_planning_agents(
+                {
+                    role_key: build_planning_role_instructions(
+                        load_agent_config(role_key)
+                    )
+                    for role_key in (
+                        TEST_PLAN_AUTHOR_ROLE,
+                        TEST_PLAN_REVIEWER_ROLE,
+                    )
+                }
+            )
         with open_graph_checkpointer(project_root) as checkpointer:
             graph = create_graph(
                 start_node=start_node,
@@ -473,10 +532,10 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
                 config=config,
                 durability="sync",
             )
+        coordinator.complete(result)
     except BaseException as error:
         coordinator.fail(error)
         raise
-    coordinator.complete(result)
     return result
 
 
