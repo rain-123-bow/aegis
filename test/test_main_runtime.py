@@ -167,13 +167,29 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             patch.object(
                 main,
                 "send_prompt_to_thread",
-                side_effect=AssertionError("legacy planning thread was used"),
+                side_effect=lambda thread_id, prompt: (
+                    events.append(("executor", thread_id, prompt))
+                    or json.dumps(
+                        {
+                            "artifact_path": "C:/artifacts",
+                            "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                            "status": True,
+                        }
+                    )
+                ),
+            ),
+            patch.object(
+                main,
+                "load_agent_thread_map",
+                return_value={main.TEST_EXECUTOR_ROLE: "executor-thread"},
             ),
         ):
             authored = main.test_plan_author_node(state)
             reviewed = main.test_plan_reviewer_node(authored)
+            executed = main.test_executor_node(reviewed)
 
         self.assertTrue(reviewed["status"])
+        self.assertTrue(executed["status"])
         self.assertNotIn("score", reviewed)
         self.assertNotIn("reviewed_plan_sha256", reviewed)
         self.assertEqual(
@@ -184,7 +200,8 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             ],
             [main.TEST_PLAN_AUTHOR_ROLE, main.TEST_PLAN_REVIEWER_ROLE],
         )
-        self.assertEqual(events[-1], "planning_closed")
+        self.assertLess(events.index("planning_closed"), len(events) - 1)
+        self.assertEqual(events[-1][0], "executor")
         planning_events = [event for event in events if isinstance(event, tuple) and event[0] == "planning"]
         self.assertIn("author role", planning_events[0][3])
         self.assertIn("Do not use Aegis-specific skills", planning_events[0][3])
@@ -527,7 +544,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 return FakeGraph()
 
             saved = {
-                "schema": "aegis.run_state.v1",
+                "schema": "aegis.run_state.v2",
                 "run_id": "run-resume",
                 "status": "failed",
                 "project_root": str(root.resolve()),
@@ -612,7 +629,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 yield object()
 
             saved = {
-                "schema": "aegis.run_state.v1",
+                "schema": "aegis.run_state.v2",
                 "run_id": "run-resume-after-planning",
                 "status": "failed",
                 "project_root": str(root.resolve()),

@@ -137,57 +137,59 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 }
             )
             expected_json = json.dumps(expected, ensure_ascii=False, separators=(",", ":"))
-            author_control = coordinator.prepare_planning_author(context_path)
-            author_raw = coordinator.run_planning_agent(
-                "TEST_PLAN_AUTHOR",
-                (
-                    "Execute this acceptance control object exactly. Write a non-empty Markdown "
-                    "test plan to plan_path containing one test for ACCEPTANCE_TARGET. Then "
-                    f"return exactly this JSON object: {expected_json}\n"
-                    f"CONTROL={json.dumps(author_control, ensure_ascii=False)}"
-                ),
-                output_schema=NODE_SCHEMA,
-                developer_instructions="author",
-                job_id=str(author_control["job_id"]),
-            )
-            frozen = coordinator.freeze_planning_plan(str(author_control["round_id"]))
-            review_control = coordinator.prepare_planning_review()
-            reviewer_expected = {
-                **expected,
-                "reviewed_plan_sha256": frozen["plan_sha256"],
-                "score": 95,
-                "error_count": 0,
-                "warning_count": 0,
-                "verdict": "PASS",
-            }
-            reviewer_expected_json = json.dumps(
-                reviewer_expected, ensure_ascii=False, separators=(",", ":")
-            )
-            reviewer_raw = coordinator.run_planning_agent(
-                "TEST_PLAN_REVIEWER",
-                (
-                    "Execute this acceptance control object exactly. Read plan_path without "
-                    "modifying it. Write a non-empty Markdown approval report to "
-                    "review_report_path. Then return exactly this JSON object: "
-                    f"{reviewer_expected_json}\n"
-                    f"CONTROL={json.dumps(review_control, ensure_ascii=False)}\n"
-                    f"AUTHOR={author_raw}"
-                ),
-                output_schema=REVIEW_NODE_SCHEMA,
-                developer_instructions="reviewer",
-                job_id=str(review_control["job_id"]),
-            )
-            reviewer_output = json.loads(reviewer_raw)
-            self.assertTrue(
-                coordinator.record_planning_review(
+            author_raws: list[str] = []
+            reviewer_outputs: list[dict[str, object]] = []
+            accepted = False
+            for _attempt in range(3):
+                author_control = coordinator.prepare_planning_author(context_path)
+                author_raw = coordinator.run_planning_agent(
+                    "TEST_PLAN_AUTHOR",
+                    (
+                        "Write a complete executable acceptance plan to plan_path. The sealed "
+                        "project contains src/acceptance_target.py with ACCEPTANCE_TARGET=True. "
+                        "The required test runs from project_root with command `python -c "
+                        "\"from src.acceptance_target import ACCEPTANCE_TARGET; "
+                        "print(ACCEPTANCE_TARGET); raise SystemExit(0 if "
+                        "ACCEPTANCE_TARGET is True else 1)\"`. The plan must state cwd, command, "
+                        "input, expected stdout `True`, expected exit code 0, evidence file paths, "
+                        "and the exact pass/fail rule. This synthetic acceptance has no other "
+                        "requirements. Address every prior review item when present. Then return "
+                        f"exactly this JSON object: {expected_json}\n"
+                        f"CONTROL={json.dumps(author_control, ensure_ascii=False)}"
+                    ),
+                    output_schema=NODE_SCHEMA,
+                    developer_instructions="author",
+                    job_id=str(author_control["job_id"]),
+                )
+                author_raws.append(author_raw)
+                self.assertEqual(json.loads(author_raw), expected)
+                coordinator.freeze_planning_plan(str(author_control["round_id"]))
+                review_control = coordinator.prepare_planning_review()
+                reviewer_raw = coordinator.run_planning_agent(
+                    "TEST_PLAN_REVIEWER",
+                    (
+                        "Independently review only the frozen plan and its stated synthetic "
+                        "requirement. Apply the coordinator threshold without leniency. Write the "
+                        "complete review Markdown to review_report_path. Return the exact reviewed "
+                        "hash and your actual score, error_count, warning_count, and PASS/FAIL "
+                        "verdict; model status does not control routing.\n"
+                        f"CONTROL={json.dumps(review_control, ensure_ascii=False)}"
+                    ),
+                    output_schema=REVIEW_NODE_SCHEMA,
+                    developer_instructions="reviewer",
+                    job_id=str(review_control["job_id"]),
+                )
+                reviewer_output = json.loads(reviewer_raw)
+                reviewer_outputs.append(reviewer_output)
+                accepted = coordinator.record_planning_review(
                     str(review_control["round_id"]), reviewer_output
                 )
-            )
+                if accepted:
+                    break
+            self.assertTrue(accepted, reviewer_outputs)
             coordinator.complete_planning_stage()
             coordinator.complete(expected)
 
-            self.assertEqual(json.loads(author_raw), expected)
-            self.assertEqual(reviewer_output, reviewer_expected)
             state = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
             threads = {
                 value["codex_thread_id"]
@@ -195,10 +197,10 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             }
             turns = {item["codex_turn_id"] for item in state["planning_turns"]}
             self.assertEqual(len(threads), 2)
-            self.assertEqual(len(turns), 2)
+            self.assertEqual(len(turns), len(state["planning_rounds"]) * 2)
             self.assertEqual(state["status"], "completed")
             self.assertEqual(state["planning_stage_status"], "completed")
-            self.assertEqual(state["planning_rounds"][0]["status"], "approved")
+            self.assertEqual(state["planning_rounds"][-1]["status"], "approved")
             self.assertTrue((artifact_path / "APPROVED_TEST_PLAN.md").is_file())
             self.assertTrue((artifact_path / "PLANNING_HANDOFF.json").is_file())
             self.assertEqual(len(state["evidence_sessions"]), 1)
@@ -217,6 +219,7 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 "codex_cli_version": state["codex_cli_version"],
                 "codex_thread_ids": sorted(threads),
                 "codex_turn_ids": sorted(turns),
+                "planning_rounds": state["planning_rounds"],
                 "evidence_session": evidence,
                 "planning_handoff": json.loads(
                     (artifact_path / "PLANNING_HANDOFF.json").read_text(

@@ -38,9 +38,17 @@ RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 RESERVATION_TOKEN_PATTERN = re.compile(r"[0-9a-f]{32}")
 CHECKPOINT_RELATIVE_PATH = Path(".aegis/runtime/checkpoints.sqlite3")
 RESERVATION_TABLE = "aegis_run_reservations"
+RUN_STATE_SCHEMA = "aegis.run_state.v2"
 PLANNING_STAGE_STATUSES = frozenset({"not_started", "active", "completed"})
 PLANNING_ROUND_STATUSES = frozenset(
-    {"authoring", "review_pending", "rejected", "approved"}
+    {
+        "allocating",
+        "authoring",
+        "review_pending",
+        "rejected",
+        "publishing",
+        "approved",
+    }
 )
 PLANNING_REVIEW_THRESHOLD = 95
 
@@ -104,6 +112,10 @@ class RuntimeCoordinator:
             self._restore(prior_state)
 
     def _restore(self, state: Mapping[str, object]) -> None:
+        if state.get("schema") != RUN_STATE_SCHEMA:
+            raise RuntimeStateError(
+                "run state predates Planning Handoff v1; start a new run"
+            )
         if state.get("run_id") != self.run_id:
             raise RuntimeStateError("prior run state identity mismatch")
         if state.get("start_node") != self.start_node:
@@ -116,7 +128,7 @@ class RuntimeCoordinator:
         evidence = state.get("evidence_sessions")
         planning_agents = state.get("planning_agents", {})
         planning_turns = state.get("planning_turns", [])
-        planning_rounds = state.get("planning_rounds", [])
+        planning_rounds = state.get("planning_rounds")
         codex_cli_path = state.get("codex_cli_path")
         codex_cli_version = state.get("codex_cli_version")
         planning_stage_status = state.get("planning_stage_status")
@@ -136,6 +148,7 @@ class RuntimeCoordinator:
             isinstance(item, dict) for item in planning_turns
         ):
             raise RuntimeStateError("prior planning turns must be a list of objects")
+        _validate_planning_turns(planning_turns)
         if not isinstance(planning_rounds, list) or not all(
             isinstance(item, dict) for item in planning_rounds
         ):
@@ -145,10 +158,6 @@ class RuntimeCoordinator:
             raise RuntimeStateError("prior Codex CLI path must be a string or null")
         if codex_cli_version is not None and not isinstance(codex_cli_version, str):
             raise RuntimeStateError("prior Codex CLI version must be a string or null")
-        if planning_stage_status is None:
-            planning_stage_status = _infer_planning_stage_status(
-                evidence, planning_agents
-            )
         if planning_stage_status not in PLANNING_STAGE_STATUSES:
             raise RuntimeStateError("prior planning stage status is invalid")
         if (
@@ -201,6 +210,8 @@ class RuntimeCoordinator:
                 )
                 self._reservation_token = reservation_token
                 self._state_writable = True
+            if self._planning_stage_status == "completed":
+                self._validate_completed_planning_stage()
             self.relay_client.start()
         except BaseException as error:
             if self._state_writable:
@@ -270,35 +281,49 @@ class RuntimeCoordinator:
             role_key, developer_instructions=developer_instructions
         )
         resolved_job_id = job_id or f"{self.run_id}:planning"
+        request_sha256 = _planning_request_sha256(prompt, output_schema)
         completed = self._completed_planning_turn(role_key, resolved_job_id)
         if completed is not None:
+            self._require_matching_planning_request(completed, request_sha256)
             return self._read_completed_planning_response(completed)
         pending = self._pending_planning_turn(role_key, resolved_job_id)
         if pending is None:
-            client_message_id = (
-                f"{self.run_id}:{role_key}:{len(self._planning_turns) + 1}"
-            )
+            client_message_id = f"{resolved_job_id}:{role_key}:submission"
+            pending = {
+                "job_id": resolved_job_id,
+                "node": self._current_node,
+                "role": role_key,
+                "client_message_id": client_message_id,
+                "request_sha256": request_sha256,
+                "codex_thread_id": thread_id,
+                "codex_turn_id": None,
+                "status": "submitting",
+                "raw_response_path": None,
+                "raw_response_sha256": None,
+            }
+            self._planning_turns.append(pending)
+            self._write_state("running")
             turn = client.start_turn(
                 thread_id,
                 prompt,
                 output_schema=output_schema,
                 client_message_id=client_message_id,
             )
-            pending = {
-                "job_id": resolved_job_id,
-                "node": self._current_node,
-                "role": role_key,
-                "client_message_id": client_message_id,
-                "codex_thread_id": turn.thread_id,
-                "codex_turn_id": turn.turn_id,
-                "status": "inProgress",
-                "raw_response_path": None,
-                "raw_response_sha256": None,
-            }
-            self._planning_turns.append(pending)
+            if turn.thread_id != thread_id:
+                raise RuntimeStateError("turn/start returned a different planning thread")
+            pending.update(
+                codex_thread_id=turn.thread_id,
+                codex_turn_id=turn.turn_id,
+                status="inProgress",
+            )
             self._write_state("running")
             result = client.wait_turn(turn)
         else:
+            self._require_matching_planning_request(pending, request_sha256)
+            if pending.get("status") == "submitting":
+                raise RuntimeStateError(
+                    "planning turn submission outcome is unknown; refusing resubmission"
+                )
             pending_thread = pending.get("codex_thread_id")
             pending_turn = pending.get("codex_turn_id")
             if pending_thread != thread_id or not isinstance(pending_turn, str):
@@ -327,11 +352,11 @@ class RuntimeCoordinator:
         context_path = Path(context_pack_path).resolve()
         context_bytes = _read_required_file(context_path, "reasoning context pack")
         context_sha256 = hashlib.sha256(context_bytes).hexdigest()
-        previous_report_path: str | None = None
         if self._planning_rounds:
+            self._validate_closed_planning_rounds()
             current = self._planning_rounds[-1]
             status = current["status"]
-            if status in {"authoring", "review_pending"}:
+            if status in {"allocating", "authoring", "review_pending", "rejected"}:
                 if current["context_pack_path"] != str(context_path):
                     raise RuntimeStateError(
                         "planning context path changed during an active round"
@@ -340,30 +365,27 @@ class RuntimeCoordinator:
                     raise RuntimeStateError(
                         "planning context changed during an active round"
                     )
+            if status == "allocating":
+                self._finish_round_allocation(current)
+                status = "authoring"
+            if status in {"authoring", "review_pending"}:
+                self._validate_planning_project_seal(current)
                 if status == "review_pending":
                     self._validate_frozen_plan(current)
                 return self._author_control(
                     current,
                     skip_turn=status == "review_pending",
-                    previous_review_report_path=None,
                 )
-            if status == "approved":
+            if status in {"publishing", "approved"}:
                 raise RuntimeStateError("planning handoff is already approved")
-            previous_report_path = str(current["review_report_path"])
 
         round_id = f"round-{len(self._planning_rounds) + 1:04d}"
         round_directory = (
             self.artifact_path / ".aegis" / "planning" / self.run_id / round_id
         )
-        try:
-            round_directory.mkdir(parents=True, exist_ok=False)
-        except FileExistsError as error:
-            raise RuntimeStateError(
-                f"planning round directory already exists: {round_directory}"
-            ) from error
         record: dict[str, object] = {
             "round_id": round_id,
-            "status": "authoring",
+            "status": "allocating",
             "project_seal": self._seal.expected_seal,
             "context_pack_path": str(context_path),
             "context_pack_sha256": context_sha256,
@@ -382,14 +404,12 @@ class RuntimeCoordinator:
         }
         self._planning_rounds.append(record)
         self._write_state("running")
-        return self._author_control(
-            record,
-            skip_turn=False,
-            previous_review_report_path=previous_report_path,
-        )
+        self._finish_round_allocation(record)
+        return self._author_control(record, skip_turn=False)
 
     def freeze_planning_plan(self, round_id: str) -> dict[str, object]:
         record = self._current_planning_round(round_id)
+        self._validate_closed_planning_rounds(exclude_round_id=round_id)
         self._validate_planning_context(record)
         self._validate_planning_project_seal(record)
         if record["status"] == "review_pending":
@@ -410,13 +430,20 @@ class RuntimeCoordinator:
             raise RuntimeStateError("planning review has no authored round")
         record = self._planning_rounds[-1]
         status = record["status"]
-        if status not in {"review_pending", "rejected", "approved"}:
+        if status not in {"review_pending", "rejected", "publishing", "approved"}:
             raise RuntimeStateError("planning review requires a frozen plan")
+        self._validate_closed_planning_rounds(exclude_round_id=str(record["round_id"]))
         self._validate_planning_context(record)
         self._validate_planning_project_seal(record)
         self._validate_frozen_plan(record)
-        if status in {"rejected", "approved"}:
+        if status in {"rejected", "publishing", "approved"}:
             self._validate_review_report(record)
+            self._validate_review_decision(record)
+        if status == "publishing":
+            self._finish_planning_publication(record)
+            status = "approved"
+        if status == "approved":
+            self._validate_published_planning_handoff(record)
         return {
             "schema": "aegis.planning_review_control.v1",
             "run_id": self.run_id,
@@ -446,6 +473,7 @@ class RuntimeCoordinator:
         record = self._current_planning_round(round_id)
         if record["status"] != "review_pending":
             raise RuntimeStateError("planning round is not awaiting review")
+        self._validate_closed_planning_rounds(exclude_round_id=round_id)
         self._validate_planning_context(record)
         self._validate_planning_project_seal(record)
         self._validate_frozen_plan(record)
@@ -472,7 +500,7 @@ class RuntimeCoordinator:
             and error_count == 0
         )
         record.update(
-            status="approved" if accepted else "rejected",
+            status="publishing" if accepted else "rejected",
             review_report_sha256=hashlib.sha256(report_bytes).hexdigest(),
             reviewed_plan_sha256=reviewed_plan_sha256,
             score=score,
@@ -482,8 +510,12 @@ class RuntimeCoordinator:
             reviewed_at_utc=_utc_now_text(),
         )
         if accepted:
-            self._publish_approved_planning_handoff(record)
+            approved_path, handoff_path = self._expected_planning_handoff_paths()
+            record["approved_plan_path"] = str(approved_path)
+            record["handoff_path"] = str(handoff_path)
         self._write_state("running")
+        if accepted:
+            self._finish_planning_publication(record)
         return accepted
 
     def _author_control(
@@ -491,8 +523,12 @@ class RuntimeCoordinator:
         record: Mapping[str, object],
         *,
         skip_turn: bool,
-        previous_review_report_path: str | None,
     ) -> dict[str, object]:
+        previous: Mapping[str, object] | None = None
+        for index, candidate in enumerate(self._planning_rounds):
+            if candidate.get("round_id") == record.get("round_id") and index > 0:
+                previous = self._planning_rounds[index - 1]
+                break
         return {
             "schema": "aegis.planning_author_control.v1",
             "run_id": self.run_id,
@@ -503,7 +539,12 @@ class RuntimeCoordinator:
             "context_pack_path": record["context_pack_path"],
             "context_pack_sha256": record["context_pack_sha256"],
             "plan_path": record["plan_path"],
-            "previous_review_report_path": previous_review_report_path,
+            "previous_review_report_path": (
+                previous["review_report_path"] if previous is not None else None
+            ),
+            "previous_review_report_sha256": (
+                previous["review_report_sha256"] if previous is not None else None
+            ),
             "instructions": (
                 "Write the complete test plan to plan_path. If a previous review path "
                 "is present, address all of it in one revision. Do not modify any prior "
@@ -511,6 +552,27 @@ class RuntimeCoordinator:
             ),
             "skip_turn": skip_turn,
         }
+
+    def _finish_round_allocation(self, record: dict[str, object]) -> None:
+        if record.get("status") != "allocating":
+            raise RuntimeStateError("planning round is not awaiting allocation")
+        round_directory = Path(str(record["plan_path"])).parent
+        try:
+            if round_directory.exists():
+                if not round_directory.is_dir() or any(round_directory.iterdir()):
+                    raise RuntimeStateError(
+                        f"allocating planning round contains unknown content: {round_directory}"
+                    )
+            else:
+                round_directory.mkdir(parents=True, exist_ok=False)
+        except RuntimeStateError:
+            raise
+        except OSError as error:
+            raise RuntimeStateError(
+                f"cannot allocate planning round directory: {round_directory}: {error}"
+            ) from error
+        record["status"] = "authoring"
+        self._write_state("running")
 
     def _current_planning_round(self, round_id: str) -> dict[str, object]:
         if not self._planning_rounds:
@@ -559,21 +621,60 @@ class RuntimeCoordinator:
         if actual != expected:
             raise RuntimeStateError("planning review report changed after review")
 
-    def _publish_approved_planning_handoff(
-        self, record: dict[str, object]
+    def _validate_closed_planning_rounds(
+        self, *, exclude_round_id: str | None = None
     ) -> None:
-        self._validate_planning_context(record)
-        self._validate_planning_project_seal(record)
-        plan_bytes = _read_required_file(
-            Path(str(record["plan_path"])), "frozen test plan"
+        for record in self._planning_rounds:
+            if record.get("round_id") == exclude_round_id:
+                continue
+            status = record.get("status")
+            if status not in {"rejected", "approved"}:
+                continue
+            self._validate_planning_context(record)
+            self._validate_planning_project_seal(record)
+            self._validate_frozen_plan(record)
+            self._validate_review_report(record)
+            self._validate_review_decision(record)
+            if status == "approved":
+                self._validate_published_planning_handoff(record)
+
+    def _validate_completed_planning_stage(self) -> None:
+        if (
+            not self._planning_rounds
+            or self._planning_rounds[-1].get("status") != "approved"
+        ):
+            raise RuntimeStateError(
+                "completed planning stage has no approved handoff"
+            )
+        if not any(
+            entry.get("node") == "planning"
+            and entry.get("verification_status") == "VALID_COMPLETE"
+            for entry in self._evidence_sessions
+        ):
+            raise RuntimeStateError(
+                "completed planning stage has no verified TraceRelay evidence"
+            )
+        self._validate_closed_planning_rounds()
+
+    def _validate_review_decision(self, record: Mapping[str, object]) -> None:
+        accepted = _planning_review_is_accepted(record)
+        status = record.get("status")
+        if status == "rejected" and accepted:
+            raise RuntimeStateError("rejected planning round satisfies approval rules")
+        if status in {"publishing", "approved"} and not accepted:
+            raise RuntimeStateError("approved planning round violates approval rules")
+
+    def _expected_planning_handoff_paths(self) -> tuple[Path, Path]:
+        return (
+            (self.artifact_path / "APPROVED_TEST_PLAN.md").resolve(),
+            (self.artifact_path / "PLANNING_HANDOFF.json").resolve(),
         )
-        approved_path = (self.artifact_path / "APPROVED_TEST_PLAN.md").resolve()
-        _atomic_write_bytes(approved_path, plan_bytes)
-        approved_sha256 = hashlib.sha256(plan_bytes).hexdigest()
-        if approved_sha256 != record["plan_sha256"]:
-            raise RuntimeStateError("approved test plan does not match frozen plan")
-        handoff_path = (self.artifact_path / "PLANNING_HANDOFF.json").resolve()
-        handoff = {
+
+    def _planning_handoff_payload(
+        self, record: Mapping[str, object]
+    ) -> dict[str, object]:
+        approved_path, _handoff_path = self._expected_planning_handoff_paths()
+        return {
             "schema": "aegis.planning_handoff.v1",
             "run_id": self.run_id,
             "round_id": record["round_id"],
@@ -581,7 +682,7 @@ class RuntimeCoordinator:
             "context_pack_path": record["context_pack_path"],
             "context_pack_sha256": record["context_pack_sha256"],
             "approved_plan_path": str(approved_path),
-            "approved_plan_sha256": approved_sha256,
+            "approved_plan_sha256": record["plan_sha256"],
             "review_report_path": record["review_report_path"],
             "review_report_sha256": record["review_report_sha256"],
             "score": record["score"],
@@ -589,9 +690,60 @@ class RuntimeCoordinator:
             "warning_count": record["warning_count"],
             "verdict": record["verdict"],
         }
-        _atomic_write_json(handoff_path, handoff)
-        record["approved_plan_path"] = str(approved_path)
-        record["handoff_path"] = str(handoff_path)
+
+    def _finish_planning_publication(self, record: dict[str, object]) -> None:
+        if record.get("status") != "publishing":
+            raise RuntimeStateError("planning round is not awaiting publication")
+        self._validate_planning_context(record)
+        self._validate_planning_project_seal(record)
+        self._validate_frozen_plan(record)
+        self._validate_review_report(record)
+        self._validate_review_decision(record)
+        self._publish_approved_planning_handoff(record)
+        self._validate_published_planning_handoff(record)
+        record["status"] = "approved"
+        self._write_state("running")
+
+    def _publish_approved_planning_handoff(
+        self, record: dict[str, object]
+    ) -> None:
+        plan_bytes = _read_required_file(
+            Path(str(record["plan_path"])), "frozen test plan"
+        )
+        approved_path, handoff_path = self._expected_planning_handoff_paths()
+        if (
+            record.get("approved_plan_path") != str(approved_path)
+            or record.get("handoff_path") != str(handoff_path)
+        ):
+            raise RuntimeStateError("planning publication paths are inconsistent")
+        _atomic_write_bytes(approved_path, plan_bytes)
+        approved_sha256 = hashlib.sha256(plan_bytes).hexdigest()
+        if approved_sha256 != record["plan_sha256"]:
+            raise RuntimeStateError("approved test plan does not match frozen plan")
+        _atomic_write_json(handoff_path, self._planning_handoff_payload(record))
+
+    def _validate_published_planning_handoff(
+        self, record: Mapping[str, object]
+    ) -> None:
+        approved_path, handoff_path = self._expected_planning_handoff_paths()
+        if (
+            record.get("approved_plan_path") != str(approved_path)
+            or record.get("handoff_path") != str(handoff_path)
+        ):
+            raise RuntimeStateError("planning publication paths are inconsistent")
+        approved_sha256 = hashlib.sha256(
+            _read_required_file(approved_path, "approved test plan")
+        ).hexdigest()
+        if approved_sha256 != record.get("plan_sha256"):
+            raise RuntimeStateError("approved test plan does not match frozen plan")
+        try:
+            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise RuntimeStateError(
+                f"cannot read planning handoff: {handoff_path}: {error}"
+            ) from error
+        if handoff != self._planning_handoff_payload(record):
+            raise RuntimeStateError("planning handoff does not match approved round")
 
     def complete_planning_stage(self) -> None:
         if self._planning_rounds:
@@ -602,6 +754,9 @@ class RuntimeCoordinator:
             self._validate_planning_context(current)
             self._validate_planning_project_seal(current)
             self._validate_review_report(current)
+            self._validate_review_decision(current)
+            self._validate_published_planning_handoff(current)
+            self._validate_closed_planning_rounds()
         self._finish_planning_stage(mark_completed=True)
 
     def finish_planning_stage(self) -> None:
@@ -747,7 +902,7 @@ class RuntimeCoordinator:
             if (
                 turn.get("role") == role_key
                 and turn.get("job_id") == job_id
-                and turn.get("status") == "inProgress"
+                and turn.get("status") in {"submitting", "inProgress"}
             ):
                 return turn
         return None
@@ -785,11 +940,22 @@ class RuntimeCoordinator:
                 "completed planning response is not valid UTF-8"
             ) from error
 
+    def _require_matching_planning_request(
+        self, receipt: Mapping[str, object], request_sha256: str
+    ) -> None:
+        if receipt.get("request_sha256") != request_sha256:
+            raise RuntimeStateError("planning turn request changed during recovery")
+
     def _complete_planning_turn(
         self,
         receipt: dict[str, object],
         result: TurnResult,
     ) -> str:
+        if (
+            result.thread_id != receipt.get("codex_thread_id")
+            or result.turn_id != receipt.get("codex_turn_id")
+        ):
+            raise RuntimeStateError("completed planning turn identity mismatch")
         raw_response = result.final_message
         response_directory = self.run_state_path.parent / "responses"
         response_directory.mkdir(parents=True, exist_ok=True)
@@ -867,7 +1033,7 @@ class RuntimeCoordinator:
         if token is None:
             raise RuntimeStateError("run reservation token is unavailable")
         payload: dict[str, object] = {
-            "schema": "aegis.run_state.v1",
+            "schema": RUN_STATE_SCHEMA,
             "run_id": self.run_id,
             "reservation_token": token,
             "status": status,
@@ -911,7 +1077,13 @@ def load_run_state(artifact_path: str | Path, run_id: str) -> dict[str, object]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise RuntimeStateError(f"cannot load run state: {path}: {error}") from error
-    if not isinstance(payload, dict) or payload.get("schema") != "aegis.run_state.v1":
+    if not isinstance(payload, dict):
+        raise RuntimeStateError("run state must be an object")
+    if payload.get("schema") == "aegis.run_state.v1":
+        raise RuntimeStateError(
+            "run state predates Planning Handoff v1; start a new run"
+        )
+    if payload.get("schema") != RUN_STATE_SCHEMA:
         raise RuntimeStateError("run state has an unsupported schema")
     if payload.get("run_id") != run_id:
         raise RuntimeStateError("run state identity mismatch")
@@ -1059,17 +1231,54 @@ def _optional_string(value: object) -> str | None:
     return value
 
 
-def _infer_planning_stage_status(
-    evidence_sessions: list[object], planning_agents: Mapping[object, object]
+def _planning_request_sha256(
+    prompt: str, output_schema: Mapping[str, Any]
 ) -> str:
-    if any(
-        isinstance(entry, Mapping)
-        and entry.get("node") == "planning"
-        and entry.get("verification_status") == "VALID_COMPLETE"
-        for entry in evidence_sessions
-    ):
-        return "completed"
-    return "active" if planning_agents else "not_started"
+    encoded = json.dumps(
+        {"output_schema": dict(output_schema), "prompt": prompt},
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_planning_turns(turns: Sequence[Mapping[str, object]]) -> None:
+    seen_jobs: set[tuple[object, object]] = set()
+    for receipt in turns:
+        role = receipt.get("role")
+        job_id = receipt.get("job_id")
+        if not isinstance(role, str) or not role:
+            raise RuntimeStateError("prior planning turn has an invalid role")
+        if not isinstance(job_id, str) or not job_id:
+            raise RuntimeStateError("prior planning turn has an invalid job ID")
+        identity = (role, job_id)
+        if identity in seen_jobs:
+            raise RuntimeStateError("prior planning turns contain a duplicate job")
+        seen_jobs.add(identity)
+        for field in ("client_message_id", "codex_thread_id"):
+            if not isinstance(receipt.get(field), str) or not receipt[field]:
+                raise RuntimeStateError(
+                    f"prior planning turn has an invalid {field}"
+                )
+        _require_sha256(receipt.get("request_sha256"), "request_sha256")
+        status = receipt.get("status")
+        turn_id = receipt.get("codex_turn_id")
+        if status == "submitting":
+            if turn_id is not None:
+                raise RuntimeStateError("submitting planning turn already has a turn ID")
+        elif status in {"inProgress", "completed"}:
+            if not isinstance(turn_id, str) or not turn_id:
+                raise RuntimeStateError("planning turn has no Codex turn ID")
+        else:
+            raise RuntimeStateError("prior planning turn has an invalid status")
+        if status == "completed":
+            if not isinstance(receipt.get("raw_response_path"), str):
+                raise RuntimeStateError("completed planning turn has no response path")
+            _require_sha256(
+                receipt.get("raw_response_sha256"), "raw_response_sha256"
+            )
 
 
 def _validate_planning_rounds(rounds: Sequence[Mapping[str, object]]) -> None:
@@ -1093,9 +1302,9 @@ def _validate_planning_rounds(rounds: Sequence[Mapping[str, object]]) -> None:
                     f"prior planning round has an invalid {field}"
                 )
         _require_sha256(record.get("context_pack_sha256"), "context_pack_sha256")
-        if status != "authoring":
+        if status in {"review_pending", "rejected", "publishing", "approved"}:
             _require_sha256(record.get("plan_sha256"), "plan_sha256")
-        if status in {"rejected", "approved"}:
+        if status in {"rejected", "publishing", "approved"}:
             _require_sha256(
                 record.get("review_report_sha256"), "review_report_sha256"
             )
@@ -1111,8 +1320,37 @@ def _validate_planning_rounds(rounds: Sequence[Mapping[str, object]]) -> None:
             )
             if record.get("verdict") not in {"PASS", "FAIL"}:
                 raise RuntimeStateError("prior planning round has an invalid verdict")
+            accepted = _planning_review_is_accepted(record)
+            if status == "rejected" and accepted:
+                raise RuntimeStateError(
+                    "prior rejected planning round satisfies approval rules"
+                )
+            if status in {"publishing", "approved"} and not accepted:
+                raise RuntimeStateError(
+                    "prior approved planning round violates approval rules"
+                )
+        if status in {"publishing", "approved"}:
+            for field in ("approved_plan_path", "handoff_path"):
+                if not isinstance(record.get(field), str) or not record[field]:
+                    raise RuntimeStateError(
+                        f"prior planning round has an invalid {field}"
+                    )
         if index < len(rounds) and status != "rejected":
             raise RuntimeStateError("only a rejected planning round may have a successor")
+
+
+def _planning_review_is_accepted(record: Mapping[str, object]) -> bool:
+    score = record.get("score")
+    error_count = record.get("error_count")
+    return (
+        isinstance(score, int)
+        and not isinstance(score, bool)
+        and score >= PLANNING_REVIEW_THRESHOLD
+        and isinstance(error_count, int)
+        and not isinstance(error_count, bool)
+        and error_count == 0
+        and record.get("verdict") == "PASS"
+    )
 
 
 def _read_required_file(path: Path, label: str) -> bytes:

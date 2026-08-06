@@ -118,13 +118,25 @@ resubmitted.
 
 The installed Codex CLI path and version are saved when the App Server starts.
 A resumed run rejects a different CLI version. Each `turn/start` receipt is
-written to `RUN_STATE.json` before waiting for completion; raw final responses
-and SHA-256 values are saved under `<run>/responses/`. A pending turn is read
-from its saved persistent thread on resume and is never silently resubmitted.
+created as a durable `submitting` intent before the remote call. The exact turn
+ID is then persisted as `inProgress` before waiting for completion. If a crash
+leaves `submitting` without a turn ID, the outcome is ambiguous and resume fails
+closed; it never guesses by resubmitting. Raw final responses and SHA-256 values
+are saved under `<run>/responses/`. A known pending turn is read from its saved
+persistent thread on resume, while a completed turn is replayed from its hashed
+local response.
 `planning_stage_status` remains `active` across an interrupted A/B stage and
 changes to `completed` only after its TraceRelay session closes as verified
 `VALID_COMPLETE` evidence. Later C-F resume operations therefore cannot reopen
 the planning App Server.
+
+Round allocation and approval publication are recoverable state transitions.
+An `allocating` round is recorded before its directory is created. An accepted
+review is recorded as `publishing`; both root publication files are generated
+and verified before the round becomes `approved`. Resume completes an
+interrupted `publishing` operation idempotently. An `approved` round is never
+trusted from its status alone: score, error count, verdict, frozen files,
+published plan, and the complete handoff object are revalidated.
 
 ## Resume a failed run
 
@@ -148,13 +160,17 @@ failed node runs again; completed nodes do not.
 <artifact_path>/.aegis/runs/<run-id>/RUN_STATE.json
 ```
 
-`RUN_STATE.json` records the current node, last completed node, latest graph
+`RUN_STATE.json` uses `aegis.run_state.v2` and records the current node, last completed node, latest graph
 state, TraceRelay session paths, verification results, and the terminal error.
 New runs reserve the same identity in `RUN_STATE.json` and SQLite before
 TraceRelay starts. Only `--resume-run-id` may reopen that identity.
 Raw Codex responses remain under `<run>/responses/`, including malformed output.
 TraceRelay failure terminates the active Codex child; Aegis writes the failure
 state and exits without restarting TraceRelay or continuing the graph.
+
+Version-1 run state predates the frozen handoff contract and is rejected on
+resume. It cannot be migrated without guessing whether an old A/B turn or
+approval was already effective. Start a new run from A instead.
 
 The real A/B control-plane acceptance is opt-in:
 
@@ -176,10 +192,10 @@ verdict: PASS
 codex-cli: 0.145.0
 model: gpt-5.6-sol
 reasoning effort: high
-report: C:\code\aegis_artifacts\as_pilot\839d7144b5a7\ACCEPTANCE_REPORT.json
-report SHA-256: A28C1F1B44253E30AC63D755C170944888603DAE8B867F83EFF29CA61984A1E4
+report: C:\code\aegis_artifacts\as_pilot\eb9307a51278\ACCEPTANCE_REPORT.json
+report SHA-256: D4851057B49A40224A858A64CB5D1279793FEC7C548827302E9680B5FF17B5A5
 TraceRelay evidence: VALID_COMPLETE
-planning review: PASS, score 95, error count 0
+planning review: PASS, score 100, error count 0
 ```
 
 ## Recorded follow-up work

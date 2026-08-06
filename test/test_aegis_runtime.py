@@ -935,6 +935,141 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             ):
                 coordinator.prepare_planning_review()
 
+    def test_planning_review_rejects_changed_context_or_project_seal(self) -> None:
+        for mutation in ("context", "project"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                project = self.make_sealed_project(root)
+                artifact_path = root / "artifacts"
+                artifact_path.mkdir()
+                context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
+                context_path.write_text("{}\n", encoding="utf-8")
+                coordinator = aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=artifact_path,
+                    run_id=f"planning-{mutation}-tamper",
+                    upstream_port=7899,
+                    relay_client=FakeRelayClient(),
+                    start_node="A",
+                )
+                coordinator.preflight()
+                author = coordinator.prepare_planning_author(context_path)
+                Path(str(author["plan_path"])).write_text(
+                    "# Frozen\n", encoding="utf-8"
+                )
+                coordinator.freeze_planning_plan("round-0001")
+                if mutation == "context":
+                    context_path.write_text('{"changed":true}\n', encoding="utf-8")
+                    expected = "reasoning context changed"
+                    expected_error = aegis_runtime.RuntimeStateError
+                else:
+                    (project / "src" / "module.py").write_text(
+                        "VALUE = 2\n", encoding="utf-8"
+                    )
+                    expected = "project source does not match the recorded seal"
+                    expected_error = project_seal_store.ProjectSealMismatchError
+
+                with self.assertRaisesRegex(expected_error, expected):
+                    coordinator.prepare_planning_review()
+
+    def test_rejected_review_cannot_be_changed_before_the_next_round(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifact_path = root / "artifacts"
+            artifact_path.mkdir()
+            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
+            context_path.write_text("{}\n", encoding="utf-8")
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id="planning-rejected-tamper",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+            author = coordinator.prepare_planning_author(context_path)
+            Path(str(author["plan_path"])).write_text("# Plan\n", encoding="utf-8")
+            frozen = coordinator.freeze_planning_plan("round-0001")
+            review = coordinator.prepare_planning_review()
+            report_path = Path(str(review["review_report_path"]))
+            report_path.write_text("# Original rejection\n", encoding="utf-8")
+            self.assertFalse(
+                coordinator.record_planning_review(
+                    "round-0001",
+                    {
+                        "reviewed_plan_sha256": frozen["plan_sha256"],
+                        "score": 90,
+                        "error_count": 1,
+                        "warning_count": 0,
+                        "verdict": "FAIL",
+                    },
+                )
+            )
+            report_path.write_text("# Rewritten rejection\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "review report changed after review",
+            ):
+                coordinator.prepare_planning_author(context_path)
+
+    def test_round_allocation_recovers_after_directory_creation_before_state_commit(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifact_path = root / "artifacts"
+            artifact_path.mkdir()
+            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
+            context_path.write_text("{}\n", encoding="utf-8")
+            first = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id="planning-allocation-recovery",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            first.preflight()
+            original_write = first._write_state
+
+            def crash_after_directory(status: str, error: BaseException | None = None) -> None:
+                if (
+                    first._planning_rounds
+                    and first._planning_rounds[-1]["status"] == "authoring"
+                ):
+                    raise RuntimeError("allocation checkpoint interrupted")
+                original_write(status, error)
+
+            with (
+                patch.object(first, "_write_state", side_effect=crash_after_directory),
+                self.assertRaisesRegex(RuntimeError, "allocation checkpoint interrupted"),
+            ):
+                first.prepare_planning_author(context_path)
+
+            saved = aegis_runtime.load_run_state(
+                artifact_path, "planning-allocation-recovery"
+            )
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id="planning-allocation-recovery",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+                prior_state=saved,
+            )
+            resumed.preflight()
+
+            recovered = resumed.prepare_planning_author(context_path)
+
+            self.assertEqual(recovered["round_id"], "round-0001")
+            self.assertFalse(recovered["skip_turn"])
+            self.assertEqual(len(resumed._planning_rounds), 1)
+
     def test_completed_author_handoff_is_reused_without_a_new_round(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -981,6 +1116,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 "node": "A",
                 "role": "TEST_PLAN_AUTHOR",
                 "client_message_id": "planning-recovery:TEST_PLAN_AUTHOR:1",
+                "request_sha256": aegis_runtime._planning_request_sha256(
+                    "must not be sent", {"type": "object"}
+                ),
                 "codex_thread_id": "thread-recover",
                 "codex_turn_id": "turn-recover",
                 "status": "inProgress",
@@ -1054,6 +1192,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     "node": "A",
                     "role": "TEST_PLAN_AUTHOR",
                     "client_message_id": "message-replay",
+                    "request_sha256": aegis_runtime._planning_request_sha256(
+                        "must not be sent", {"type": "object"}
+                    ),
                     "codex_thread_id": "thread-replay",
                     "codex_turn_id": "turn-replay",
                     "status": "completed",
@@ -1083,6 +1224,183 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             )
 
             self.assertEqual(replayed, response)
+
+    def test_submission_intent_prevents_resubmission_without_a_turn_id(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="planning-submission-intent",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+            coordinator._planning_agents = {
+                "TEST_PLAN_AUTHOR": {
+                    "codex_thread_id": "thread-intent",
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "high",
+                }
+            }
+            coordinator._planning_ready_roles = {"TEST_PLAN_AUTHOR"}
+
+            class UncertainStartClient:
+                def __init__(self) -> None:
+                    self.start_count = 0
+
+                def start_turn(self, *args: object, **kwargs: object) -> object:
+                    del args, kwargs
+                    self.start_count += 1
+                    raise RuntimeError("turn/start reply was lost")
+
+            client = UncertainStartClient()
+            coordinator._planning_app_server = client  # type: ignore[assignment]
+            coordinator._planning_stage_status = "active"
+
+            def first_call() -> str:
+                return coordinator.run_planning_agent(
+                    "TEST_PLAN_AUTHOR",
+                    "author prompt",
+                    output_schema={"type": "object"},
+                    developer_instructions="author",
+                    job_id="planning-submission-intent:round-0001:author",
+                )
+
+            with self.assertRaisesRegex(RuntimeError, "reply was lost"):
+                first_call()
+            saved = aegis_runtime.load_run_state(
+                root / "artifacts", "planning-submission-intent"
+            )
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="planning-submission-intent",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+                prior_state=saved,
+            )
+            resumed.preflight()
+            resumed._planning_app_server = client  # type: ignore[assignment]
+            resumed._planning_ready_roles = {"TEST_PLAN_AUTHOR"}
+
+            def resumed_call() -> str:
+                return resumed.run_planning_agent(
+                    "TEST_PLAN_AUTHOR",
+                    "author prompt",
+                    output_schema={"type": "object"},
+                    developer_instructions="author",
+                    job_id="planning-submission-intent:round-0001:author",
+                )
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError, "submission outcome is unknown"
+            ):
+                resumed_call()
+
+            self.assertEqual(client.start_count, 1)
+            persisted = json.loads(
+                resumed.run_state_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(persisted["planning_turns"][0]["status"], "submitting")
+
+    def test_interrupted_approval_publication_is_rebuilt_before_acceptance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifact_path = root / "artifacts"
+            artifact_path.mkdir()
+            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
+            context_path.write_text("{}\n", encoding="utf-8")
+            first = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id="planning-publish-recovery",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            first.preflight()
+            author = first.prepare_planning_author(context_path)
+            Path(str(author["plan_path"])).write_text("# Plan\n", encoding="utf-8")
+            frozen = first.freeze_planning_plan("round-0001")
+            review = first.prepare_planning_review()
+            Path(str(review["review_report_path"])).write_text(
+                "# Approved\n", encoding="utf-8"
+            )
+            failure = RuntimeError("publication interrupted")
+            with (
+                patch.object(
+                    first,
+                    "_publish_approved_planning_handoff",
+                    side_effect=failure,
+                ),
+                self.assertRaisesRegex(RuntimeError, "publication interrupted"),
+            ):
+                first.record_planning_review(
+                    "round-0001",
+                    {
+                        "reviewed_plan_sha256": frozen["plan_sha256"],
+                        "score": 95,
+                        "error_count": 0,
+                        "warning_count": 0,
+                        "verdict": "PASS",
+                    },
+                )
+            first.fail(failure)
+            saved = aegis_runtime.load_run_state(
+                artifact_path, "planning-publish-recovery"
+            )
+            self.assertEqual(saved["planning_rounds"][0]["status"], "publishing")
+
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id="planning-publish-recovery",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+                prior_state=saved,
+            )
+            resumed.preflight()
+            recovered = resumed.prepare_planning_review()
+
+            self.assertTrue(recovered["skip_turn"])
+            self.assertTrue(recovered["accepted"])
+            self.assertTrue((artifact_path / "APPROVED_TEST_PLAN.md").is_file())
+            self.assertTrue((artifact_path / "PLANNING_HANDOFF.json").is_file())
+            final_state = json.loads(
+                resumed.run_state_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(final_state["planning_rounds"][0]["status"], "approved")
+
+            inconsistent = json.loads(json.dumps(final_state))
+            inconsistent["planning_rounds"][0]["score"] = 10
+            inconsistent["planning_rounds"][0]["error_count"] = 3
+            inconsistent["planning_rounds"][0]["verdict"] = "FAIL"
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "approved planning round violates approval rules",
+            ):
+                aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=artifact_path,
+                    run_id="planning-publish-recovery",
+                    upstream_port=7899,
+                    relay_client=FakeRelayClient(),
+                    start_node="A",
+                    prior_state=inconsistent,
+                )
+
+            (artifact_path / "APPROVED_TEST_PLAN.md").write_text(
+                "# Changed\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError, "approved test plan"
+            ):
+                resumed.prepare_planning_review()
 
     def test_relay_failure_saves_the_registered_session_location(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1259,7 +1577,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
             self.assertFalse(relay.started)
 
-    def test_legacy_state_infers_completed_planning_from_verified_evidence(self) -> None:
+    def test_legacy_run_state_is_rejected_instead_of_bypassing_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
@@ -1275,28 +1593,16 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             )
             first.preflight()
             saved = aegis_runtime.load_run_state(artifact_path, run_id)
-            saved.pop("planning_stage_status")
-            saved["planning_agents"] = {
-                "TEST_PLAN_AUTHOR": {"codex_thread_id": "thread-author"}
-            }
-            saved["evidence_sessions"] = [
-                {
-                    "node": "planning",
-                    "verification_status": "VALID_COMPLETE",
-                }
-            ]
-
-            resumed = aegis_runtime.RuntimeCoordinator(
-                project_root=project,
-                artifact_path=artifact_path,
-                run_id=run_id,
-                upstream_port=7899,
-                relay_client=FakeRelayClient(),
-                start_node="A",
-                prior_state=saved,
+            saved["schema"] = "aegis.run_state.v1"
+            first.run_state_path.write_text(
+                json.dumps(saved) + "\n", encoding="utf-8"
             )
 
-            self.assertEqual(resumed.planning_stage_status, "completed")
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "predates Planning Handoff v1",
+            ):
+                aegis_runtime.load_run_state(artifact_path, run_id)
 
 
 if __name__ == "__main__":

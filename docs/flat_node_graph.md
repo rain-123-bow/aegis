@@ -89,11 +89,14 @@ If a reviewer returns a score below threshold, it must provide concrete, actiona
 For A/B test-plan review, the coordinator enforces this rule mechanically:
 
 - each author attempt writes to a new `round-NNNN` directory;
+- round allocation is recorded before directory creation and resumes idempotently;
 - the plan, project seal, and reasoning context are hashed before review;
 - the reviewer writes a separate `TEST_PLAN_REVIEW.md` and identifies the exact plan hash;
 - model-provided `status` cannot pass the gate;
 - only `score >= 95`, `error_count == 0`, and `verdict == PASS` publishes `APPROVED_TEST_PLAN.md` and `PLANNING_HANDOFF.json`;
 - rejected and approved rounds remain immutable evidence in `RUN_STATE.json`.
+- uncertain remote turn submission fails closed instead of being resubmitted;
+- approval is published in a recoverable `publishing -> approved` transition.
 
 ### Test Result Review
 
