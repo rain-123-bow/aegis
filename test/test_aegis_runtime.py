@@ -126,9 +126,7 @@ class TraceRelayClientTests(unittest.TestCase):
         ) -> subprocess.CompletedProcess[str]:
             commands.append(arguments)
             operation = arguments[1]
-            captured_popen.setdefault("cli_timeouts", []).append(
-                (operation, timeout)
-            )
+            captured_popen.setdefault("cli_timeouts", []).append((operation, timeout))
             if operation == "start":
                 payload = relay_payload("start")
             elif operation == "register":
@@ -206,12 +204,8 @@ class TraceRelayClientTests(unittest.TestCase):
 
             self.assertEqual(result.completed.returncode, 0)
             self.assertEqual(result.verification["status"], "VALID_COMPLETE")
-            self.assertEqual(
-                captured["env"]["HTTPS_PROXY"], "http://127.0.0.1:45000"
-            )
-            self.assertEqual(
-                captured["env"]["HTTP_PROXY"], "http://127.0.0.1:45000"
-            )
+            self.assertEqual(captured["env"]["HTTPS_PROXY"], "http://127.0.0.1:45000")
+            self.assertEqual(captured["env"]["HTTP_PROXY"], "http://127.0.0.1:45000")
             self.assertEqual(
                 {
                     captured["env"][name]
@@ -251,9 +245,7 @@ class TraceRelayClientTests(unittest.TestCase):
             )
             client.start()
 
-            with self.assertRaisesRegex(
-                aegis_runtime.TraceRelayError, "FAULT"
-            ):
+            with self.assertRaisesRegex(aegis_runtime.TraceRelayError, "FAULT"):
                 client.run_process(
                     ["codex.exe", "exec"],
                     upstream_port=7899,
@@ -358,9 +350,7 @@ class TraceRelayClientTests(unittest.TestCase):
                 alarm_directory=alarms,
             )
 
-            with self.assertRaisesRegex(
-                aegis_runtime.TraceRelayError, "new alarm"
-            ):
+            with self.assertRaisesRegex(aegis_runtime.TraceRelayError, "new alarm"):
                 client.start()
 
     def test_only_loopback_http_proxy_is_accepted_as_upstream(self) -> None:
@@ -375,7 +365,9 @@ class TraceRelayClientTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             aegis_runtime.parse_loopback_proxy_port("http://[::1]:7899")
 
-    def test_managed_process_keeps_interactive_pipes_and_seals_on_finalize(self) -> None:
+    def test_managed_process_keeps_interactive_pipes_and_seals_on_finalize(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             process = InteractiveFakeProcess()
@@ -439,9 +431,13 @@ class TraceRelayClientTests(unittest.TestCase):
                     }
                 else:
                     raise AssertionError(operation)
-                return subprocess.CompletedProcess(arguments, 0, json.dumps(payload), "")
+                return subprocess.CompletedProcess(
+                    arguments, 0, json.dumps(payload), ""
+                )
 
-            def popen_factory(command: list[str], **kwargs: Any) -> InteractiveFakeProcess:
+            def popen_factory(
+                command: list[str], **kwargs: Any
+            ) -> InteractiveFakeProcess:
                 captured.update(command=command, **kwargs)
                 return process
 
@@ -522,7 +518,9 @@ class TraceRelayClientTests(unittest.TestCase):
                     }
                 else:
                     raise AssertionError(operation)
-                return subprocess.CompletedProcess(arguments, 0, json.dumps(payload), "")
+                return subprocess.CompletedProcess(
+                    arguments, 0, json.dumps(payload), ""
+                )
 
             client = aegis_runtime.TraceRelayClient(
                 command="C:/TraceRelay/tracerelay.exe",
@@ -574,6 +572,177 @@ class FakeRelayClient:
         return relay_payload("start")
 
 
+class ExecutionTurnHarness:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.open_count = 0
+        self.finalize_count = 0
+        self.thread_count = 0
+        self.turn_count = 0
+        self.start_turn_count = 0
+        self.recover_turn_count = 0
+        self.resume_thread_ids: list[str] = []
+        self.processes: list[ExecutionManagedProcess] = []
+        self.app_servers: list[ExecutionAppServer] = []
+        self.wait_errors: list[BaseException] = []
+        self.start_turn_errors: list[BaseException] = []
+        self.finalize_errors: list[BaseException] = []
+        self.close_errors: list[BaseException] = []
+
+
+class ExecutionManagedProcess:
+    def __init__(
+        self,
+        harness: ExecutionTurnHarness,
+        relay: ExecutionRelayClient,
+        session_index: int,
+    ) -> None:
+        self.harness = harness
+        self.relay = relay
+        self.registration = aegis_runtime.TraceRelayRegistration(
+            session_id=f"execution-session-{session_index}",
+            proxy_host="127.0.0.1",
+            proxy_port=45_000 + session_index,
+            upstream_port=7899,
+            session_path=harness.root
+            / "sessions"
+            / f"execution-session-{session_index}",
+        )
+        self.stdin = io.StringIO()
+        self.stdout = io.StringIO()
+        self.stderr = io.StringIO()
+        self.pid = 1_000 + session_index
+        self.returncode: int | None = None
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.returncode = 0
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+    def wait(self, timeout: float | None = None) -> int:
+        del timeout
+        self.returncode = 0 if self.returncode is None else self.returncode
+        return self.returncode
+
+    def failure(self) -> BaseException | None:
+        return None
+
+    def finalize(self) -> dict[str, object]:
+        self.harness.finalize_count += 1
+        verification = {
+            "status": "VALID_COMPLETE",
+            "final_hash": f"{self.pid:064x}"[-64:],
+            "observed_bytes": {
+                "client_to_upstream": 10,
+                "upstream_to_client": 20,
+            },
+        }
+        self.relay.last_verification = verification
+        if self.harness.finalize_errors:
+            raise self.harness.finalize_errors.pop(0)
+        return verification
+
+
+class ExecutionRelayClient(FakeRelayClient):
+    def __init__(self, harness: ExecutionTurnHarness) -> None:
+        super().__init__()
+        self.harness = harness
+        self.last_registration: aegis_runtime.TraceRelayRegistration | None = None
+        self.last_verification: dict[str, object] | None = None
+
+    def open_managed_process(
+        self, *args: object, **kwargs: object
+    ) -> ExecutionManagedProcess:
+        del args, kwargs
+        self.harness.open_count += 1
+        process = ExecutionManagedProcess(self.harness, self, self.harness.open_count)
+        self.harness.processes.append(process)
+        self.last_registration = process.registration
+        self.last_verification = None
+        return process
+
+
+class ExecutionAppServer:
+    def __init__(self, harness: ExecutionTurnHarness, **kwargs: Any) -> None:
+        self.harness = harness
+        self.process_factory = kwargs["process_factory"]
+        self.process: ExecutionManagedProcess | None = None
+        self.closed = False
+        harness.app_servers.append(self)
+
+    def start(self) -> None:
+        self.process = self.process_factory(["codex", "app-server"])
+
+    def close(self) -> None:
+        self.closed = True
+        if self.process is not None:
+            self.process.terminate()
+            self.process.wait(timeout=1)
+        if self.harness.close_errors:
+            raise self.harness.close_errors.pop(0)
+
+    def start_thread(self, **kwargs: Any) -> SimpleNamespace:
+        self.harness.thread_count += 1
+        return SimpleNamespace(
+            thread_id=f"execution-thread-{self.harness.thread_count}",
+            model="gpt-5.6-sol",
+            reasoning_effort="high",
+        )
+
+    def resume_thread(self, thread_id: str, **kwargs: Any) -> SimpleNamespace:
+        del kwargs
+        self.harness.resume_thread_ids.append(thread_id)
+        return SimpleNamespace(
+            thread_id=thread_id,
+            model="gpt-5.6-sol",
+            reasoning_effort="high",
+        )
+
+    def start_turn(self, thread_id: str, prompt: str, **kwargs: Any) -> SimpleNamespace:
+        del prompt, kwargs
+        self.harness.start_turn_count += 1
+        if self.harness.start_turn_errors:
+            raise self.harness.start_turn_errors.pop(0)
+        self.harness.turn_count += 1
+        return SimpleNamespace(
+            thread_id=thread_id,
+            turn_id=f"execution-turn-{self.harness.turn_count}",
+            started_at=time.monotonic(),
+        )
+
+    def wait_turn(
+        self, turn: SimpleNamespace, *, timeout_seconds: float | None = None
+    ) -> SimpleNamespace:
+        del timeout_seconds
+        if self.harness.wait_errors:
+            raise self.harness.wait_errors.pop(0)
+        return self._result(turn.thread_id, turn.turn_id)
+
+    def recover_turn(self, thread_id: str, turn_id: str) -> SimpleNamespace:
+        self.harness.recover_turn_count += 1
+        return self._result(thread_id, turn_id)
+
+    def _result(self, thread_id: str, turn_id: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            status="completed",
+            final_message=json.dumps(
+                {
+                    "artifact_path": str(self.harness.root / "artifacts"),
+                    "reasoning_ledger_context_pack": str(
+                        self.harness.root / "artifacts" / "context.json"
+                    ),
+                    "status": True,
+                }
+            ),
+        )
+
+
 class FailingRelayClient(FakeRelayClient):
     def __init__(self, session_path: Path) -> None:
         super().__init__()
@@ -612,9 +781,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
         context_path.write_text("{}\n", encoding="utf-8")
         author = coordinator.prepare_planning_author(context_path)
-        Path(str(author["plan_path"])).write_text(
-            "# Approved plan\n", encoding="utf-8"
-        )
+        Path(str(author["plan_path"])).write_text("# Approved plan\n", encoding="utf-8")
         frozen = coordinator.freeze_planning_plan(str(author["round_id"]))
         review = coordinator.prepare_planning_review()
         Path(str(review["review_report_path"])).write_text(
@@ -660,6 +827,27 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         )
         coordinator._planning_stage_status = "active"
 
+    def run_execution_node(
+        self,
+        coordinator: aegis_runtime.RuntimeCoordinator,
+        node: str,
+        role: str,
+        state: dict[str, object],
+        *,
+        prompt: str | None = None,
+    ) -> dict[str, object]:
+        def operation(node_state: dict[str, object]) -> dict[str, object]:
+            response = coordinator.run_execution_agent(
+                role,
+                prompt or f"{node} prompt",
+                output_schema={"type": "object"},
+                developer_instructions=f"persistent {role}",
+                timeout_seconds=5,
+            )
+            return {**node_state, "response": response}
+
+        return coordinator.execute_node(node, operation, state)
+
     def test_node_failure_is_saved_atomically_after_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -681,14 +869,528 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "node exploded"):
                 coordinator.execute_node("A", fail, {"status": True})
 
-            saved = json.loads(
-                coordinator.run_state_path.read_text(encoding="utf-8")
-            )
+            saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
             self.assertTrue(relay.started)
             self.assertEqual(saved["status"], "failed")
             self.assertEqual(saved["current_node"], "A")
             self.assertEqual(saved["graph_state"], {"status": True})
             self.assertEqual(saved["error"]["type"], "RuntimeError")
+
+    def test_execution_roles_keep_threads_but_use_one_process_and_session_per_turn(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            relay = ExecutionRelayClient(harness)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-c-d-c",
+                upstream_port=7899,
+                relay_client=relay,
+                start_node="C",
+            )
+            coordinator.preflight()
+
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                first_c = self.run_execution_node(
+                    coordinator,
+                    "C",
+                    "TEST_EXECUTOR",
+                    {"status": True, "cycle": 1},
+                )
+                first_d = self.run_execution_node(
+                    coordinator,
+                    "D",
+                    "TEST_RESULT_REVIEWER",
+                    {**first_c, "status": True},
+                )
+                self.run_execution_node(
+                    coordinator,
+                    "C",
+                    "TEST_EXECUTOR",
+                    {**first_d, "status": False, "cycle": 2},
+                )
+
+            saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(harness.open_count, 3)
+            self.assertEqual(harness.finalize_count, 3)
+            self.assertEqual(len({process.pid for process in harness.processes}), 3)
+            self.assertTrue(all(server.closed for server in harness.app_servers))
+            self.assertEqual(harness.thread_count, 2)
+            self.assertEqual(
+                harness.resume_thread_ids,
+                ["execution-thread-1"],
+            )
+            self.assertEqual(
+                [turn["codex_thread_id"] for turn in saved["execution_turns"]],
+                [
+                    "execution-thread-1",
+                    "execution-thread-2",
+                    "execution-thread-1",
+                ],
+            )
+            self.assertEqual(
+                [turn["status"] for turn in saved["execution_turns"]],
+                ["completed", "completed", "completed"],
+            )
+            self.assertEqual(
+                [turn["evidence_session_ids"] for turn in saved["execution_turns"]],
+                [
+                    ["execution-session-1"],
+                    ["execution-session-2"],
+                    ["execution-session-3"],
+                ],
+            )
+            self.assertTrue(
+                all(
+                    entry["verification_status"] == "VALID_COMPLETE"
+                    and entry["application_verification_status"] == "VALID_COMPLETE"
+                    for entry in saved["evidence_sessions"]
+                )
+            )
+            self.assertEqual(
+                {entry["process_pid"] for entry in saved["evidence_sessions"]},
+                {1_001, 1_002, 1_003},
+            )
+
+    def test_completed_execution_turn_replays_after_node_checkpoint_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-replay",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="C",
+            )
+            coordinator.preflight()
+            state = {"status": True, "cycle": 1}
+
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                first = self.run_execution_node(
+                    coordinator, "C", "TEST_EXECUTOR", state
+                )
+                saved = aegis_runtime.load_run_state(
+                    root / "artifacts", "execution-replay"
+                )
+                resumed = aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=root / "artifacts",
+                    run_id="execution-replay",
+                    upstream_port=7899,
+                    relay_client=ExecutionRelayClient(harness),
+                    start_node="C",
+                    prior_state=saved,
+                )
+                resumed.preflight()
+                replayed = self.run_execution_node(resumed, "C", "TEST_EXECUTOR", state)
+
+            self.assertEqual(replayed["response"], first["response"])
+            self.assertEqual(harness.open_count, 1)
+            self.assertEqual(harness.start_turn_count, 1)
+            saved = json.loads(resumed.run_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(saved["execution_attempts"]), 1)
+            self.assertEqual(len(saved["execution_turns"]), 1)
+
+    def test_start_node_d_creates_an_independent_reviewer_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-start-d",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="D",
+            )
+            coordinator.preflight()
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                self.run_execution_node(
+                    coordinator,
+                    "D",
+                    "TEST_RESULT_REVIEWER",
+                    {"status": True},
+                )
+
+            saved = aegis_runtime.load_run_state(
+                root / "artifacts", "execution-start-d"
+            )
+            self.assertEqual(list(saved["execution_agents"]), ["TEST_RESULT_REVIEWER"])
+            self.assertEqual(saved["execution_attempts"][0]["node"], "D")
+            self.assertEqual(saved["execution_turns"][0]["status"], "completed")
+            self.assertEqual(harness.open_count, 1)
+
+    def test_tampered_execution_response_blocks_resume_before_relay_start(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-response-tamper",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="C",
+            )
+            coordinator.preflight()
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                self.run_execution_node(
+                    coordinator, "C", "TEST_EXECUTOR", {"status": True}
+                )
+
+            saved = aegis_runtime.load_run_state(
+                root / "artifacts", "execution-response-tamper"
+            )
+            response_path = Path(saved["execution_turns"][0]["raw_response_path"])
+            response_path.write_text('{"status":false}', encoding="utf-8")
+            resumed_relay = ExecutionRelayClient(harness)
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-response-tamper",
+                upstream_port=7899,
+                relay_client=resumed_relay,
+                start_node="C",
+                prior_state=saved,
+            )
+
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError, "response SHA-256 mismatch"
+            ):
+                resumed.preflight()
+            self.assertFalse(resumed_relay.started)
+
+    def test_execution_turn_with_invalid_evidence_cannot_return_or_be_masked(
+        self,
+    ) -> None:
+        for failure_source in ("finalize", "close"):
+            with (
+                self.subTest(failure_source=failure_source),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                project = self.make_sealed_project(root)
+                harness = ExecutionTurnHarness(root)
+                failure = RuntimeError(f"{failure_source} failed")
+                if failure_source == "finalize":
+                    harness.finalize_errors.append(failure)
+                else:
+                    harness.close_errors.append(failure)
+                relay = ExecutionRelayClient(harness)
+                coordinator = aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=root / "artifacts",
+                    run_id=f"execution-invalid-{failure_source}",
+                    upstream_port=7899,
+                    relay_client=relay,
+                    start_node="C",
+                )
+                coordinator.preflight()
+                with (
+                    patch.object(
+                        aegis_runtime,
+                        "AppServerClient",
+                        side_effect=lambda **kwargs: ExecutionAppServer(
+                            harness, **kwargs
+                        ),
+                    ),
+                    patch.object(
+                        aegis_runtime,
+                        "default_app_server_command",
+                        return_value=(
+                            "codex.cmd",
+                            "app-server",
+                            "--listen",
+                            "stdio://",
+                        ),
+                    ),
+                    patch.object(
+                        aegis_runtime,
+                        "read_codex_cli_version",
+                        return_value="codex-cli 0.145.0",
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError, f"{failure_source} failed"
+                    ):
+                        self.run_execution_node(
+                            coordinator,
+                            "C",
+                            "TEST_EXECUTOR",
+                            {"status": True},
+                        )
+
+                self.assertEqual(harness.open_count, 1)
+                saved = aegis_runtime.load_run_state(
+                    root / "artifacts", f"execution-invalid-{failure_source}"
+                )
+                self.assertEqual(
+                    saved["evidence_sessions"][0]["verification_status"],
+                    "VALID_COMPLETE",
+                )
+                self.assertEqual(
+                    saved["evidence_sessions"][0]["application_verification_status"],
+                    "INVALID",
+                )
+                resumed_relay = ExecutionRelayClient(harness)
+                resumed = aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=root / "artifacts",
+                    run_id=f"execution-invalid-{failure_source}",
+                    upstream_port=7899,
+                    relay_client=resumed_relay,
+                    start_node="C",
+                    prior_state=saved,
+                )
+                with self.assertRaisesRegex(
+                    aegis_runtime.RuntimeStateError, "incomplete TraceRelay evidence"
+                ):
+                    resumed.preflight()
+                self.assertFalse(resumed_relay.started)
+
+    def test_execution_submission_intent_blocks_unknown_turn_resubmission(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            harness.start_turn_errors.append(RuntimeError("turn/start reply was lost"))
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-submitting",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="C",
+            )
+            coordinator.preflight()
+            state = {"status": True}
+
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "reply was lost"):
+                    self.run_execution_node(coordinator, "C", "TEST_EXECUTOR", state)
+                with self.assertRaisesRegex(
+                    aegis_runtime.RuntimeStateError, "submission outcome is unknown"
+                ):
+                    self.run_execution_node(coordinator, "C", "TEST_EXECUTOR", state)
+
+            self.assertEqual(harness.open_count, 1)
+            self.assertEqual(harness.start_turn_count, 1)
+            saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["execution_turns"][0]["status"], "submitting")
+
+    def test_known_execution_turn_recovers_in_a_new_traced_process(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            harness.wait_errors.append(RuntimeError("App Server stream lost"))
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-known-turn",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="C",
+            )
+            coordinator.preflight()
+            state = {"status": True}
+
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "stream lost"):
+                    self.run_execution_node(coordinator, "C", "TEST_EXECUTOR", state)
+                saved = aegis_runtime.load_run_state(
+                    root / "artifacts", "execution-known-turn"
+                )
+                resumed = aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=root / "artifacts",
+                    run_id="execution-known-turn",
+                    upstream_port=7899,
+                    relay_client=ExecutionRelayClient(harness),
+                    start_node="C",
+                    prior_state=saved,
+                )
+                resumed.preflight()
+                recovered = self.run_execution_node(
+                    resumed, "C", "TEST_EXECUTOR", state
+                )
+
+            self.assertIn('"status": true', str(recovered["response"]))
+            self.assertEqual(harness.open_count, 2)
+            self.assertEqual(harness.start_turn_count, 1)
+            self.assertEqual(harness.recover_turn_count, 1)
+            saved = json.loads(resumed.run_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                saved["execution_turns"][0]["evidence_session_ids"],
+                ["execution-session-1", "execution-session-2"],
+            )
+            self.assertEqual(saved["execution_turns"][0]["status"], "completed")
+
+    def test_execution_thread_allocation_uncertainty_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-thread-allocating",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="D",
+            )
+            coordinator.preflight()
+            state = {"status": True}
+
+            class UncertainThreadAppServer(ExecutionAppServer):
+                def start_thread(self, **kwargs: Any) -> SimpleNamespace:
+                    del kwargs
+                    raise RuntimeError("thread/start reply was lost")
+
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: UncertainThreadAppServer(
+                        harness, **kwargs
+                    ),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "thread/start reply was lost"
+                ):
+                    self.run_execution_node(
+                        coordinator, "D", "TEST_RESULT_REVIEWER", state
+                    )
+                with self.assertRaisesRegex(
+                    aegis_runtime.RuntimeStateError,
+                    "thread allocation outcome is unknown",
+                ):
+                    self.run_execution_node(
+                        coordinator, "D", "TEST_RESULT_REVIEWER", state
+                    )
+
+            self.assertEqual(harness.open_count, 1)
+            saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                saved["execution_agents"]["TEST_RESULT_REVIEWER"]["status"],
+                "allocating",
+            )
 
     def test_planning_roles_share_one_traced_app_server_and_persist_turn_receipts(
         self,
@@ -745,7 +1447,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     self.open_count = 0
                     self.managed = ManagedProcess()
 
-                def open_managed_process(self, *args: object, **kwargs: object) -> ManagedProcess:
+                def open_managed_process(
+                    self, *args: object, **kwargs: object
+                ) -> ManagedProcess:
                     del args, kwargs
                     self.open_count += 1
                     self.last_registration = self.managed.registration
@@ -782,7 +1486,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                         reasoning_effort="high",
                     )
 
-                def start_turn(self, thread_id: str, prompt: str, **kwargs: Any) -> SimpleNamespace:
+                def start_turn(
+                    self, thread_id: str, prompt: str, **kwargs: Any
+                ) -> SimpleNamespace:
                     del prompt, kwargs
                     self.turn_index += 1
                     return SimpleNamespace(
@@ -833,7 +1539,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
             context_path.write_text("{}\n", encoding="utf-8")
             with (
-                patch.object(aegis_runtime, "AppServerClient", side_effect=make_app_server),
+                patch.object(
+                    aegis_runtime, "AppServerClient", side_effect=make_app_server
+                ),
                 patch.object(
                     aegis_runtime,
                     "default_app_server_command",
@@ -858,7 +1566,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 frozen = coordinator.freeze_planning_plan(
                     str(author_control["round_id"])
                 )
-                interim = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
+                interim = json.loads(
+                    coordinator.run_state_path.read_text(encoding="utf-8")
+                )
                 review_control = coordinator.prepare_planning_review()
                 reviewer_response = coordinator.run_planning_agent(
                     "TEST_PLAN_REVIEWER",
@@ -893,17 +1603,21 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 interim["planning_agents"]["TEST_PLAN_AUTHOR"]["codex_thread_id"],
                 "planning-thread-1",
             )
-            self.assertEqual(interim["planning_turns"][0]["codex_turn_id"], "planning-turn-1")
+            self.assertEqual(
+                interim["planning_turns"][0]["codex_turn_id"], "planning-turn-1"
+            )
             self.assertEqual(interim["planning_turns"][0]["status"], "completed")
-            self.assertTrue(Path(interim["planning_turns"][0]["raw_response_path"]).is_file())
+            self.assertTrue(
+                Path(interim["planning_turns"][0]["raw_response_path"]).is_file()
+            )
             self.assertEqual(interim["planning_stage_status"], "active")
-            final_state = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
+            final_state = json.loads(
+                coordinator.run_state_path.read_text(encoding="utf-8")
+            )
             self.assertEqual(final_state["codex_cli_version"], "codex-cli 0.145.0")
             self.assertEqual(final_state["evidence_sessions"][0]["node"], "planning")
             self.assertEqual(
-                final_state["evidence_sessions"][0][
-                    "application_verification_status"
-                ],
+                final_state["evidence_sessions"][0]["application_verification_status"],
                 "VALID_COMPLETE",
             )
             self.assertEqual(final_state["planning_stage_status"], "completed")
@@ -965,7 +1679,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             review = coordinator.prepare_planning_review()
             self.assertEqual(review["reviewed_plan_sha256"], frozen["plan_sha256"])
             first_report = Path(str(review["review_report_path"]))
-            first_report.write_text("# Review\n\nOne blocking issue.\n", encoding="utf-8")
+            first_report.write_text(
+                "# Review\n\nOne blocking issue.\n", encoding="utf-8"
+            )
             accepted = coordinator.record_planning_review(
                 "round-0001",
                 {
@@ -1009,7 +1725,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 (artifact_path / "PLANNING_HANDOFF.json").read_text(encoding="utf-8")
             )
             self.assertEqual(handoff["round_id"], "round-0002")
-            self.assertEqual(handoff["approved_plan_sha256"], second_frozen["plan_sha256"])
+            self.assertEqual(
+                handoff["approved_plan_sha256"], second_frozen["plan_sha256"]
+            )
             self.assertEqual(
                 handoff["reviewed_plan_sha256"], second_frozen["plan_sha256"]
             )
@@ -1052,7 +1770,10 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
     def test_planning_review_rejects_changed_context_or_project_seal(self) -> None:
         for mutation in ("context", "project"):
-            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+            with (
+                self.subTest(mutation=mutation),
+                tempfile.TemporaryDirectory() as directory,
+            ):
                 root = Path(directory)
                 project = self.make_sealed_project(root)
                 artifact_path = root / "artifacts"
@@ -1151,7 +1872,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             first.preflight()
             original_write = first._write_state
 
-            def crash_after_directory(status: str, error: BaseException | None = None) -> None:
+            def crash_after_directory(
+                status: str, error: BaseException | None = None
+            ) -> None:
                 if (
                     first._planning_rounds
                     and first._planning_rounds[-1]["status"] == "authoring"
@@ -1161,7 +1884,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
             with (
                 patch.object(first, "_write_state", side_effect=crash_after_directory),
-                self.assertRaisesRegex(RuntimeError, "allocation checkpoint interrupted"),
+                self.assertRaisesRegex(
+                    RuntimeError, "allocation checkpoint interrupted"
+                ),
             ):
                 first.prepare_planning_author(context_path)
 
@@ -1277,7 +2002,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["planning_turns"][0]["status"], "completed")
 
-    def test_resume_replays_a_completed_planning_turn_without_resubmitting(self) -> None:
+    def test_resume_replays_a_completed_planning_turn_without_resubmitting(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
@@ -1291,7 +2018,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             )
             coordinator.preflight()
             response = '{"status":true}'
-            response_path = coordinator.run_state_path.parent / "responses" / "saved.json"
+            response_path = (
+                coordinator.run_state_path.parent / "responses" / "saved.json"
+            )
             response_path.parent.mkdir(parents=True)
             response_path.write_text(response, encoding="utf-8")
             coordinator._planning_agents = {
@@ -1410,18 +2139,19 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     developer_instructions="author",
                     job_id="planning-submission-intent:round-0001:author",
                 )
+
             with self.assertRaisesRegex(
                 aegis_runtime.RuntimeStateError, "submission outcome is unknown"
             ):
                 resumed_call()
 
             self.assertEqual(client.start_count, 1)
-            persisted = json.loads(
-                resumed.run_state_path.read_text(encoding="utf-8")
-            )
+            persisted = json.loads(resumed.run_state_path.read_text(encoding="utf-8"))
             self.assertEqual(persisted["planning_turns"][0]["status"], "submitting")
 
-    def test_interrupted_approval_publication_is_rebuilt_before_acceptance(self) -> None:
+    def test_interrupted_approval_publication_is_rebuilt_before_acceptance(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
@@ -1486,9 +2216,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertTrue(recovered["accepted"])
             self.assertTrue((artifact_path / "APPROVED_TEST_PLAN.md").is_file())
             self.assertTrue((artifact_path / "PLANNING_HANDOFF.json").is_file())
-            final_state = json.loads(
-                resumed.run_state_path.read_text(encoding="utf-8")
-            )
+            final_state = json.loads(resumed.run_state_path.read_text(encoding="utf-8"))
             self.assertEqual(final_state["planning_rounds"][0]["status"], "approved")
 
             inconsistent = json.loads(json.dumps(final_state))
@@ -1691,9 +2419,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 )
                 first.preflight()
                 self.approve_planning_round(first, artifact_path)
-                attach_managed_process(
-                    first, first_relay, root, "zero-byte-session"
-                )
+                attach_managed_process(first, first_relay, root, "zero-byte-session")
 
                 with self.assertRaisesRegex(
                     aegis_runtime.TraceRelayError,
@@ -1707,9 +2433,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     "VALID_COMPLETE",
                 )
                 self.assertEqual(
-                    interim["evidence_sessions"][0][
-                        "application_verification_status"
-                    ],
+                    interim["evidence_sessions"][0]["application_verification_status"],
                     "INVALID",
                 )
 
@@ -1832,9 +2556,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             ):
                 coordinator.execute_node("A", invoke, {"status": True})
 
-            saved = json.loads(
-                coordinator.run_state_path.read_text(encoding="utf-8")
-            )
+            saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["status"], "failed")
             self.assertEqual(
                 saved["evidence_sessions"][0]["session_id"], "failed-session"
@@ -1850,9 +2572,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             project = self.make_sealed_project(root)
             artifact_path = root / "artifacts"
             run_id = "run-collision"
-            state_path = (
-                artifact_path / ".aegis" / "runs" / run_id / "RUN_STATE.json"
-            )
+            state_path = artifact_path / ".aegis" / "runs" / run_id / "RUN_STATE.json"
             state_path.parent.mkdir(parents=True)
             original = b'{"owner":"older-run"}\n'
             state_path.write_bytes(original)
@@ -1939,11 +2659,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertCountEqual(results, ["reserved", "rejected"])
             saved = json.loads(
                 (
-                    artifact_path
-                    / ".aegis"
-                    / "runs"
-                    / run_id
-                    / "RUN_STATE.json"
+                    artifact_path / ".aegis" / "runs" / run_id / "RUN_STATE.json"
                 ).read_text(encoding="utf-8")
             )
             self.assertRegex(saved["reservation_token"], r"^[0-9a-f]{32}$")
@@ -1983,7 +2699,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
             self.assertFalse(relay.started)
 
-    def test_legacy_run_state_is_rejected_instead_of_bypassing_handoff(self) -> None:
+    def test_v1_and_v2_run_state_are_rejected_instead_of_guessing_c_d_history(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
@@ -1999,16 +2717,18 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             )
             first.preflight()
             saved = aegis_runtime.load_run_state(artifact_path, run_id)
-            saved["schema"] = "aegis.run_state.v1"
-            first.run_state_path.write_text(
-                json.dumps(saved) + "\n", encoding="utf-8"
-            )
+            for schema in ("aegis.run_state.v1", "aegis.run_state.v2"):
+                with self.subTest(schema=schema):
+                    saved["schema"] = schema
+                    first.run_state_path.write_text(
+                        json.dumps(saved) + "\n", encoding="utf-8"
+                    )
 
-            with self.assertRaisesRegex(
-                aegis_runtime.RuntimeStateError,
-                "predates Planning Handoff v1",
-            ):
-                aegis_runtime.load_run_state(artifact_path, run_id)
+                    with self.assertRaisesRegex(
+                        aegis_runtime.RuntimeStateError,
+                        "predates C/D App Server transactions",
+                    ):
+                        aegis_runtime.load_run_state(artifact_path, run_id)
 
 
 if __name__ == "__main__":

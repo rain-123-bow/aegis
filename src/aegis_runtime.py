@@ -38,7 +38,7 @@ RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 RESERVATION_TOKEN_PATTERN = re.compile(r"[0-9a-f]{32}")
 CHECKPOINT_RELATIVE_PATH = Path(".aegis/runtime/checkpoints.sqlite3")
 RESERVATION_TABLE = "aegis_run_reservations"
-RUN_STATE_SCHEMA = "aegis.run_state.v2"
+RUN_STATE_SCHEMA = "aegis.run_state.v3"
 PLANNING_STAGE_STATUSES = frozenset({"not_started", "active", "completed"})
 PLANNING_ROUND_STATUSES = frozenset(
     {
@@ -51,6 +51,14 @@ PLANNING_ROUND_STATUSES = frozenset(
     }
 )
 PLANNING_REVIEW_THRESHOLD = 95
+EXECUTION_NODE_ROLES = {
+    "C": "TEST_EXECUTOR",
+    "D": "TEST_RESULT_REVIEWER",
+}
+EXECUTION_AGENT_STATUSES = frozenset({"allocating", "ready"})
+EXECUTION_TURN_STATUSES = frozenset(
+    {"preparing", "submitting", "inProgress", "completed"}
+)
 
 
 class RuntimeStateError(RuntimeError):
@@ -101,6 +109,10 @@ class RuntimeCoordinator:
         self._planning_agents: dict[str, dict[str, object]] = {}
         self._planning_turns: list[dict[str, object]] = []
         self._planning_rounds: list[dict[str, object]] = []
+        self._execution_agents: dict[str, dict[str, object]] = {}
+        self._execution_turns: list[dict[str, object]] = []
+        self._execution_attempts: list[dict[str, object]] = []
+        self._active_execution_attempt: dict[str, object] | None = None
         self._planning_ready_roles: set[str] = set()
         self._planning_stage_status = "not_started"
         self._codex_cli_path: str | None = None
@@ -112,16 +124,21 @@ class RuntimeCoordinator:
             self._restore(prior_state)
 
     def _restore(self, state: Mapping[str, object]) -> None:
-        if state.get("schema") != RUN_STATE_SCHEMA:
+        if state.get("schema") in {"aegis.run_state.v1", "aegis.run_state.v2"}:
             raise RuntimeStateError(
-                "run state predates Planning Handoff v1; start a new run"
+                "run state predates C/D App Server transactions; start a new run"
             )
+        if state.get("schema") != RUN_STATE_SCHEMA:
+            raise RuntimeStateError("run state schema is unsupported")
         if state.get("run_id") != self.run_id:
             raise RuntimeStateError("prior run state identity mismatch")
         if state.get("start_node") != self.start_node:
             raise RuntimeStateError("prior run state start node mismatch")
         stored_root = state.get("project_root")
-        if not isinstance(stored_root, str) or Path(stored_root).resolve() != self.project_root:
+        if (
+            not isinstance(stored_root, str)
+            or Path(stored_root).resolve() != self.project_root
+        ):
             raise RuntimeStateError("prior run state project root mismatch")
         created_at = state.get("created_at_utc")
         graph_state = state.get("graph_state")
@@ -129,6 +146,9 @@ class RuntimeCoordinator:
         planning_agents = state.get("planning_agents", {})
         planning_turns = state.get("planning_turns", [])
         planning_rounds = state.get("planning_rounds")
+        execution_agents = state.get("execution_agents")
+        execution_turns = state.get("execution_turns")
+        execution_attempts = state.get("execution_attempts")
         codex_cli_path = state.get("codex_cli_path")
         codex_cli_version = state.get("codex_cli_version")
         planning_stage_status = state.get("planning_stage_status")
@@ -137,7 +157,9 @@ class RuntimeCoordinator:
             raise RuntimeStateError("prior run state has no creation time")
         if graph_state is not None and not isinstance(graph_state, dict):
             raise RuntimeStateError("prior run graph state must be an object or null")
-        if not isinstance(evidence, list) or not all(isinstance(x, dict) for x in evidence):
+        if not isinstance(evidence, list) or not all(
+            isinstance(x, dict) for x in evidence
+        ):
             raise RuntimeStateError("prior evidence sessions must be a list of objects")
         if not isinstance(planning_agents, dict) or not all(
             isinstance(role, str) and isinstance(value, dict)
@@ -154,6 +176,31 @@ class RuntimeCoordinator:
         ):
             raise RuntimeStateError("prior planning rounds must be a list of objects")
         _validate_planning_rounds(planning_rounds)
+        if not isinstance(execution_agents, dict) or not all(
+            isinstance(role, str) and isinstance(value, dict)
+            for role, value in execution_agents.items()
+        ):
+            raise RuntimeStateError("prior execution agents must be an object")
+        _validate_execution_agents(execution_agents)
+        if not isinstance(execution_turns, list) or not all(
+            isinstance(item, dict) for item in execution_turns
+        ):
+            raise RuntimeStateError("prior execution turns must be a list of objects")
+        _validate_execution_turns(execution_turns)
+        if not isinstance(execution_attempts, list) or not all(
+            isinstance(item, dict) for item in execution_attempts
+        ):
+            raise RuntimeStateError(
+                "prior execution attempts must be a list of objects"
+            )
+        _validate_execution_attempts(execution_attempts)
+        _validate_execution_bindings(
+            execution_attempts,
+            execution_agents,
+            execution_turns,
+            evidence,
+            run_id=self.run_id,
+        )
         if codex_cli_path is not None and not isinstance(codex_cli_path, str):
             raise RuntimeStateError("prior Codex CLI path must be a string or null")
         if codex_cli_version is not None and not isinstance(codex_cli_version, str):
@@ -175,6 +222,19 @@ class RuntimeCoordinator:
         }
         self._planning_turns = [dict(item) for item in planning_turns]
         self._planning_rounds = [dict(item) for item in planning_rounds]
+        self._execution_agents = {
+            str(role): dict(value) for role, value in execution_agents.items()
+        }
+        self._execution_turns = [dict(item) for item in execution_turns]
+        self._execution_attempts = [dict(item) for item in execution_attempts]
+        if (
+            self._execution_attempts
+            and self._execution_attempts[-1].get("status") == "running"
+            and state.get("current_node") != self._execution_attempts[-1].get("node")
+        ):
+            raise RuntimeStateError(
+                "running execution attempt does not match the current node"
+            )
         self._codex_cli_path = codex_cli_path
         self._codex_cli_version = codex_cli_version
         self._planning_stage_status = str(planning_stage_status)
@@ -212,6 +272,7 @@ class RuntimeCoordinator:
                 self._state_writable = True
             if self._planning_stage_status == "completed":
                 self._validate_completed_planning_stage()
+            self._validate_persisted_execution_receipts()
             self.relay_client.start()
         except BaseException as error:
             if self._state_writable:
@@ -227,6 +288,10 @@ class RuntimeCoordinator:
     ) -> dict[str, Any]:
         self._current_node = node_name
         self._last_state = dict(state)
+        execution_attempt: dict[str, object] | None = None
+        if node_name in EXECUTION_NODE_ROLES:
+            execution_attempt = self._begin_execution_attempt(node_name, state)
+            self._active_execution_attempt = execution_attempt
         self._write_state("running")
         token = _ACTIVE_COORDINATOR.set(self)
         try:
@@ -236,6 +301,23 @@ class RuntimeCoordinator:
             raise
         finally:
             _ACTIVE_COORDINATOR.reset(token)
+            self._active_execution_attempt = None
+        try:
+            if execution_attempt is not None:
+                output_sha256 = _state_sha256(result)
+                if execution_attempt["status"] == "completed":
+                    if execution_attempt.get("output_sha256") != output_sha256:
+                        raise RuntimeStateError(
+                            "replayed execution attempt produced a different graph state"
+                        )
+                else:
+                    execution_attempt.update(
+                        status="completed",
+                        output_sha256=output_sha256,
+                    )
+        except BaseException as error:
+            self._write_state("failed", error)
+            raise
         self._last_completed_node = node_name
         self._current_node = None
         self._last_state = dict(result)
@@ -264,6 +346,188 @@ class RuntimeCoordinator:
         self._record_evidence(result.registration, result.verification)
         self._write_state("running")
         return result.completed
+
+    def run_execution_agent(
+        self,
+        role_key: str,
+        prompt: str,
+        *,
+        output_schema: Mapping[str, Any],
+        developer_instructions: str,
+        timeout_seconds: float,
+    ) -> str:
+        attempt = self._active_execution_attempt
+        if attempt is None:
+            raise RuntimeStateError(
+                "execution agent turns require an active C or D node attempt"
+            )
+        node = attempt.get("node")
+        if EXECUTION_NODE_ROLES.get(str(node)) != role_key:
+            raise RuntimeStateError("execution role does not match the active node")
+        if not developer_instructions:
+            raise ValueError("execution developer instructions must not be empty")
+        if timeout_seconds <= 0:
+            raise ValueError("execution timeout_seconds must be positive")
+
+        job_id = str(attempt["job_id"])
+        request_sha256 = _planning_request_sha256(prompt, output_schema)
+        instructions_sha256 = hashlib.sha256(
+            developer_instructions.encode("utf-8")
+        ).hexdigest()
+        agent = self._execution_agents.get(role_key)
+        if agent is not None:
+            if agent.get("developer_instructions_sha256") != instructions_sha256:
+                raise RuntimeStateError(
+                    "execution developer instructions changed for a persistent role"
+                )
+            if agent.get("status") == "allocating":
+                raise RuntimeStateError(
+                    "execution thread allocation outcome is unknown; refusing replacement"
+                )
+        receipt = self._execution_turn_for_job(job_id)
+        if receipt is not None:
+            self._require_matching_execution_request(
+                receipt,
+                role_key=role_key,
+                request_sha256=request_sha256,
+                instructions_sha256=instructions_sha256,
+            )
+            if receipt.get("status") == "completed":
+                self._require_execution_receipt_evidence(receipt)
+                return self._read_completed_execution_response(receipt)
+            if receipt.get("status") == "submitting":
+                raise RuntimeStateError(
+                    "execution turn submission outcome is unknown; refusing resubmission"
+                )
+            self._require_execution_receipt_evidence(
+                receipt,
+                allow_empty=receipt.get("status") == "preparing",
+            )
+        else:
+            receipt = {
+                "attempt_id": attempt["attempt_id"],
+                "job_id": job_id,
+                "node": node,
+                "role": role_key,
+                "client_message_id": f"{job_id}:submission",
+                "request_sha256": request_sha256,
+                "developer_instructions_sha256": instructions_sha256,
+                "codex_thread_id": None,
+                "codex_turn_id": None,
+                "status": "preparing",
+                "raw_response_path": None,
+                "raw_response_sha256": None,
+                "evidence_session_ids": [],
+            }
+            self._execution_turns.append(receipt)
+            self._write_state("running")
+
+        command = default_app_server_command()
+        cli_path = str(Path(command[0]).resolve())
+        cli_version = read_codex_cli_version(command[0])
+        if (
+            self._codex_cli_version is not None
+            and self._codex_cli_version != cli_version
+        ):
+            raise RuntimeStateError(
+                "Codex CLI version changed since this run was created: "
+                f"saved={self._codex_cli_version!r}, current={cli_version!r}"
+            )
+        self._codex_cli_path = cli_path
+        self._codex_cli_version = cli_version
+        self._write_state("running")
+
+        process: ManagedEvidenceProcess | None = None
+
+        def process_factory(
+            process_command: Sequence[str], **popen_options: object
+        ) -> ManagedEvidenceProcess:
+            nonlocal process
+            if process is not None:
+                raise RuntimeStateError("execution App Server process already exists")
+            process = self.relay_client.open_managed_process(
+                process_command,
+                upstream_port=self.upstream_port,
+                **popen_options,
+            )
+            session_ids = receipt["evidence_session_ids"]
+            assert isinstance(session_ids, list)
+            session_ids.append(process.registration.session_id)
+            self._record_evidence(
+                process.registration,
+                None,
+                node=str(node),
+                process_pid=process.pid,
+            )
+            self._write_state("running")
+            return process
+
+        client = AppServerClient(
+            cwd=self.project_root,
+            command=command,
+            process_factory=process_factory,
+            turn_timeout_seconds=timeout_seconds,
+        )
+        primary: BaseException | None = None
+        try:
+            client.start()
+            thread_id = self._ensure_execution_thread(
+                client,
+                receipt,
+                role_key=role_key,
+                developer_instructions=developer_instructions,
+                instructions_sha256=instructions_sha256,
+            )
+            status = receipt.get("status")
+            if status == "preparing":
+                receipt.update(
+                    codex_thread_id=thread_id,
+                    status="submitting",
+                )
+                self._write_state("running")
+                turn = client.start_turn(
+                    thread_id,
+                    prompt,
+                    output_schema=output_schema,
+                    client_message_id=str(receipt["client_message_id"]),
+                )
+                if turn.thread_id != thread_id:
+                    raise RuntimeStateError(
+                        "turn/start returned a different execution thread"
+                    )
+                receipt.update(
+                    codex_thread_id=turn.thread_id,
+                    codex_turn_id=turn.turn_id,
+                    status="inProgress",
+                )
+                self._write_state("running")
+                result = client.wait_turn(turn, timeout_seconds=timeout_seconds)
+            elif status == "inProgress":
+                pending_thread = receipt.get("codex_thread_id")
+                pending_turn = receipt.get("codex_turn_id")
+                if pending_thread != thread_id or not isinstance(pending_turn, str):
+                    raise RuntimeStateError("pending execution turn identity mismatch")
+                result = client.recover_turn(thread_id, pending_turn)
+            else:
+                raise RuntimeStateError("execution turn has an invalid pending status")
+            self._complete_execution_turn(receipt, result)
+        except BaseException as error:
+            primary = error
+
+        try:
+            self._finish_execution_process(client, process, node=str(node))
+        except BaseException as cleanup_error:
+            if primary is None:
+                primary = cleanup_error
+            else:
+                primary.add_note(
+                    f"execution App Server cleanup also failed: {cleanup_error}"
+                )
+        if primary is not None:
+            raise primary
+
+        self._require_execution_receipt_evidence(receipt)
+        return self._read_completed_execution_response(receipt)
 
     def run_planning_agent(
         self,
@@ -310,7 +574,9 @@ class RuntimeCoordinator:
                 client_message_id=client_message_id,
             )
             if turn.thread_id != thread_id:
-                raise RuntimeStateError("turn/start returned a different planning thread")
+                raise RuntimeStateError(
+                    "turn/start returned a different planning thread"
+                )
             pending.update(
                 codex_thread_id=turn.thread_id,
                 codex_turn_id=turn.turn_id,
@@ -331,18 +597,14 @@ class RuntimeCoordinator:
             result = client.recover_turn(thread_id, pending_turn)
         return self._complete_planning_turn(pending, result)
 
-    def prepare_planning_agents(
-        self, role_instructions: Mapping[str, str]
-    ) -> None:
+    def prepare_planning_agents(self, role_instructions: Mapping[str, str]) -> None:
         if not role_instructions:
             raise ValueError("at least one planning role is required")
         self._ensure_planning_app_server()
         for role_key, instructions in role_instructions.items():
             if not role_key or not instructions:
                 raise ValueError("planning roles require instructions")
-            self._ensure_planning_thread(
-                role_key, developer_instructions=instructions
-            )
+            self._ensure_planning_thread(role_key, developer_instructions=instructions)
 
     def prepare_planning_author(
         self, context_pack_path: str | Path
@@ -602,9 +864,7 @@ class RuntimeCoordinator:
         if actual != expected:
             raise RuntimeStateError("reasoning context changed during planning review")
 
-    def _validate_planning_project_seal(
-        self, record: Mapping[str, object]
-    ) -> None:
+    def _validate_planning_project_seal(self, record: Mapping[str, object]) -> None:
         current = verify_expected_project_seal(self.project_root)
         if current.expected_seal != record.get("project_seal"):
             raise RuntimeStateError("project seal changed during planning review")
@@ -643,17 +903,13 @@ class RuntimeCoordinator:
             not self._planning_rounds
             or self._planning_rounds[-1].get("status") != "approved"
         ):
-            raise RuntimeStateError(
-                "completed planning stage has no approved handoff"
-            )
+            raise RuntimeStateError("completed planning stage has no approved handoff")
         self._validate_all_planning_evidence_complete()
         self._validate_closed_planning_rounds()
 
     def _validate_review_decision(self, record: Mapping[str, object]) -> None:
         if record.get("reviewed_plan_sha256") != record.get("plan_sha256"):
-            raise RuntimeStateError(
-                "reviewed plan SHA-256 does not match frozen plan"
-            )
+            raise RuntimeStateError("reviewed plan SHA-256 does not match frozen plan")
         accepted = _planning_review_is_accepted(record)
         status = record.get("status")
         if status == "rejected" and accepted:
@@ -702,17 +958,14 @@ class RuntimeCoordinator:
         record["status"] = "approved"
         self._write_state("running")
 
-    def _publish_approved_planning_handoff(
-        self, record: dict[str, object]
-    ) -> None:
+    def _publish_approved_planning_handoff(self, record: dict[str, object]) -> None:
         plan_bytes = _read_required_file(
             Path(str(record["plan_path"])), "frozen test plan"
         )
         approved_path, handoff_path = self._expected_planning_handoff_paths()
-        if (
-            record.get("approved_plan_path") != str(approved_path)
-            or record.get("handoff_path") != str(handoff_path)
-        ):
+        if record.get("approved_plan_path") != str(approved_path) or record.get(
+            "handoff_path"
+        ) != str(handoff_path):
             raise RuntimeStateError("planning publication paths are inconsistent")
         _atomic_write_bytes(approved_path, plan_bytes)
         approved_sha256 = hashlib.sha256(plan_bytes).hexdigest()
@@ -724,10 +977,9 @@ class RuntimeCoordinator:
         self, record: Mapping[str, object]
     ) -> None:
         approved_path, handoff_path = self._expected_planning_handoff_paths()
-        if (
-            record.get("approved_plan_path") != str(approved_path)
-            or record.get("handoff_path") != str(handoff_path)
-        ):
+        if record.get("approved_plan_path") != str(approved_path) or record.get(
+            "handoff_path"
+        ) != str(handoff_path):
             raise RuntimeStateError("planning publication paths are inconsistent")
         approved_sha256 = hashlib.sha256(
             _read_required_file(approved_path, "approved test plan")
@@ -787,8 +1039,12 @@ class RuntimeCoordinator:
                 if primary is None:
                     primary = error
                 else:
-                    primary.add_note(f"planning evidence finalization also failed: {error}")
-                last_verification = getattr(self.relay_client, "last_verification", None)
+                    primary.add_note(
+                        f"planning evidence finalization also failed: {error}"
+                    )
+                last_verification = getattr(
+                    self.relay_client, "last_verification", None
+                )
                 if isinstance(last_verification, Mapping):
                     verification = last_verification
             self._record_evidence(
@@ -826,9 +1082,293 @@ class RuntimeCoordinator:
             or entry.get("application_verification_status") != "VALID_COMPLETE"
             for entry in planning_evidence
         ):
+            raise RuntimeStateError("planning stage has incomplete TraceRelay evidence")
+
+    def _begin_execution_attempt(
+        self, node: str, state: Mapping[str, Any]
+    ) -> dict[str, object]:
+        input_sha256 = _state_sha256(state)
+        latest = self._execution_attempts[-1] if self._execution_attempts else None
+        if latest is not None and latest.get("node") == node:
+            if latest.get("input_sha256") != input_sha256:
+                raise RuntimeStateError(
+                    "the same execution node was re-entered with different state"
+                )
+            return latest
+        if latest is not None and latest.get("status") != "completed":
             raise RuntimeStateError(
-                "planning stage has incomplete TraceRelay evidence"
+                "a new execution node cannot start while the prior attempt is incomplete"
             )
+        sequence = len(self._execution_attempts) + 1
+        attempt_id = f"attempt-{sequence:04d}"
+        attempt = {
+            "attempt_id": attempt_id,
+            "job_id": f"{self.run_id}:execution:{attempt_id}",
+            "node": node,
+            "role": EXECUTION_NODE_ROLES[node],
+            "input_sha256": input_sha256,
+            "status": "running",
+            "output_sha256": None,
+        }
+        self._execution_attempts.append(attempt)
+        return attempt
+
+    def _execution_turn_for_job(self, job_id: str) -> dict[str, object] | None:
+        for receipt in reversed(self._execution_turns):
+            if receipt.get("job_id") == job_id:
+                return receipt
+        return None
+
+    def _require_matching_execution_request(
+        self,
+        receipt: Mapping[str, object],
+        *,
+        role_key: str,
+        request_sha256: str,
+        instructions_sha256: str,
+    ) -> None:
+        if receipt.get("role") != role_key:
+            raise RuntimeStateError("execution turn role changed during recovery")
+        if receipt.get("request_sha256") != request_sha256:
+            raise RuntimeStateError("execution turn request changed during recovery")
+        if receipt.get("developer_instructions_sha256") != instructions_sha256:
+            raise RuntimeStateError(
+                "execution developer instructions changed during recovery"
+            )
+
+    def _ensure_execution_thread(
+        self,
+        client: AppServerClient,
+        receipt: dict[str, object],
+        *,
+        role_key: str,
+        developer_instructions: str,
+        instructions_sha256: str,
+    ) -> str:
+        existing = self._execution_agents.get(role_key)
+        if existing is None:
+            existing = {
+                "status": "allocating",
+                "developer_instructions_sha256": instructions_sha256,
+                "codex_thread_id": None,
+                "model": None,
+                "reasoning_effort": None,
+            }
+            self._execution_agents[role_key] = existing
+            self._write_state("running")
+            handle = client.start_thread(
+                ephemeral=False,
+                sandbox="danger-full-access",
+                approval_policy="never",
+                developer_instructions=developer_instructions,
+            )
+            existing.update(
+                status="ready",
+                codex_thread_id=handle.thread_id,
+                model=handle.model,
+                reasoning_effort=handle.reasoning_effort,
+            )
+        else:
+            if existing.get("status") != "ready":
+                raise RuntimeStateError(
+                    "execution thread allocation outcome is unknown; refusing replacement"
+                )
+            thread_id = existing.get("codex_thread_id")
+            if not isinstance(thread_id, str) or not thread_id:
+                raise RuntimeStateError("saved execution agent has no Codex thread ID")
+            handle = client.resume_thread(
+                thread_id,
+                sandbox="danger-full-access",
+                approval_policy="never",
+            )
+            existing.update(
+                model=handle.model,
+                reasoning_effort=handle.reasoning_effort,
+            )
+        if any(
+            other_role != role_key
+            and other.get("status") == "ready"
+            and other.get("codex_thread_id") == handle.thread_id
+            for other_role, other in self._execution_agents.items()
+        ):
+            raise RuntimeStateError(
+                "execution roles cannot share one persistent Codex thread"
+            )
+        saved_thread = receipt.get("codex_thread_id")
+        if saved_thread is not None and saved_thread != handle.thread_id:
+            raise RuntimeStateError("execution turn changed persistent thread identity")
+        receipt["codex_thread_id"] = handle.thread_id
+        self._write_state("running")
+        return handle.thread_id
+
+    def _complete_execution_turn(
+        self,
+        receipt: dict[str, object],
+        result: TurnResult,
+    ) -> None:
+        if result.status != "completed":
+            raise RuntimeStateError("execution turn did not complete successfully")
+        if result.thread_id != receipt.get(
+            "codex_thread_id"
+        ) or result.turn_id != receipt.get("codex_turn_id"):
+            raise RuntimeStateError("completed execution turn identity mismatch")
+        raw_response = result.final_message
+        response_directory = self.run_state_path.parent / "responses"
+        response_directory.mkdir(parents=True, exist_ok=True)
+        response_path = response_directory / (
+            f"execution-{receipt['attempt_id']}-{uuid4().hex}.json"
+        )
+        _atomic_write_text(response_path, raw_response)
+        receipt.update(
+            status=result.status,
+            raw_response_path=str(response_path),
+            raw_response_sha256=hashlib.sha256(
+                raw_response.encode("utf-8")
+            ).hexdigest(),
+        )
+        self._write_state("running")
+
+    def _finish_execution_process(
+        self,
+        client: AppServerClient,
+        process: ManagedEvidenceProcess | None,
+        *,
+        node: str,
+    ) -> None:
+        primary: BaseException | None = None
+        try:
+            client.close()
+        except BaseException as error:
+            primary = error
+        verification: Mapping[str, object] | None = None
+        application_verification_status = "INVALID"
+        if process is not None:
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                    process.wait(timeout=5)
+                except BaseException as error:
+                    if primary is None:
+                        primary = error
+                    else:
+                        primary.add_note(
+                            f"execution process termination also failed: {error}"
+                        )
+            finalization_succeeded = False
+            try:
+                verification = process.finalize()
+                finalization_succeeded = True
+            except BaseException as error:
+                if primary is None:
+                    primary = error
+                else:
+                    primary.add_note(
+                        f"execution evidence finalization also failed: {error}"
+                    )
+                last_verification = getattr(
+                    self.relay_client, "last_verification", None
+                )
+                if isinstance(last_verification, Mapping):
+                    verification = last_verification
+            if finalization_succeeded and primary is None:
+                application_verification_status = "VALID_COMPLETE"
+            self._record_evidence(
+                process.registration,
+                verification,
+                node=node,
+                application_verification_status=application_verification_status,
+            )
+            self._write_state("running")
+        if primary is not None:
+            raise primary
+
+    def _read_completed_execution_response(self, receipt: Mapping[str, object]) -> str:
+        response_path = receipt.get("raw_response_path")
+        expected_sha256 = _require_sha256(
+            receipt.get("raw_response_sha256"), "raw_response_sha256"
+        )
+        if not isinstance(response_path, str) or not response_path:
+            raise RuntimeStateError("completed execution turn has no response path")
+        response_bytes = _read_required_file(
+            Path(response_path), "completed execution response"
+        )
+        if hashlib.sha256(response_bytes).hexdigest() != expected_sha256:
+            raise RuntimeStateError("completed execution response SHA-256 mismatch")
+        try:
+            return response_bytes.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise RuntimeStateError(
+                "completed execution response is not valid UTF-8"
+            ) from error
+
+    def _require_execution_receipt_evidence(
+        self,
+        receipt: Mapping[str, object],
+        *,
+        allow_empty: bool = False,
+    ) -> None:
+        session_ids = receipt.get("evidence_session_ids")
+        if not isinstance(session_ids, list) or not all(
+            isinstance(item, str) and item for item in session_ids
+        ):
+            raise RuntimeStateError("execution turn has invalid evidence session IDs")
+        if not session_ids:
+            if allow_empty:
+                return
+            raise RuntimeStateError("execution turn has no TraceRelay evidence")
+        evidence_by_id = {
+            entry.get("session_id"): entry for entry in self._evidence_sessions
+        }
+        for session_id in session_ids:
+            entry = evidence_by_id.get(session_id)
+            if (
+                entry is None
+                or entry.get("node") != receipt.get("node")
+                or entry.get("verification_status") != "VALID_COMPLETE"
+                or entry.get("application_verification_status") != "VALID_COMPLETE"
+            ):
+                raise RuntimeStateError(
+                    "execution turn has incomplete TraceRelay evidence"
+                )
+            process_pid = entry.get("process_pid")
+            if (
+                isinstance(process_pid, bool)
+                or not isinstance(process_pid, int)
+                or process_pid <= 0
+            ):
+                raise RuntimeStateError(
+                    "execution turn evidence has no valid App Server PID"
+                )
+
+    def _validate_persisted_execution_receipts(self) -> None:
+        for receipt in self._execution_turns:
+            status = receipt.get("status")
+            self._require_execution_receipt_evidence(
+                receipt,
+                allow_empty=status == "preparing",
+            )
+            if status == "completed":
+                self._read_completed_execution_response(receipt)
+
+    def _validate_execution_stage_complete(self) -> None:
+        if any(
+            agent.get("status") != "ready" for agent in self._execution_agents.values()
+        ):
+            raise RuntimeStateError("Aegis run has an unresolved C/D thread allocation")
+        if any(
+            attempt.get("status") != "completed" for attempt in self._execution_attempts
+        ):
+            raise RuntimeStateError("Aegis run has an incomplete C/D node attempt")
+        turns_by_attempt = {
+            turn.get("attempt_id"): turn for turn in self._execution_turns
+        }
+        for attempt in self._execution_attempts:
+            receipt = turns_by_attempt.get(attempt.get("attempt_id"))
+            if receipt is None or receipt.get("status") != "completed":
+                raise RuntimeStateError(
+                    "Aegis run has an incomplete C/D App Server turn"
+                )
+        self._validate_persisted_execution_receipts()
 
     def _ensure_planning_app_server(self) -> AppServerClient:
         if self._planning_stage_status == "completed":
@@ -880,7 +1420,9 @@ class RuntimeCoordinator:
             try:
                 self.finish_planning_stage()
             except BaseException as cleanup_error:
-                error.add_note(f"planning App Server cleanup also failed: {cleanup_error}")
+                error.add_note(
+                    f"planning App Server cleanup also failed: {cleanup_error}"
+                )
             raise
         return client
 
@@ -946,9 +1488,7 @@ class RuntimeCoordinator:
                 return turn
         return None
 
-    def _read_completed_planning_response(
-        self, receipt: Mapping[str, object]
-    ) -> str:
+    def _read_completed_planning_response(self, receipt: Mapping[str, object]) -> str:
         response_path = receipt.get("raw_response_path")
         expected_sha256 = _require_sha256(
             receipt.get("raw_response_sha256"), "raw_response_sha256"
@@ -978,10 +1518,9 @@ class RuntimeCoordinator:
         receipt: dict[str, object],
         result: TurnResult,
     ) -> str:
-        if (
-            result.thread_id != receipt.get("codex_thread_id")
-            or result.turn_id != receipt.get("codex_turn_id")
-        ):
+        if result.thread_id != receipt.get(
+            "codex_thread_id"
+        ) or result.turn_id != receipt.get("codex_turn_id"):
             raise RuntimeStateError("completed planning turn identity mismatch")
         raw_response = result.final_message
         response_directory = self.run_state_path.parent / "responses"
@@ -1013,7 +1552,19 @@ class RuntimeCoordinator:
         *,
         node: str | None = None,
         application_verification_status: str | None = None,
+        process_pid: int | None = None,
     ) -> None:
+        prior = next(
+            (
+                entry
+                for entry in self._evidence_sessions
+                if entry.get("session_id") == registration.session_id
+            ),
+            None,
+        )
+        if process_pid is None and prior is not None:
+            saved_pid = prior.get("process_pid")
+            process_pid = saved_pid if isinstance(saved_pid, int) else None
         entry = {
             "node": node or self._current_node,
             "session_id": registration.session_id,
@@ -1023,6 +1574,7 @@ class RuntimeCoordinator:
             ),
             "application_verification_status": application_verification_status,
             "final_hash": verification.get("final_hash") if verification else None,
+            "process_pid": process_pid,
         }
         for index, existing in enumerate(self._evidence_sessions):
             if existing.get("session_id") == registration.session_id:
@@ -1032,6 +1584,7 @@ class RuntimeCoordinator:
 
     def complete(self, state: dict[str, Any]) -> None:
         self.finish_planning_stage()
+        self._validate_execution_stage_complete()
         self._current_node = None
         self._last_state = dict(state)
         self._write_state("completed")
@@ -1043,9 +1596,7 @@ class RuntimeCoordinator:
             error.add_note(f"planning stage cleanup also failed: {cleanup_error}")
         self._write_state("failed", error)
 
-    def _write_state(
-        self, status: str, error: BaseException | None = None
-    ) -> None:
+    def _write_state(self, status: str, error: BaseException | None = None) -> None:
         if not self._state_writable or self._reservation_token is None:
             raise RuntimeStateError("run state has not been durably reserved")
         payload = self._build_state_payload(status, error)
@@ -1079,6 +1630,11 @@ class RuntimeCoordinator:
             "planning_turns": [dict(item) for item in self._planning_turns],
             "planning_rounds": [dict(item) for item in self._planning_rounds],
             "planning_stage_status": self._planning_stage_status,
+            "execution_agents": {
+                role: dict(value) for role, value in self._execution_agents.items()
+            },
+            "execution_turns": [dict(item) for item in self._execution_turns],
+            "execution_attempts": [dict(item) for item in self._execution_attempts],
             "codex_cli_path": self._codex_cli_path,
             "codex_cli_version": self._codex_cli_version,
             "created_at_utc": self._created_at_utc,
@@ -1108,9 +1664,9 @@ def load_run_state(artifact_path: str | Path, run_id: str) -> dict[str, object]:
         raise RuntimeStateError(f"cannot load run state: {path}: {error}") from error
     if not isinstance(payload, dict):
         raise RuntimeStateError("run state must be an object")
-    if payload.get("schema") == "aegis.run_state.v1":
+    if payload.get("schema") in {"aegis.run_state.v1", "aegis.run_state.v2"}:
         raise RuntimeStateError(
-            "run state predates Planning Handoff v1; start a new run"
+            "run state predates C/D App Server transactions; start a new run"
         )
     if payload.get("schema") != RUN_STATE_SCHEMA:
         raise RuntimeStateError("run state has an unsupported schema")
@@ -1245,9 +1801,12 @@ def _sqlite_thread_exists(connection: sqlite3.Connection, run_id: str) -> bool:
         exists = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
         ).fetchone()
-        if exists and connection.execute(
-            f"SELECT 1 FROM {table} WHERE thread_id = ? LIMIT 1", (run_id,)
-        ).fetchone():
+        if (
+            exists
+            and connection.execute(
+                f"SELECT 1 FROM {table} WHERE thread_id = ? LIMIT 1", (run_id,)
+            ).fetchone()
+        ):
             return True
     return False
 
@@ -1260,9 +1819,7 @@ def _optional_string(value: object) -> str | None:
     return value
 
 
-def _planning_request_sha256(
-    prompt: str, output_schema: Mapping[str, Any]
-) -> str:
+def _planning_request_sha256(prompt: str, output_schema: Mapping[str, Any]) -> str:
     encoded = json.dumps(
         {"output_schema": dict(output_schema), "prompt": prompt},
         ensure_ascii=False,
@@ -1271,6 +1828,251 @@ def _planning_request_sha256(
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _state_sha256(state: Mapping[str, Any]) -> str:
+    try:
+        encoded = json.dumps(
+            dict(state),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise RuntimeStateError(
+            f"execution graph state is not deterministic JSON: {error}"
+        ) from error
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_execution_agents(agents: Mapping[str, Mapping[str, object]]) -> None:
+    valid_roles = set(EXECUTION_NODE_ROLES.values())
+    ready_thread_ids: set[str] = set()
+    for role, agent in agents.items():
+        if role not in valid_roles:
+            raise RuntimeStateError("prior execution agents contain an unknown role")
+        status = agent.get("status")
+        if status not in EXECUTION_AGENT_STATUSES:
+            raise RuntimeStateError("prior execution agent has an invalid status")
+        _require_sha256(
+            agent.get("developer_instructions_sha256"),
+            "developer_instructions_sha256",
+        )
+        thread_id = agent.get("codex_thread_id")
+        if status == "allocating":
+            if thread_id is not None:
+                raise RuntimeStateError(
+                    "allocating execution agent already has a thread ID"
+                )
+        elif not isinstance(thread_id, str) or not thread_id:
+            raise RuntimeStateError("ready execution agent has no thread ID")
+        elif thread_id in ready_thread_ids:
+            raise RuntimeStateError(
+                "prior execution roles share one persistent thread ID"
+            )
+        else:
+            ready_thread_ids.add(thread_id)
+        for field in ("model", "reasoning_effort"):
+            value = agent.get(field)
+            if value is not None and not isinstance(value, str):
+                raise RuntimeStateError(f"prior execution agent has an invalid {field}")
+
+
+def _validate_execution_attempts(
+    attempts: Sequence[Mapping[str, object]],
+) -> None:
+    for index, attempt in enumerate(attempts, start=1):
+        attempt_id = f"attempt-{index:04d}"
+        if attempt.get("attempt_id") != attempt_id:
+            raise RuntimeStateError("prior execution attempts are not contiguous")
+        job_id = attempt.get("job_id")
+        if not isinstance(job_id, str) or not job_id:
+            raise RuntimeStateError("prior execution attempt has an invalid job ID")
+        node = attempt.get("node")
+        if node not in EXECUTION_NODE_ROLES:
+            raise RuntimeStateError("prior execution attempt has an invalid node")
+        if attempt.get("role") != EXECUTION_NODE_ROLES[str(node)]:
+            raise RuntimeStateError(
+                "prior execution attempt role does not match its node"
+            )
+        _require_sha256(attempt.get("input_sha256"), "input_sha256")
+        status = attempt.get("status")
+        if status == "running":
+            if index != len(attempts):
+                raise RuntimeStateError(
+                    "only the latest execution attempt may remain running"
+                )
+            if attempt.get("output_sha256") is not None:
+                raise RuntimeStateError("running execution attempt already has output")
+        elif status == "completed":
+            _require_sha256(attempt.get("output_sha256"), "output_sha256")
+        else:
+            raise RuntimeStateError("prior execution attempt has an invalid status")
+        if index > 1 and attempts[index - 2].get("node") == node:
+            raise RuntimeStateError("prior execution attempts repeat a graph node")
+
+
+def _validate_execution_turns(turns: Sequence[Mapping[str, object]]) -> None:
+    seen_jobs: set[str] = set()
+    seen_attempts: set[str] = set()
+    for receipt in turns:
+        attempt_id = receipt.get("attempt_id")
+        job_id = receipt.get("job_id")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            raise RuntimeStateError("prior execution turn has an invalid attempt ID")
+        if attempt_id in seen_attempts:
+            raise RuntimeStateError("prior execution turns contain a duplicate attempt")
+        seen_attempts.add(attempt_id)
+        if not isinstance(job_id, str) or not job_id:
+            raise RuntimeStateError("prior execution turn has an invalid job ID")
+        if job_id in seen_jobs:
+            raise RuntimeStateError("prior execution turns contain a duplicate job")
+        seen_jobs.add(job_id)
+        node = receipt.get("node")
+        if node not in EXECUTION_NODE_ROLES:
+            raise RuntimeStateError("prior execution turn has an invalid node")
+        if receipt.get("role") != EXECUTION_NODE_ROLES[str(node)]:
+            raise RuntimeStateError("prior execution turn role does not match its node")
+        if (
+            not isinstance(receipt.get("client_message_id"), str)
+            or not receipt["client_message_id"]
+        ):
+            raise RuntimeStateError(
+                "prior execution turn has an invalid client_message_id"
+            )
+        _require_sha256(receipt.get("request_sha256"), "request_sha256")
+        _require_sha256(
+            receipt.get("developer_instructions_sha256"),
+            "developer_instructions_sha256",
+        )
+        thread_id = receipt.get("codex_thread_id")
+        turn_id = receipt.get("codex_turn_id")
+        status = receipt.get("status")
+        if status not in EXECUTION_TURN_STATUSES:
+            raise RuntimeStateError("prior execution turn has an invalid status")
+        if status == "preparing":
+            if thread_id is not None and (
+                not isinstance(thread_id, str) or not thread_id
+            ):
+                raise RuntimeStateError(
+                    "preparing execution turn has invalid thread ID"
+                )
+            if turn_id is not None:
+                raise RuntimeStateError(
+                    "preparing execution turn already has a turn ID"
+                )
+        elif status == "submitting":
+            if not isinstance(thread_id, str) or not thread_id:
+                raise RuntimeStateError("submitting execution turn has no thread ID")
+            if turn_id is not None:
+                raise RuntimeStateError(
+                    "submitting execution turn already has a turn ID"
+                )
+        else:
+            if not isinstance(thread_id, str) or not thread_id:
+                raise RuntimeStateError("execution turn has no thread ID")
+            if not isinstance(turn_id, str) or not turn_id:
+                raise RuntimeStateError("execution turn has no turn ID")
+        if status == "completed":
+            if not isinstance(receipt.get("raw_response_path"), str):
+                raise RuntimeStateError("completed execution turn has no response path")
+            _require_sha256(receipt.get("raw_response_sha256"), "raw_response_sha256")
+        session_ids = receipt.get("evidence_session_ids")
+        if not isinstance(session_ids, list) or not all(
+            isinstance(item, str) and item for item in session_ids
+        ):
+            raise RuntimeStateError(
+                "prior execution turn has invalid evidence session IDs"
+            )
+        if len(session_ids) != len(set(session_ids)):
+            raise RuntimeStateError(
+                "prior execution turn repeats an evidence session ID"
+            )
+
+
+def _validate_execution_bindings(
+    attempts: Sequence[Mapping[str, object]],
+    agents: Mapping[str, Mapping[str, object]],
+    turns: Sequence[Mapping[str, object]],
+    evidence: Sequence[Mapping[str, object]],
+    *,
+    run_id: str,
+) -> None:
+    attempts_by_id = {attempt["attempt_id"]: attempt for attempt in attempts}
+    turns_by_attempt = {turn["attempt_id"]: turn for turn in turns}
+    evidence_by_id: dict[object, Mapping[str, object]] = {}
+    for entry in evidence:
+        session_id = entry.get("session_id")
+        if session_id in evidence_by_id:
+            raise RuntimeStateError("prior evidence sessions contain a duplicate ID")
+        evidence_by_id[session_id] = entry
+    linked_sessions: set[str] = set()
+    for attempt in attempts:
+        expected_job_id = f"{run_id}:execution:{attempt['attempt_id']}"
+        if attempt.get("job_id") != expected_job_id:
+            raise RuntimeStateError(
+                "execution attempt job ID does not match the run identity"
+            )
+    for receipt in turns:
+        attempt = attempts_by_id.get(receipt["attempt_id"])
+        if attempt is None or any(
+            receipt.get(field) != attempt.get(field)
+            for field in ("job_id", "node", "role")
+        ):
+            raise RuntimeStateError("execution turn does not match its node attempt")
+        if receipt.get("client_message_id") != f"{receipt['job_id']}:submission":
+            raise RuntimeStateError(
+                "execution turn client message ID does not match its job"
+            )
+        agent = agents.get(str(receipt["role"]))
+        thread_id = receipt.get("codex_thread_id")
+        if thread_id is not None:
+            if (
+                agent is None
+                or agent.get("status") != "ready"
+                or agent.get("codex_thread_id") != thread_id
+                or agent.get("developer_instructions_sha256")
+                != receipt.get("developer_instructions_sha256")
+            ):
+                raise RuntimeStateError(
+                    "execution turn does not match its persistent agent"
+                )
+        for session_id in receipt["evidence_session_ids"]:
+            if session_id in linked_sessions:
+                raise RuntimeStateError(
+                    "one TraceRelay session is linked to multiple execution turns"
+                )
+            linked_sessions.add(session_id)
+            entry = evidence_by_id.get(session_id)
+            if entry is None or entry.get("node") != receipt.get("node"):
+                raise RuntimeStateError(
+                    "execution turn evidence binding is missing or inconsistent"
+                )
+            process_pid = entry.get("process_pid")
+            if (
+                isinstance(process_pid, bool)
+                or not isinstance(process_pid, int)
+                or process_pid <= 0
+            ):
+                raise RuntimeStateError(
+                    "execution turn evidence has no valid App Server PID"
+                )
+    for session_id, entry in evidence_by_id.items():
+        if (
+            entry.get("node") in EXECUTION_NODE_ROLES
+            and session_id not in linked_sessions
+        ):
+            raise RuntimeStateError(
+                "execution TraceRelay evidence is not linked to a turn"
+            )
+    for attempt in attempts:
+        if attempt.get("status") == "completed":
+            receipt = turns_by_attempt.get(attempt["attempt_id"])
+            if receipt is None or receipt.get("status") != "completed":
+                raise RuntimeStateError(
+                    "completed execution attempt has no completed turn"
+                )
 
 
 def _validate_planning_turns(turns: Sequence[Mapping[str, object]]) -> None:
@@ -1288,15 +2090,15 @@ def _validate_planning_turns(turns: Sequence[Mapping[str, object]]) -> None:
         seen_jobs.add(identity)
         for field in ("client_message_id", "codex_thread_id"):
             if not isinstance(receipt.get(field), str) or not receipt[field]:
-                raise RuntimeStateError(
-                    f"prior planning turn has an invalid {field}"
-                )
+                raise RuntimeStateError(f"prior planning turn has an invalid {field}")
         _require_sha256(receipt.get("request_sha256"), "request_sha256")
         status = receipt.get("status")
         turn_id = receipt.get("codex_turn_id")
         if status == "submitting":
             if turn_id is not None:
-                raise RuntimeStateError("submitting planning turn already has a turn ID")
+                raise RuntimeStateError(
+                    "submitting planning turn already has a turn ID"
+                )
         elif status in {"inProgress", "completed"}:
             if not isinstance(turn_id, str) or not turn_id:
                 raise RuntimeStateError("planning turn has no Codex turn ID")
@@ -1305,9 +2107,7 @@ def _validate_planning_turns(turns: Sequence[Mapping[str, object]]) -> None:
         if status == "completed":
             if not isinstance(receipt.get("raw_response_path"), str):
                 raise RuntimeStateError("completed planning turn has no response path")
-            _require_sha256(
-                receipt.get("raw_response_sha256"), "raw_response_sha256"
-            )
+            _require_sha256(receipt.get("raw_response_sha256"), "raw_response_sha256")
 
 
 def _validate_planning_rounds(rounds: Sequence[Mapping[str, object]]) -> None:
@@ -1327,27 +2127,19 @@ def _validate_planning_rounds(rounds: Sequence[Mapping[str, object]]) -> None:
             "created_at_utc",
         ):
             if not isinstance(record.get(field), str) or not record[field]:
-                raise RuntimeStateError(
-                    f"prior planning round has an invalid {field}"
-                )
+                raise RuntimeStateError(f"prior planning round has an invalid {field}")
         _require_sha256(record.get("context_pack_sha256"), "context_pack_sha256")
         if status in {"review_pending", "rejected", "publishing", "approved"}:
             _require_sha256(record.get("plan_sha256"), "plan_sha256")
         if status in {"rejected", "publishing", "approved"}:
-            _require_sha256(
-                record.get("review_report_sha256"), "review_report_sha256"
-            )
-            _require_sha256(
-                record.get("reviewed_plan_sha256"), "reviewed_plan_sha256"
-            )
+            _require_sha256(record.get("review_report_sha256"), "review_report_sha256")
+            _require_sha256(record.get("reviewed_plan_sha256"), "reviewed_plan_sha256")
             if record.get("reviewed_plan_sha256") != record.get("plan_sha256"):
                 raise RuntimeStateError(
                     "reviewed plan SHA-256 does not match frozen plan"
                 )
             _require_bounded_integer(record.get("score"), "score", 0, 100)
-            _require_bounded_integer(
-                record.get("error_count"), "error_count", 0, None
-            )
+            _require_bounded_integer(record.get("error_count"), "error_count", 0, None)
             _require_bounded_integer(
                 record.get("warning_count"), "warning_count", 0, None
             )
@@ -1369,7 +2161,9 @@ def _validate_planning_rounds(rounds: Sequence[Mapping[str, object]]) -> None:
                         f"prior planning round has an invalid {field}"
                     )
         if index < len(rounds) and status != "rejected":
-            raise RuntimeStateError("only a rejected planning round may have a successor")
+            raise RuntimeStateError(
+                "only a rejected planning round may have a successor"
+            )
 
 
 def _planning_review_is_accepted(record: Mapping[str, object]) -> bool:
@@ -1487,6 +2281,4 @@ def _write_json_exclusive(path: Path, payload: Mapping[str, object]) -> None:
 
 
 def _utc_now_text() -> str:
-    return datetime.now(UTC).isoformat(timespec="microseconds").replace(
-        "+00:00", "Z"
-    )
+    return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")

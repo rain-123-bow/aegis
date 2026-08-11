@@ -66,7 +66,9 @@ class PassthroughCoordinator:
 
 
 class MainRuntimeIntegrationTests(unittest.TestCase):
-    def test_planning_nodes_use_app_server_roles_and_close_before_executor(self) -> None:
+    def test_planning_nodes_close_before_executor_uses_its_own_app_server_turn(
+        self,
+    ) -> None:
         events: list[object] = []
 
         class FakePlanningCoordinator:
@@ -135,6 +137,25 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             def complete_planning_stage(self) -> None:
                 events.append("planning_closed")
 
+            def run_execution_agent(
+                self,
+                role_key: str,
+                prompt: str,
+                *,
+                output_schema: dict[str, Any],
+                developer_instructions: str,
+                timeout_seconds: float,
+            ) -> str:
+                del output_schema, timeout_seconds
+                events.append(("execution", role_key, prompt, developer_instructions))
+                return json.dumps(
+                    {
+                        "artifact_path": "C:/artifacts",
+                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                        "status": True,
+                    }
+                )
+
         coordinator = FakePlanningCoordinator()
         state = {
             "artifact_path": "C:/artifacts",
@@ -158,30 +179,22 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 "thread_id": "old-reviewer",
                 "role_description": "reviewer role",
             },
+            main.TEST_EXECUTOR_ROLE: {
+                "thread_id": "old-executor",
+                "role_description": "executor role",
+            },
         }
 
         with (
             patch.object(main, "active_runtime_coordinator", return_value=coordinator),
             patch.object(main, "load_node_message_schema", return_value=schema),
-            patch.object(main, "load_agent_config", side_effect=lambda role: configs[role]),
             patch.object(
-                main,
-                "send_prompt_to_thread",
-                side_effect=lambda thread_id, prompt: (
-                    events.append(("executor", thread_id, prompt))
-                    or json.dumps(
-                        {
-                            "artifact_path": "C:/artifacts",
-                            "reasoning_ledger_context_pack": "C:/artifacts/context.json",
-                            "status": True,
-                        }
-                    )
-                ),
+                main, "load_agent_config", side_effect=lambda role: configs[role]
             ),
             patch.object(
                 main,
-                "load_agent_thread_map",
-                return_value={main.TEST_EXECUTOR_ROLE: "executor-thread"},
+                "send_prompt_to_thread",
+                side_effect=AssertionError("C used the legacy codex exec path"),
             ),
         ):
             authored = main.test_plan_author_node(state)
@@ -201,12 +214,98 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             [main.TEST_PLAN_AUTHOR_ROLE, main.TEST_PLAN_REVIEWER_ROLE],
         )
         self.assertLess(events.index("planning_closed"), len(events) - 1)
-        self.assertEqual(events[-1][0], "executor")
-        planning_events = [event for event in events if isinstance(event, tuple) and event[0] == "planning"]
+        self.assertEqual(events[-1][0], "execution")
+        planning_events = [
+            event
+            for event in events
+            if isinstance(event, tuple) and event[0] == "planning"
+        ]
         self.assertIn("author role", planning_events[0][3])
         self.assertIn("Do not use Aegis-specific skills", planning_events[0][3])
         self.assertIn("planning_author_control", planning_events[0][2])
         self.assertIn("planning_review_control", planning_events[1][2])
+        self.assertIn("executor role", events[-1][3])
+        self.assertIn("Do not use Aegis-specific skills", events[-1][3])
+
+    def test_c_and_d_use_app_server_turns_while_e_and_f_keep_legacy_exec(self) -> None:
+        execution_calls: list[tuple[str, str]] = []
+        legacy_calls: list[tuple[str, str]] = []
+        responses = {
+            main.TEST_EXECUTOR_ROLE: True,
+            main.TEST_RESULT_REVIEWER_ROLE: True,
+        }
+
+        class FakeCoordinator:
+            def run_execution_agent(
+                self,
+                role_key: str,
+                prompt: str,
+                *,
+                output_schema: dict[str, Any],
+                developer_instructions: str,
+                timeout_seconds: float,
+            ) -> str:
+                del output_schema, timeout_seconds
+                execution_calls.append((role_key, developer_instructions))
+                return json.dumps(
+                    {
+                        "artifact_path": "C:/artifacts",
+                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                        "status": responses[role_key],
+                    }
+                )
+
+        state = {
+            "artifact_path": "C:/artifacts",
+            "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+            "status": True,
+        }
+        configs = {
+            role: {"role_key": role, "role_description": f"{role} instructions"}
+            for role in (
+                main.TEST_EXECUTOR_ROLE,
+                main.TEST_RESULT_REVIEWER_ROLE,
+            )
+        }
+        legacy_threads = {
+            main.TEST_REPORT_WRITER_ROLE: "legacy-e",
+            main.FINAL_REVIEWER_ROLE: "legacy-f",
+        }
+
+        def legacy_send(thread_id: str, prompt: str) -> str:
+            legacy_calls.append((thread_id, prompt))
+            return json.dumps({**state, "status": True})
+
+        with (
+            patch.object(
+                main, "active_runtime_coordinator", return_value=FakeCoordinator()
+            ),
+            patch.object(
+                main, "load_agent_config", side_effect=lambda role: configs[role]
+            ),
+            patch.object(main, "load_agent_thread_map", return_value=legacy_threads),
+            patch.object(main, "send_prompt_to_thread", side_effect=legacy_send),
+        ):
+            executed = main.test_executor_node(state)
+            reviewed = main.test_result_reviewer_node(executed)
+            reported = main.test_report_writer_node(reviewed)
+            finalized = main.final_reviewer_node(reported)
+
+        self.assertTrue(finalized["status"])
+        self.assertEqual(
+            [role for role, _instructions in execution_calls],
+            [main.TEST_EXECUTOR_ROLE, main.TEST_RESULT_REVIEWER_ROLE],
+        )
+        self.assertEqual(
+            [thread_id for thread_id, _prompt in legacy_calls],
+            ["legacy-e", "legacy-f"],
+        )
+        self.assertTrue(
+            all(
+                "Do not use Aegis-specific skills" in value
+                for _, value in execution_calls
+            )
+        )
 
     def test_review_model_status_cannot_bypass_coordinator_threshold(self) -> None:
         closed = {"value": False}
@@ -252,7 +351,9 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
         config = {"thread_id": "old-reviewer", "role_description": "reviewer role"}
         with (
             patch.object(
-                main, "active_runtime_coordinator", return_value=FakePlanningCoordinator()
+                main,
+                "active_runtime_coordinator",
+                return_value=FakePlanningCoordinator(),
             ),
             patch.object(main, "load_agent_config", return_value=config),
         ):
@@ -361,7 +462,9 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                     "skip_turn": False,
                 }
 
-            def run_planning_agent(self, role_key: str, prompt: str, **kwargs: Any) -> str:
+            def run_planning_agent(
+                self, role_key: str, prompt: str, **kwargs: Any
+            ) -> str:
                 del role_key, prompt, kwargs
                 return json.dumps(
                     {
@@ -388,7 +491,9 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
         config = {"thread_id": "old-reviewer", "role_description": "reviewer role"}
         with (
             patch.object(
-                main, "active_runtime_coordinator", return_value=FakePlanningCoordinator()
+                main,
+                "active_runtime_coordinator",
+                return_value=FakePlanningCoordinator(),
             ),
             patch.object(main, "load_agent_config", return_value=config),
         ):
@@ -435,9 +540,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                     "A",
                     lambda state: {
                         **state,
-                        "response": main.send_prompt_to_thread(
-                            "thread-1", "prompt"
-                        ),
+                        "response": main.send_prompt_to_thread("thread-1", "prompt"),
                     },
                     {"status": True},
                 )
@@ -484,9 +587,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                         coordinator=PassthroughCoordinator(),
                     )
                     with self.assertRaisesRegex(RuntimeError, "B failed"):
-                        graph.invoke(
-                            {"status": True}, config=config, durability="sync"
-                        )
+                        graph.invoke({"status": True}, config=config, durability="sync")
                     self.assertEqual(graph.get_state(config).next, ("B",))
 
                     fail_b["value"] = False
@@ -624,7 +725,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 return FakeGraph()
 
             saved = {
-                "schema": "aegis.run_state.v2",
+                "schema": "aegis.run_state.v3",
                 "run_id": "run-resume",
                 "status": "failed",
                 "project_root": str(root.resolve()),
@@ -709,7 +810,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 yield object()
 
             saved = {
-                "schema": "aegis.run_state.v2",
+                "schema": "aegis.run_state.v3",
                 "run_id": "run-resume-after-planning",
                 "status": "failed",
                 "project_root": str(root.resolve()),

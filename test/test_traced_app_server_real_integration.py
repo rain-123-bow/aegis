@@ -66,7 +66,7 @@ REVIEW_NODE_SCHEMA = {
     "set TRACERELAY_COMMAND to run the traced App Server acceptance",
 )
 class TracedAppServerRealIntegrationTests(unittest.TestCase):
-    def test_two_persistent_roles_share_one_verified_relay_session(self) -> None:
+    def test_planning_and_per_turn_execution_control_planes(self) -> None:
         tracerelay_command = str(Path(os.environ["TRACERELAY_COMMAND"]).resolve())
         initial = subprocess.run(
             [tracerelay_command, "status"],
@@ -83,7 +83,11 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
         short_id = uuid4().hex[:12]
         run_id = f"p-{short_id}"
         root = (
-            Path(os.environ.get("AEGIS_APP_SERVER_ACCEPTANCE_ROOT", r"C:\code\aegis_artifacts"))
+            Path(
+                os.environ.get(
+                    "AEGIS_APP_SERVER_ACCEPTANCE_ROOT", r"C:\code\aegis_artifacts"
+                )
+            )
             / "as_pilot"
             / short_id
         ).resolve()
@@ -136,7 +140,9 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                     ),
                 }
             )
-            expected_json = json.dumps(expected, ensure_ascii=False, separators=(",", ":"))
+            expected_json = json.dumps(
+                expected, ensure_ascii=False, separators=(",", ":")
+            )
             author_raws: list[str] = []
             reviewer_outputs: list[dict[str, object]] = []
             accepted = False
@@ -148,9 +154,9 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                         "Write a complete executable acceptance plan to plan_path. The sealed "
                         "project contains src/acceptance_target.py with ACCEPTANCE_TARGET=True. "
                         "The required test runs from project_root with command `python -c "
-                        "\"from src.acceptance_target import ACCEPTANCE_TARGET; "
+                        '"from src.acceptance_target import ACCEPTANCE_TARGET; '
                         "print(ACCEPTANCE_TARGET); raise SystemExit(0 if "
-                        "ACCEPTANCE_TARGET is True else 1)\"`. The plan must state cwd, command, "
+                        'ACCEPTANCE_TARGET is True else 1)"`. The plan must state cwd, command, '
                         "input, expected stdout `True`, expected exit code 0, evidence file paths, "
                         "and the exact pass/fail rule. This synthetic acceptance has no other "
                         "requirements. Address every prior review item when present. Then return "
@@ -188,51 +194,170 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                     break
             self.assertTrue(accepted, reviewer_outputs)
             coordinator.complete_planning_stage()
+
+            execution_instructions = {
+                "TEST_EXECUTOR": (
+                    "Persistent synthetic test executor. Use tools only for the requested "
+                    "synthetic command and evidence files. Do not use Aegis-specific skills. "
+                    "Return only schema-valid JSON after evidence is durable."
+                ),
+                "TEST_RESULT_REVIEWER": (
+                    "Independent synthetic evidence reviewer. Read only the requested evidence "
+                    "files. Do not use Aegis-specific skills. Return only schema-valid JSON."
+                ),
+            }
+
+            def execute_turn(
+                node: str,
+                role: str,
+                prompt: str,
+                node_state: dict[str, object],
+            ) -> dict[str, object]:
+                def operation(input_state: dict[str, object]) -> dict[str, object]:
+                    raw = coordinator.run_execution_agent(
+                        role,
+                        prompt,
+                        output_schema=NODE_SCHEMA,
+                        developer_instructions=execution_instructions[role],
+                        timeout_seconds=1_800,
+                    )
+                    output = json.loads(raw)
+                    self.assertEqual(output, expected)
+                    return {**input_state, **output}
+
+                return coordinator.execute_node(node, operation, node_state)
+
+            first_c = execute_turn(
+                "C",
+                "TEST_EXECUTOR",
+                (
+                    'Run this exact command from project_root: `python -c "from '
+                    "src.acceptance_target import ACCEPTANCE_TARGET; print(ACCEPTANCE_TARGET); "
+                    'raise SystemExit(0 if ACCEPTANCE_TARGET is True else 1)"`. Write the '
+                    "captured stdout and exit code to artifact_path/EXECUTION_EVIDENCE.txt. "
+                    "Remember marker C-PERSISTENT-THREAD. Then return exactly this JSON object: "
+                    f"{expected_json}"
+                ),
+                expected,
+            )
+            first_d = execute_turn(
+                "D",
+                "TEST_RESULT_REVIEWER",
+                (
+                    "Read artifact_path/EXECUTION_EVIDENCE.txt. Accept only when it records "
+                    "stdout True and exit code 0. Return exactly this JSON object when valid: "
+                    f"{expected_json}"
+                ),
+                first_c,
+            )
+            execute_turn(
+                "C",
+                "TEST_EXECUTOR",
+                (
+                    "This is a second turn on your persistent role. Write the marker you were "
+                    "told to remember to artifact_path/THREAD_CONTINUITY.txt. Return exactly "
+                    f"this JSON object: {expected_json}"
+                ),
+                {**first_d, "status": False, "retry": 2},
+            )
             coordinator.complete(expected)
 
             state = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
-            threads = {
-                value["codex_thread_id"]
-                for value in state["planning_agents"].values()
+            planning_threads = {
+                value["codex_thread_id"] for value in state["planning_agents"].values()
             }
-            turns = {item["codex_turn_id"] for item in state["planning_turns"]}
-            self.assertEqual(len(threads), 2)
-            self.assertEqual(len(turns), len(state["planning_rounds"]) * 2)
+            planning_turns = {item["codex_turn_id"] for item in state["planning_turns"]}
+            execution_threads = {
+                role: value["codex_thread_id"]
+                for role, value in state["execution_agents"].items()
+            }
+            execution_turns = state["execution_turns"]
+            self.assertEqual(len(planning_threads), 2)
+            self.assertEqual(len(planning_turns), len(state["planning_rounds"]) * 2)
+            self.assertEqual(len(execution_threads), 2)
+            self.assertEqual(
+                [item["codex_thread_id"] for item in execution_turns],
+                [
+                    execution_threads["TEST_EXECUTOR"],
+                    execution_threads["TEST_RESULT_REVIEWER"],
+                    execution_threads["TEST_EXECUTOR"],
+                ],
+            )
+            self.assertEqual(
+                len({item["codex_turn_id"] for item in execution_turns}), 3
+            )
             self.assertEqual(state["status"], "completed")
             self.assertEqual(state["planning_stage_status"], "completed")
             self.assertEqual(state["planning_rounds"][-1]["status"], "approved")
             self.assertTrue((artifact_path / "APPROVED_TEST_PLAN.md").is_file())
             self.assertTrue((artifact_path / "PLANNING_HANDOFF.json").is_file())
-            self.assertEqual(len(state["evidence_sessions"]), 1)
-            evidence = state["evidence_sessions"][0]
-            self.assertEqual(evidence["node"], "planning")
-            self.assertEqual(evidence["verification_status"], "VALID_COMPLETE")
+            planning_evidence = [
+                item
+                for item in state["evidence_sessions"]
+                if item["node"] == "planning"
+            ]
+            execution_evidence = [
+                item
+                for item in state["evidence_sessions"]
+                if item["node"] in {"C", "D"}
+            ]
+            self.assertEqual(len(planning_evidence), 1)
+            self.assertEqual(len(execution_evidence), 3)
             self.assertEqual(
-                evidence["application_verification_status"], "VALID_COMPLETE"
+                len({item["session_id"] for item in execution_evidence}), 3
             )
-            self.assertTrue(all(Path(item["raw_response_path"]).is_file() for item in state["planning_turns"]))
+            self.assertEqual(
+                len({item["process_pid"] for item in execution_evidence}), 3
+            )
+            self.assertTrue(
+                all(
+                    item["verification_status"] == "VALID_COMPLETE"
+                    and item["application_verification_status"] == "VALID_COMPLETE"
+                    for item in state["evidence_sessions"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    Path(item["raw_response_path"]).is_file()
+                    for item in state["planning_turns"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    Path(item["raw_response_path"]).is_file()
+                    for item in execution_turns
+                )
+            )
+            self.assertEqual(
+                (artifact_path / "THREAD_CONTINUITY.txt")
+                .read_text(encoding="utf-8")
+                .strip(),
+                "C-PERSISTENT-THREAD",
+            )
 
             report = {
-                "schema": "aegis.planning_handoff_acceptance.v1",
+                "schema": "aegis.app_server_control_acceptance.v2",
                 "verdict": "PASS",
                 "created_at_utc": stamp,
                 "run_id": run_id,
                 "run_state_path": str(coordinator.run_state_path),
                 "codex_cli_path": state["codex_cli_path"],
                 "codex_cli_version": state["codex_cli_version"],
-                "codex_thread_ids": sorted(threads),
-                "codex_turn_ids": sorted(turns),
+                "planning_thread_ids": sorted(planning_threads),
+                "planning_turn_ids": sorted(planning_turns),
+                "execution_agents": state["execution_agents"],
+                "execution_turns": execution_turns,
                 "planning_rounds": state["planning_rounds"],
-                "evidence_session": evidence,
+                "evidence_sessions": state["evidence_sessions"],
                 "planning_handoff": json.loads(
                     (artifact_path / "PLANNING_HANDOFF.json").read_text(
                         encoding="utf-8"
                     )
                 ),
                 "source_sha256": {
-                    str(path.relative_to(PROJECT_ROOT)).replace("\\", "/"): hashlib.sha256(
-                        path.read_bytes()
-                    ).hexdigest()
+                    str(path.relative_to(PROJECT_ROOT)).replace(
+                        "\\", "/"
+                    ): hashlib.sha256(path.read_bytes()).hexdigest()
                     for path in (
                         PROJECT_ROOT / "src" / "codex_app_server_client.py",
                         PROJECT_ROOT / "src" / "tracerelay_client.py",
@@ -274,7 +399,9 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                         check=False,
                         timeout=15,
                     )
-                    status_raw = status_result.stdout.strip() or status_result.stderr.strip()
+                    status_raw = (
+                        status_result.stdout.strip() or status_result.stderr.strip()
+                    )
                     status = json.loads(status_raw.decode("utf-8", errors="replace"))
                     if status.get("state") == "NOT_RUNNING":
                         break

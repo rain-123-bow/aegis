@@ -43,6 +43,12 @@ The Project Manager has the full user interaction context, but later agents must
 
 The graph is flat by design. There is no parent graph / subgraph split in this runtime model. Each node is a long-lived role-bound agent, and graph state only carries the next message envelope.
 
+Runtime identity is split by role and turn. A/B use persistent role threads in
+one planning App Server process. C/D also retain persistent role threads, but
+every node turn runs in a new App Server process and TraceRelay session. E/F
+remain on the legacy per-node `codex exec resume` path. LangGraph controls node
+order; no role thread communicates directly with another role thread.
+
 ## Detailed Operating Rules
 
 ### Project Manager Runtime
