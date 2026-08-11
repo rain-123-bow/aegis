@@ -372,6 +372,12 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 len({item["process_pid"] for item in execution_evidence}), 3
             )
+            self.assertEqual(
+                len(
+                    {item["process_creation_time_100ns"] for item in execution_evidence}
+                ),
+                3,
+            )
             self.assertTrue(
                 all(
                     item["verification_status"] == "VALID_COMPLETE"
@@ -572,6 +578,7 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             old_evidence = interrupted["evidence_sessions"][0]
             self.assertEqual(old_evidence["verification_status"], "UNVERIFIED")
             self.assertIsNone(old_evidence["application_verification_status"])
+            self.assertGreater(old_evidence["process_creation_time_100ns"], 0)
 
             relay = TraceRelayClient(
                 command=tracerelay_command,
@@ -607,7 +614,11 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             self.assertEqual(len(receipt["evidence_session_ids"]), 2)
             self.assertEqual(len(set(receipt["evidence_session_ids"])), 2)
             process_pids = [item["process_pid"] for item in evidence]
+            process_creation_times = [
+                item["process_creation_time_100ns"] for item in evidence
+            ]
             self.assertEqual(len(set(process_pids)), 2)
+            self.assertEqual(len(set(process_creation_times)), 2)
             self.assertFalse(
                 any(_windows_process_is_running(pid) for pid in process_pids)
             )
@@ -627,6 +638,7 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 "codex_turn_id": receipt["codex_turn_id"],
                 "evidence_session_ids": receipt["evidence_session_ids"],
                 "process_pids": process_pids,
+                "process_creation_times_100ns": process_creation_times,
                 "processes_terminated": True,
                 "source_sha256": {
                     str(path.relative_to(PROJECT_ROOT)).replace(

@@ -23,6 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import aegis_runtime
 import project_seal_store
+import tracerelay_client
 
 
 def relay_payload(command: str, state: str = "IDLE") -> dict[str, object]:
@@ -163,6 +164,7 @@ class TraceRelayClientTests(unittest.TestCase):
             cli_runner=cli_runner,
             status_requester=lambda: next(statuses),
             popen_factory=popen_factory,
+            process_creation_time_reader=lambda pid: pid * 10_000,
             alarm_directory=root / "alarms",
             monitor_interval_seconds=0,
             verification_timeout_seconds=verification_timeout_seconds,
@@ -449,6 +451,7 @@ class TraceRelayClientTests(unittest.TestCase):
                 cli_runner=cli_runner,
                 status_requester=status,
                 popen_factory=popen_factory,
+                process_creation_time_reader=lambda pid: pid * 10_000,
                 alarm_directory=root / "alarms",
                 monitor_interval_seconds=0.001,
             )
@@ -530,6 +533,7 @@ class TraceRelayClientTests(unittest.TestCase):
                 cli_runner=cli_runner,
                 status_requester=status,
                 popen_factory=lambda *args, **kwargs: process,
+                process_creation_time_reader=lambda pid: pid * 10_000,
                 alarm_directory=root / "alarms",
                 monitor_interval_seconds=0.001,
             )
@@ -565,7 +569,9 @@ class TraceRelayClientTests(unittest.TestCase):
 
             self.assertEqual([command[1] for command in commands], ["start"])
 
-    def test_crash_recovery_terminates_and_seals_only_the_saved_session(self) -> None:
+    def test_crash_recovery_seals_saved_session_when_process_identity_is_gone(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             session_path = root / "sessions" / "session-recover"
@@ -621,7 +627,9 @@ class TraceRelayClientTests(unittest.TestCase):
                 command="C:/TraceRelay/tracerelay.exe",
                 cli_runner=cli_runner,
                 status_requester=lambda: next(statuses),
-                process_terminator=lambda pid: events.append(f"terminate:{pid}"),
+                process_terminator=lambda pid, created: (
+                    events.append(f"identity-missing:{pid}:{created}") or False
+                ),
                 alarm_directory=root / "alarms",
             )
             registration = aegis_runtime.TraceRelayRegistration(
@@ -633,19 +641,21 @@ class TraceRelayClientTests(unittest.TestCase):
             )
 
             verification = client.recover_managed_session(
-                registration, process_pid=3_030
+                registration,
+                process_pid=3_030,
+                process_creation_time_100ns=4_040,
             )
 
             self.assertEqual(verification["final_hash"], "ab" * 32)
             self.assertEqual(
                 events,
-                ["start", "terminate:3030", "close", "verify"],
+                ["start", "identity-missing:3030:4040", "close", "verify"],
             )
 
     def test_crash_recovery_refuses_a_different_active_session(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            terminated: list[int] = []
+            terminated: list[tuple[int, int]] = []
 
             def cli_runner(
                 arguments: list[str], timeout: float
@@ -664,7 +674,9 @@ class TraceRelayClientTests(unittest.TestCase):
                 command="C:/TraceRelay/tracerelay.exe",
                 cli_runner=cli_runner,
                 status_requester=lambda: relay_payload("status"),
-                process_terminator=terminated.append,
+                process_terminator=lambda pid, created: (
+                    terminated.append((pid, created)) or True
+                ),
                 alarm_directory=root / "alarms",
             )
             registration = aegis_runtime.TraceRelayRegistration(
@@ -678,9 +690,45 @@ class TraceRelayClientTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 aegis_runtime.TraceRelayError, "different session"
             ):
-                client.recover_managed_session(registration, process_pid=3_030)
+                client.recover_managed_session(
+                    registration,
+                    process_pid=3_030,
+                    process_creation_time_100ns=4_040,
+                )
 
             self.assertEqual(terminated, [])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows process identity test")
+    def test_windows_process_termination_requires_matching_creation_time(self) -> None:
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            creation_time = tracerelay_client._windows_process_creation_time_100ns(
+                process.pid
+            )
+            self.assertFalse(
+                tracerelay_client._terminate_windows_process_by_identity(
+                    process.pid,
+                    creation_time + 1,
+                )
+            )
+            self.assertIsNone(process.poll())
+            self.assertTrue(
+                tracerelay_client._terminate_windows_process_by_identity(
+                    process.pid,
+                    creation_time,
+                )
+            )
+            process.wait(timeout=5)
+            self.assertIsNotNone(process.returncode)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
 
 
 class FakeRelayClient:
@@ -704,6 +752,7 @@ class ExecutionTurnHarness:
         self.verify_count = 0
         self.recovered_session_ids: list[str] = []
         self.recovered_process_pids: list[int] = []
+        self.recovered_process_creation_times: list[int] = []
         self.resume_thread_ids: list[str] = []
         self.processes: list[ExecutionManagedProcess] = []
         self.app_servers: list[ExecutionAppServer] = []
@@ -735,6 +784,7 @@ class ExecutionManagedProcess:
         self.stdout = io.StringIO()
         self.stderr = io.StringIO()
         self.pid = 1_000 + session_index
+        self.creation_time_100ns = 10_000_000 + session_index
         self.returncode: int | None = None
 
     def poll(self) -> int | None:
@@ -805,10 +855,14 @@ class ExecutionRelayClient(FakeRelayClient):
         registration: aegis_runtime.TraceRelayRegistration,
         *,
         process_pid: int,
+        process_creation_time_100ns: int,
     ) -> dict[str, object]:
         self.started = True
         self.harness.recovered_session_ids.append(registration.session_id)
         self.harness.recovered_process_pids.append(process_pid)
+        self.harness.recovered_process_creation_times.append(
+            process_creation_time_100ns
+        )
         return self.verify_session(registration.session_path)
 
 
@@ -1116,6 +1170,13 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertEqual(
                 {entry["process_pid"] for entry in saved["evidence_sessions"]},
                 {1_001, 1_002, 1_003},
+            )
+            self.assertEqual(
+                {
+                    entry["process_creation_time_100ns"]
+                    for entry in saved["evidence_sessions"]
+                },
+                {10_000_001, 10_000_002, 10_000_003},
             )
 
     def test_completed_execution_turn_replays_after_node_checkpoint_gap(self) -> None:
@@ -1548,6 +1609,10 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 ["execution-session-1"],
             )
             self.assertEqual(harness.recovered_process_pids, [1_001])
+            self.assertEqual(
+                harness.recovered_process_creation_times,
+                [10_000_001],
+            )
             self.assertEqual(harness.start_turn_count, 1)
             self.assertEqual(harness.recover_turn_count, 1)
             final_state = aegis_runtime.load_run_state(
@@ -1688,6 +1753,21 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 aegis_runtime.RuntimeStateError, "final hash mismatch"
             ):
                 resumed.preflight()
+
+            missing_identity = json.loads(json.dumps(saved))
+            missing_identity["evidence_sessions"][0].pop("process_creation_time_100ns")
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError, "creation time"
+            ):
+                aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=root / "artifacts",
+                    run_id="execution-journal-hash",
+                    upstream_port=7899,
+                    relay_client=ExecutionRelayClient(harness),
+                    start_node="D",
+                    prior_state=missing_identity,
+                )
 
     def test_execution_thread_allocation_uncertainty_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2704,6 +2784,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             def __init__(self, observed_bytes: dict[str, int]) -> None:
                 super().__init__()
                 self.monitor_interval_seconds = 0
+                self._process_creation_time_reader = lambda pid: pid * 10_000
                 self.last_verification: dict[str, object] | None = None
                 self.verification = {
                     "status": "VALID_COMPLETE",
@@ -2737,6 +2818,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 session_path=root / "sessions" / session_id,
             )
             stopped_process = SimpleNamespace(
+                pid=12_345,
                 returncode=0,
                 poll=lambda: 0,
                 terminate=lambda: None,

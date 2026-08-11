@@ -53,7 +53,8 @@ class ProcessLike(Protocol):
 CliRunner = Callable[[list[str], float], subprocess.CompletedProcess[str]]
 StatusRequester = Callable[[], dict[str, object]]
 PopenFactory = Callable[..., ProcessLike]
-ProcessTerminator = Callable[[int], None]
+ProcessCreationTimeReader = Callable[[int], int]
+ProcessTerminator = Callable[[int, int], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +90,15 @@ class ManagedEvidenceProcess:
         self.stdout = getattr(process, "stdout", None)
         self.stderr = getattr(process, "stderr", None)
         self.pid = getattr(process, "pid", None)
+        if isinstance(self.pid, bool) or not isinstance(self.pid, int) or self.pid <= 0:
+            raise TraceRelayError("managed process has no valid PID")
+        self.creation_time_100ns = client._process_creation_time_reader(self.pid)
+        if (
+            isinstance(self.creation_time_100ns, bool)
+            or not isinstance(self.creation_time_100ns, int)
+            or self.creation_time_100ns <= 0
+        ):
+            raise TraceRelayError("managed process has no valid creation time")
         self._stop = threading.Event()
         self._failure_lock = threading.Lock()
         self._failure: BaseException | None = None
@@ -219,6 +229,7 @@ class TraceRelayClient:
         cli_runner: CliRunner | None = None,
         status_requester: StatusRequester | None = None,
         popen_factory: PopenFactory | None = None,
+        process_creation_time_reader: ProcessCreationTimeReader | None = None,
         process_terminator: ProcessTerminator | None = None,
         alarm_directory: str | Path | None = None,
         monitor_interval_seconds: float = 1.0,
@@ -228,8 +239,11 @@ class TraceRelayClient:
         self._cli_runner = cli_runner or _run_cli
         self._status_requester = status_requester or _request_status
         self._popen_factory = popen_factory or subprocess.Popen
+        self._process_creation_time_reader = (
+            process_creation_time_reader or _windows_process_creation_time_100ns
+        )
         self._process_terminator = (
-            process_terminator or _terminate_windows_process_by_pid
+            process_terminator or _terminate_windows_process_by_identity
         )
         self.alarm_directory = (
             Path(alarm_directory).resolve()
@@ -265,6 +279,7 @@ class TraceRelayClient:
         registration: TraceRelayRegistration,
         *,
         process_pid: int,
+        process_creation_time_100ns: int,
     ) -> dict[str, object]:
         """Stop and seal the exact managed session left by a crashed coordinator."""
         if (
@@ -273,12 +288,18 @@ class TraceRelayClient:
             or process_pid <= 0
         ):
             raise ValueError("process_pid must be a positive integer")
+        if (
+            isinstance(process_creation_time_100ns, bool)
+            or not isinstance(process_creation_time_100ns, int)
+            or process_creation_time_100ns <= 0
+        ):
+            raise ValueError("process_creation_time_100ns must be a positive integer")
         self._alarm_baseline = self._alarm_names()
         payload = self._invoke(["start"])
         self._validate_identity(payload, "start", pin_pids=True)
         self._assert_no_new_alarms()
         self._require_registration_status(payload, registration)
-        self._process_terminator(process_pid)
+        self._process_terminator(process_pid, process_creation_time_100ns)
         verification = self._finish(registration)
         _require_complete_verification(verification)
         self.last_registration = registration
@@ -437,11 +458,21 @@ class TraceRelayClient:
                     f"TraceRelay evidence finalization also failed: {cleanup_error}"
                 )
             raise
-        return ManagedEvidenceProcess(
-            client=self,
-            process=process,
-            registration=registration,
-        )
+        try:
+            return ManagedEvidenceProcess(
+                client=self,
+                process=process,
+                registration=registration,
+            )
+        except BaseException as error:
+            _terminate_interactive_preserving_error(process, error)
+            try:
+                self.last_verification = self._finish(registration)
+            except BaseException as cleanup_error:
+                error.add_note(
+                    f"TraceRelay evidence finalization also failed: {cleanup_error}"
+                )
+            raise
 
     def _require_idle(self) -> None:
         payload = self._status_requester()
@@ -759,7 +790,49 @@ def _require_complete_verification(verification: Mapping[str, object]) -> str:
     return final_hash.lower()
 
 
-def _terminate_windows_process_by_pid(process_pid: int) -> None:
+def _windows_process_creation_time_100ns(process_pid: int) -> int:
+    if sys.platform != "win32":
+        raise TraceRelayError("managed process identity requires Windows")
+
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetProcessTimes.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    ]
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    process_query_limited_information = 0x1000
+    process = kernel32.OpenProcess(
+        process_query_limited_information, False, process_pid
+    )
+    if not process:
+        error = ctypes.get_last_error()
+        raise TraceRelayError(
+            f"cannot read managed process PID {process_pid}: Windows error {error}"
+        )
+    try:
+        return _process_creation_time_from_handle(kernel32, process, process_pid)
+    finally:
+        kernel32.CloseHandle(process)
+
+
+def _terminate_windows_process_by_identity(
+    process_pid: int,
+    expected_creation_time_100ns: int,
+) -> bool:
     if sys.platform != "win32":
         raise TraceRelayError("managed process recovery requires Windows")
 
@@ -767,14 +840,27 @@ def _terminate_windows_process_by_pid(process_pid: int) -> None:
     from ctypes import wintypes
 
     process_terminate = 0x0001
+    process_query_limited_information = 0x1000
     synchronize = 0x00100000
     wait_object_0 = 0x00000000
     wait_timeout = 0x00000102
     error_invalid_parameter = 87
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.argtypes = [
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
     kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetProcessTimes.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    ]
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
     kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     kernel32.TerminateProcess.restype = wintypes.BOOL
     kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
@@ -783,21 +869,26 @@ def _terminate_windows_process_by_pid(process_pid: int) -> None:
     kernel32.CloseHandle.restype = wintypes.BOOL
 
     process = kernel32.OpenProcess(
-        process_terminate | synchronize,
+        process_terminate | process_query_limited_information | synchronize,
         False,
         process_pid,
     )
     if not process:
         error = ctypes.get_last_error()
         if error == error_invalid_parameter:
-            return
+            return False
         raise TraceRelayError(
             f"cannot open stale managed process PID {process_pid}: Windows error {error}"
         )
     try:
+        actual_creation_time = _process_creation_time_from_handle(
+            kernel32, process, process_pid
+        )
+        if actual_creation_time != expected_creation_time_100ns:
+            return False
         wait_result = kernel32.WaitForSingleObject(process, 0)
         if wait_result == wait_object_0:
-            return
+            return False
         if wait_result != wait_timeout:
             raise TraceRelayError(
                 f"cannot inspect stale managed process PID {process_pid}"
@@ -812,8 +903,35 @@ def _terminate_windows_process_by_pid(process_pid: int) -> None:
             raise TraceRelayError(
                 f"stale managed process PID {process_pid} did not terminate"
             )
+        return True
     finally:
         kernel32.CloseHandle(process)
+
+
+def _process_creation_time_from_handle(
+    kernel32: object,
+    process: object,
+    process_pid: int,
+) -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    creation = wintypes.FILETIME()
+    exit_time = wintypes.FILETIME()
+    kernel_time = wintypes.FILETIME()
+    user_time = wintypes.FILETIME()
+    if not kernel32.GetProcessTimes(
+        process,
+        ctypes.byref(creation),
+        ctypes.byref(exit_time),
+        ctypes.byref(kernel_time),
+        ctypes.byref(user_time),
+    ):
+        error = ctypes.get_last_error()
+        raise TraceRelayError(
+            f"cannot read creation time for PID {process_pid}: Windows error {error}"
+        )
+    return (int(creation.dwHighDateTime) << 32) | int(creation.dwLowDateTime)
 
 
 def _windows_job_command(command: Sequence[str]) -> list[str]:

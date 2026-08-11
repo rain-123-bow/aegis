@@ -461,6 +461,7 @@ class RuntimeCoordinator:
                 None,
                 node=str(node),
                 process_pid=process.pid,
+                process_creation_time_100ns=process.creation_time_100ns,
             )
             self._write_state("running")
             return process
@@ -1411,6 +1412,7 @@ class RuntimeCoordinator:
         verification = self.relay_client.recover_managed_session(
             registration,
             process_pid=int(entry["process_pid"]),
+            process_creation_time_100ns=int(entry["process_creation_time_100ns"]),
         )
         _require_complete_execution_verification(verification)
         self._record_evidence(
@@ -1419,6 +1421,7 @@ class RuntimeCoordinator:
             node=str(entry["node"]),
             application_verification_status="VALID_COMPLETE",
             process_pid=int(entry["process_pid"]),
+            process_creation_time_100ns=int(entry["process_creation_time_100ns"]),
         )
         self._write_state("running")
 
@@ -1635,6 +1638,7 @@ class RuntimeCoordinator:
         node: str | None = None,
         application_verification_status: str | None = None,
         process_pid: int | None = None,
+        process_creation_time_100ns: int | None = None,
     ) -> None:
         resolved_node = node or self._current_node
         if (
@@ -1657,6 +1661,11 @@ class RuntimeCoordinator:
         if process_pid is None and prior is not None:
             saved_pid = prior.get("process_pid")
             process_pid = saved_pid if isinstance(saved_pid, int) else None
+        if process_creation_time_100ns is None and prior is not None:
+            saved_creation_time = prior.get("process_creation_time_100ns")
+            process_creation_time_100ns = (
+                saved_creation_time if isinstance(saved_creation_time, int) else None
+            )
         entry = {
             "node": resolved_node,
             "session_id": registration.session_id,
@@ -1667,6 +1676,7 @@ class RuntimeCoordinator:
             "application_verification_status": application_verification_status,
             "final_hash": verification.get("final_hash") if verification else None,
             "process_pid": process_pid,
+            "process_creation_time_100ns": process_creation_time_100ns,
         }
         if resolved_node in EXECUTION_NODE_ROLES:
             _validate_execution_evidence_record(entry)
@@ -1992,6 +2002,15 @@ def _validate_execution_evidence_record(entry: Mapping[str, object]) -> None:
         or process_pid <= 0
     ):
         raise RuntimeStateError("execution turn evidence has no valid App Server PID")
+    creation_time = entry.get("process_creation_time_100ns")
+    if (
+        isinstance(creation_time, bool)
+        or not isinstance(creation_time, int)
+        or creation_time <= 0
+    ):
+        raise RuntimeStateError(
+            "execution turn evidence has no valid App Server creation time"
+        )
     raw_status = entry.get("verification_status")
     if not isinstance(raw_status, str) or not raw_status:
         raise RuntimeStateError("execution evidence has an invalid verification status")

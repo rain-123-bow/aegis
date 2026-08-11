@@ -156,8 +156,9 @@ the node may return. E and F remain on `codex exec resume`.
 The coordinator records a monotonic execution attempt before entering C or D.
 This identity separates a crash retry from the legal `C -> D -> C` loop. Each
 turn records its attempt, role thread ID, turn ID, request hash, response path
-and hash, TraceRelay session IDs, and App Server PID. The role thread survives;
-process, PID, and evidence session do not.
+and hash, TraceRelay session IDs, and App Server identity: PID plus Windows
+process creation FILETIME. The role thread survives; process identity and
+evidence session do not.
 
 Recovery is fail-closed:
 
@@ -166,9 +167,10 @@ Recovery is fail-closed:
   traffic in both directions, and reproduces the recorded final hash;
 - a known turn ID is read from the persistent thread in a new traced process and
   is never resubmitted;
-- after a coordinator process crash, the saved Windows Job PID and exact
-  TraceRelay session identity are used to terminate the old App Server tree,
-  seal and verify that journal, then recover the known turn in a new session;
+- after a coordinator process crash, the saved PID is terminated only when its
+  Windows process creation FILETIME still matches; a missing or reused PID is
+  not terminated. The exact TraceRelay session is still sealed and verified
+  before the known turn is recovered in a new session;
 - `submitting` without a turn ID is ambiguous and cannot be retried;
 - a lost `thread/start` result leaves the role `allocating` and cannot be
   replaced silently;
@@ -230,8 +232,8 @@ verdict: PASS
 codex-cli: 0.145.0
 model: gpt-5.6-sol
 reasoning effort: high
-report: C:\code\aegis_artifacts\as_pilot\5aa71c0efdd0\ACCEPTANCE_REPORT.json
-report SHA-256: 088FAF1BA2AA10D2FF2B68EBD5D42B4021EFF64EFD71D8C221AF659BE3F32A62
+report: C:\code\aegis_artifacts\as_pilot\d77812f386bb\ACCEPTANCE_REPORT.json
+report SHA-256: F181397BBF16C3D1B98AB0935BAFC33A58B27548724D9C09E20832ECB787F4B7
 TraceRelay journal evidence: VALID_COMPLETE
 application evidence: VALID_COMPLETE
 planning rounds: 1 (approved)
@@ -240,6 +242,7 @@ approved plan SHA-256 equals reviewed plan SHA-256
 C/D/C execution turns: 3
 C/D/C TraceRelay sessions: 3, distinct
 C/D/C App Server PIDs: 3, distinct
+C/D/C App Server creation FILETIMEs: 3, distinct
 TEST_EXECUTOR thread reused across both C turns
 TEST_RESULT_REVIEWER thread independent
 synthetic command stdout: True
@@ -251,12 +254,13 @@ Hard-crash recovery acceptance:
 
 ```text
 verdict: PASS
-report: C:\code\aegis_artifacts\as_crash_recovery\5062703af7f5\CRASH_RECOVERY_REPORT.json
-report SHA-256: 562D0901ED8C84E35B8751B743A91A533C9E21E270613722846EC132146D34A8
+report: C:\code\aegis_artifacts\as_crash_recovery\8aad8d934c8a\CRASH_RECOVERY_REPORT.json
+report SHA-256: EBE5D54C58B42219822EC813EF6D92C8B58B5BE89BB89432562DC0F8B2B213EC
 forced coordinator exit code: 91
 Codex turn IDs created: 1
 TraceRelay sessions: 2, distinct
 App Server Windows Job PIDs: 2, distinct
+App Server creation FILETIMEs: 2, distinct
 both saved Windows Job PIDs terminated after recovery: yes
 old session sealed before known-turn recovery: yes
 all raw and application evidence: VALID_COMPLETE
