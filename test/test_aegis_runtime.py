@@ -176,6 +176,7 @@ class TraceRelayClientTests(unittest.TestCase):
             relaying = {
                 **relay_payload("status", "RELAYING"),
                 "session_id": "session-1",
+                "session_path": str(root / "sessions" / "session-1"),
             }
             closed = {
                 **relay_payload("status"),
@@ -288,6 +289,7 @@ class TraceRelayClientTests(unittest.TestCase):
             relaying = {
                 **relay_payload("status", "RELAYING"),
                 "session_id": "session-1",
+                "session_path": str(root / "sessions" / "session-1"),
             }
             completed = {
                 **relay_payload("status"),
@@ -385,6 +387,7 @@ class TraceRelayClientTests(unittest.TestCase):
                 return {
                     **relay_payload("status", state["value"]),
                     "session_id": "session-managed",
+                    "session_path": str(root / "sessions" / "session-managed"),
                 }
 
             def cli_runner(
@@ -562,6 +565,123 @@ class TraceRelayClientTests(unittest.TestCase):
 
             self.assertEqual([command[1] for command in commands], ["start"])
 
+    def test_crash_recovery_terminates_and_seals_only_the_saved_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session_path = root / "sessions" / "session-recover"
+            events: list[str] = []
+            statuses = iter(
+                [
+                    {
+                        **relay_payload("status", "RELAYING"),
+                        "session_id": "session-recover",
+                        "session_path": str(session_path),
+                    },
+                    {
+                        **relay_payload("status"),
+                        "last_session_id": "session-recover",
+                        "last_session_path": str(session_path),
+                    },
+                ]
+            )
+
+            def cli_runner(
+                arguments: list[str], timeout: float
+            ) -> subprocess.CompletedProcess[str]:
+                del timeout
+                operation = arguments[1]
+                events.append(operation)
+                if operation == "start":
+                    payload = {
+                        **relay_payload("start", "RELAYING"),
+                        "session_id": "session-recover",
+                        "session_path": str(session_path),
+                    }
+                elif operation == "close":
+                    payload = {
+                        **relay_payload("close"),
+                        "closed": True,
+                    }
+                elif operation == "verify":
+                    payload = {
+                        "status": "VALID_COMPLETE",
+                        "final_hash": "ab" * 32,
+                        "observed_bytes": {
+                            "client_to_upstream": 10,
+                            "upstream_to_client": 20,
+                        },
+                    }
+                else:
+                    raise AssertionError(operation)
+                return subprocess.CompletedProcess(
+                    arguments, 0, json.dumps(payload), ""
+                )
+
+            client = aegis_runtime.TraceRelayClient(
+                command="C:/TraceRelay/tracerelay.exe",
+                cli_runner=cli_runner,
+                status_requester=lambda: next(statuses),
+                process_terminator=lambda pid: events.append(f"terminate:{pid}"),
+                alarm_directory=root / "alarms",
+            )
+            registration = aegis_runtime.TraceRelayRegistration(
+                session_id="session-recover",
+                proxy_host="127.0.0.1",
+                proxy_port=45_000,
+                upstream_port=7_899,
+                session_path=session_path,
+            )
+
+            verification = client.recover_managed_session(
+                registration, process_pid=3_030
+            )
+
+            self.assertEqual(verification["final_hash"], "ab" * 32)
+            self.assertEqual(
+                events,
+                ["start", "terminate:3030", "close", "verify"],
+            )
+
+    def test_crash_recovery_refuses_a_different_active_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            terminated: list[int] = []
+
+            def cli_runner(
+                arguments: list[str], timeout: float
+            ) -> subprocess.CompletedProcess[str]:
+                del timeout
+                payload = {
+                    **relay_payload("start", "RELAYING"),
+                    "session_id": "other-session",
+                    "session_path": str(root / "sessions" / "other-session"),
+                }
+                return subprocess.CompletedProcess(
+                    arguments, 0, json.dumps(payload), ""
+                )
+
+            client = aegis_runtime.TraceRelayClient(
+                command="C:/TraceRelay/tracerelay.exe",
+                cli_runner=cli_runner,
+                status_requester=lambda: relay_payload("status"),
+                process_terminator=terminated.append,
+                alarm_directory=root / "alarms",
+            )
+            registration = aegis_runtime.TraceRelayRegistration(
+                session_id="saved-session",
+                proxy_host="127.0.0.1",
+                proxy_port=45_000,
+                upstream_port=7_899,
+                session_path=root / "sessions" / "saved-session",
+            )
+
+            with self.assertRaisesRegex(
+                aegis_runtime.TraceRelayError, "different session"
+            ):
+                client.recover_managed_session(registration, process_pid=3_030)
+
+            self.assertEqual(terminated, [])
+
 
 class FakeRelayClient:
     def __init__(self) -> None:
@@ -581,6 +701,9 @@ class ExecutionTurnHarness:
         self.turn_count = 0
         self.start_turn_count = 0
         self.recover_turn_count = 0
+        self.verify_count = 0
+        self.recovered_session_ids: list[str] = []
+        self.recovered_process_pids: list[int] = []
         self.resume_thread_ids: list[str] = []
         self.processes: list[ExecutionManagedProcess] = []
         self.app_servers: list[ExecutionAppServer] = []
@@ -664,6 +787,29 @@ class ExecutionRelayClient(FakeRelayClient):
         self.last_registration = process.registration
         self.last_verification = None
         return process
+
+    def verify_session(self, session_path: str | Path) -> dict[str, object]:
+        self.harness.verify_count += 1
+        index = int(Path(session_path).name.rsplit("-", 1)[1])
+        return {
+            "status": "VALID_COMPLETE",
+            "final_hash": f"{1_000 + index:064x}"[-64:],
+            "observed_bytes": {
+                "client_to_upstream": 10,
+                "upstream_to_client": 20,
+            },
+        }
+
+    def recover_managed_session(
+        self,
+        registration: aegis_runtime.TraceRelayRegistration,
+        *,
+        process_pid: int,
+    ) -> dict[str, object]:
+        self.started = True
+        self.harness.recovered_session_ids.append(registration.session_id)
+        self.harness.recovered_process_pids.append(process_pid)
+        return self.verify_session(registration.session_path)
 
 
 class ExecutionAppServer:
@@ -1330,6 +1476,218 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 ["execution-session-1", "execution-session-2"],
             )
             self.assertEqual(saved["execution_turns"][0]["status"], "completed")
+
+    def test_hard_crash_session_is_sealed_before_known_turn_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            harness.wait_errors.append(RuntimeError("coordinator disappeared"))
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-hard-crash",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="C",
+            )
+            coordinator.preflight()
+            state = {"status": True}
+
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "disappeared"):
+                    self.run_execution_node(coordinator, "C", "TEST_EXECUTOR", state)
+
+                saved = aegis_runtime.load_run_state(
+                    root / "artifacts", "execution-hard-crash"
+                )
+                saved_evidence = saved["evidence_sessions"][0]
+                saved_evidence.update(
+                    verification_status="UNVERIFIED",
+                    application_verification_status=None,
+                    final_hash=None,
+                )
+                coordinator.run_state_path.write_text(
+                    json.dumps(saved, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                resumed_relay = ExecutionRelayClient(harness)
+                resumed = aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=root / "artifacts",
+                    run_id="execution-hard-crash",
+                    upstream_port=7899,
+                    relay_client=resumed_relay,
+                    start_node="C",
+                    prior_state=saved,
+                )
+                resumed.preflight()
+                recovered = self.run_execution_node(
+                    resumed, "C", "TEST_EXECUTOR", state
+                )
+
+            self.assertIn('"status": true', str(recovered["response"]))
+            self.assertEqual(
+                harness.recovered_session_ids,
+                ["execution-session-1"],
+            )
+            self.assertEqual(harness.recovered_process_pids, [1_001])
+            self.assertEqual(harness.start_turn_count, 1)
+            self.assertEqual(harness.recover_turn_count, 1)
+            final_state = aegis_runtime.load_run_state(
+                root / "artifacts", "execution-hard-crash"
+            )
+            self.assertEqual(
+                final_state["execution_turns"][0]["evidence_session_ids"],
+                ["execution-session-1", "execution-session-2"],
+            )
+            self.assertTrue(
+                all(
+                    entry["verification_status"] == "VALID_COMPLETE"
+                    and entry["application_verification_status"] == "VALID_COMPLETE"
+                    for entry in final_state["evidence_sessions"]
+                )
+            )
+
+    def test_persisted_execution_journal_is_reverified_before_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-journal-reverify",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="C",
+            )
+            coordinator.preflight()
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                self.run_execution_node(
+                    coordinator, "C", "TEST_EXECUTOR", {"status": True}
+                )
+
+            saved = aegis_runtime.load_run_state(
+                root / "artifacts", "execution-journal-reverify"
+            )
+
+            class MissingJournalRelay(ExecutionRelayClient):
+                def verify_session(self, session_path: str | Path) -> dict[str, object]:
+                    raise aegis_runtime.TraceRelayError(
+                        f"journal is unavailable: {session_path}"
+                    )
+
+            resumed_relay = MissingJournalRelay(harness)
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-journal-reverify",
+                upstream_port=7899,
+                relay_client=resumed_relay,
+                start_node="C",
+                prior_state=saved,
+            )
+            with self.assertRaisesRegex(
+                aegis_runtime.TraceRelayError, "journal is unavailable"
+            ):
+                resumed.preflight()
+            self.assertTrue(resumed_relay.started)
+            self.assertEqual(harness.open_count, 1)
+
+    def test_persisted_execution_journal_final_hash_must_match_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-journal-hash",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="D",
+            )
+            coordinator.preflight()
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                self.run_execution_node(
+                    coordinator,
+                    "D",
+                    "TEST_RESULT_REVIEWER",
+                    {"status": True},
+                )
+
+            saved = aegis_runtime.load_run_state(
+                root / "artifacts", "execution-journal-hash"
+            )
+
+            class WrongHashRelay(ExecutionRelayClient):
+                def verify_session(self, session_path: str | Path) -> dict[str, object]:
+                    verification = super().verify_session(session_path)
+                    verification["final_hash"] = "ff" * 32
+                    return verification
+
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-journal-hash",
+                upstream_port=7899,
+                relay_client=WrongHashRelay(harness),
+                start_node="D",
+                prior_state=saved,
+            )
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError, "final hash mismatch"
+            ):
+                resumed.preflight()
 
     def test_execution_thread_allocation_uncertainty_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

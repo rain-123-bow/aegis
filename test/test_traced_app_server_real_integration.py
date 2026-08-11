@@ -61,6 +61,69 @@ REVIEW_NODE_SCHEMA = {
 }
 
 
+def _run_execution_crash_worker(config_path: Path) -> None:
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    project = Path(config["project"])
+    artifact_path = Path(config["artifact_path"])
+    state = dict(config["state"])
+    coordinator = RuntimeCoordinator(
+        project_root=project,
+        artifact_path=artifact_path,
+        run_id=str(config["run_id"]),
+        upstream_port=int(config["upstream_port"]),
+        relay_client=TraceRelayClient(
+            command=str(config["tracerelay_command"]),
+            monitor_interval_seconds=0.05,
+        ),
+        start_node="C",
+    )
+    coordinator.preflight()
+
+    def crash_before_response_receipt(*_args: object) -> None:
+        os._exit(91)
+
+    coordinator._complete_execution_turn = crash_before_response_receipt  # type: ignore[method-assign]
+
+    def operation(node_state: dict[str, object]) -> dict[str, object]:
+        response = coordinator.run_execution_agent(
+            "TEST_EXECUTOR",
+            str(config["prompt"]),
+            output_schema=NODE_SCHEMA,
+            developer_instructions=str(config["developer_instructions"]),
+            timeout_seconds=300,
+        )
+        return {**node_state, "response": response}
+
+    coordinator.execute_node("C", operation, state)
+    raise AssertionError("crash worker unexpectedly returned")
+
+
+def _windows_process_is_running(process_pid: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    synchronize = 0x00100000
+    wait_timeout = 0x00000102
+    error_invalid_parameter = 87
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    process = kernel32.OpenProcess(synchronize, False, process_pid)
+    if not process:
+        error = ctypes.get_last_error()
+        if error == error_invalid_parameter:
+            return False
+        raise OSError(error, f"cannot inspect process PID {process_pid}")
+    try:
+        return kernel32.WaitForSingleObject(process, 0) == wait_timeout
+    finally:
+        kernel32.CloseHandle(process)
+
+
 @unittest.skipUnless(
     os.environ.get("TRACERELAY_COMMAND"),
     "set TRACERELAY_COMMAND to run the traced App Server acceptance",
@@ -407,6 +470,212 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                         break
                     time.sleep(0.1)
 
+    def test_hard_crash_recovers_exact_session_and_known_turn(self) -> None:
+        tracerelay_command = str(Path(os.environ["TRACERELAY_COMMAND"]).resolve())
+        initial = subprocess.run(
+            [tracerelay_command, "status"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+        initial_raw = initial.stdout.strip() or initial.stderr.strip()
+        initial_status = json.loads(initial_raw.decode("utf-8", errors="replace"))
+        if initial_status.get("state") != "NOT_RUNNING":
+            self.skipTest("TraceRelay is already running; ownership is ambiguous")
+
+        short_id = uuid4().hex[:12]
+        run_id = f"crash-{short_id}"
+        root = (
+            Path(
+                os.environ.get(
+                    "AEGIS_APP_SERVER_ACCEPTANCE_ROOT", r"C:\code\aegis_artifacts"
+                )
+            )
+            / "as_crash_recovery"
+            / short_id
+        ).resolve()
+        project = root / "project"
+        artifact_path = root / "artifacts"
+        source = project / "src" / "acceptance_target.py"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("ACCEPTANCE_TARGET = True\n", encoding="utf-8")
+        record_project_seal(
+            project,
+            git_head_before_record="b" * 40,
+            project_id=bytes(range(16)),
+            run_id=bytes(range(16, 32)),
+        )
+        context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
+        artifact_path.mkdir(parents=True, exist_ok=True)
+        context_path.write_text("{}\n", encoding="utf-8")
+        state = {
+            "artifact_path": str(artifact_path),
+            "reasoning_ledger_context_pack": str(context_path),
+            "status": True,
+        }
+        prompt = (
+            "Return exactly one JSON object matching the output schema. Preserve "
+            f"artifact_path as {artifact_path} and reasoning_ledger_context_pack as "
+            f"{context_path}; set status to true. Do not use tools."
+        )
+        developer_instructions = (
+            "You are the persistent TEST_EXECUTOR role in a deterministic crash "
+            "recovery acceptance. Return only schema-valid JSON. Do not use "
+            "Aegis-specific skills."
+        )
+        upstream_port = int(os.environ.get("TRACERELAY_UPSTREAM_PORT", "7899"))
+        config = {
+            "project": str(project),
+            "artifact_path": str(artifact_path),
+            "run_id": run_id,
+            "upstream_port": upstream_port,
+            "tracerelay_command": tracerelay_command,
+            "state": state,
+            "prompt": prompt,
+            "developer_instructions": developer_instructions,
+        }
+        config_path = root / "CRASH_WORKER_CONFIG.json"
+        config_path.write_text(
+            json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        owned = False
+        coordinator: RuntimeCoordinator | None = None
+        try:
+            crashed = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(Path(__file__).resolve()),
+                    "--execution-crash-worker",
+                    str(config_path),
+                ],
+                cwd=PROJECT_ROOT,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=420,
+            )
+            self.assertEqual(
+                crashed.returncode,
+                91,
+                msg=f"stdout={crashed.stdout}\nstderr={crashed.stderr}",
+            )
+            owned = True
+            state_path = artifact_path / ".aegis" / "runs" / run_id / "RUN_STATE.json"
+            interrupted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(interrupted["execution_turns"][0]["status"], "inProgress")
+            old_evidence = interrupted["evidence_sessions"][0]
+            self.assertEqual(old_evidence["verification_status"], "UNVERIFIED")
+            self.assertIsNone(old_evidence["application_verification_status"])
+
+            relay = TraceRelayClient(
+                command=tracerelay_command,
+                monitor_interval_seconds=0.05,
+            )
+            coordinator = RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id=run_id,
+                upstream_port=upstream_port,
+                relay_client=relay,
+                start_node="C",
+                prior_state=interrupted,
+            )
+            coordinator.preflight()
+
+            def operation(node_state: dict[str, object]) -> dict[str, object]:
+                response = coordinator.run_execution_agent(
+                    "TEST_EXECUTOR",
+                    prompt,
+                    output_schema=NODE_SCHEMA,
+                    developer_instructions=developer_instructions,
+                    timeout_seconds=300,
+                )
+                return {**node_state, "response": response}
+
+            recovered = coordinator.execute_node("C", operation, state)
+            coordinator.complete(recovered)
+            completed = json.loads(state_path.read_text(encoding="utf-8"))
+            receipt = completed["execution_turns"][0]
+            evidence = completed["evidence_sessions"]
+            self.assertEqual(receipt["status"], "completed")
+            self.assertEqual(len(receipt["evidence_session_ids"]), 2)
+            self.assertEqual(len(set(receipt["evidence_session_ids"])), 2)
+            process_pids = [item["process_pid"] for item in evidence]
+            self.assertEqual(len(set(process_pids)), 2)
+            self.assertFalse(
+                any(_windows_process_is_running(pid) for pid in process_pids)
+            )
+            self.assertTrue(
+                all(
+                    item["verification_status"] == "VALID_COMPLETE"
+                    and item["application_verification_status"] == "VALID_COMPLETE"
+                    for item in evidence
+                )
+            )
+            report = {
+                "schema": "aegis.execution_crash_recovery_acceptance.v1",
+                "verdict": "PASS",
+                "run_id": run_id,
+                "worker_exit_code": crashed.returncode,
+                "codex_thread_id": receipt["codex_thread_id"],
+                "codex_turn_id": receipt["codex_turn_id"],
+                "evidence_session_ids": receipt["evidence_session_ids"],
+                "process_pids": process_pids,
+                "processes_terminated": True,
+                "source_sha256": {
+                    str(path.relative_to(PROJECT_ROOT)).replace(
+                        "\\", "/"
+                    ): hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in (
+                        PROJECT_ROOT / "src" / "tracerelay_client.py",
+                        PROJECT_ROOT / "src" / "aegis_runtime.py",
+                    )
+                },
+            }
+            report_path = root / "CRASH_RECOVERY_REPORT.json"
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            print(f"CRASH_RECOVERY_REPORT={report_path}")
+        finally:
+            if owned:
+                subprocess.run(
+                    [tracerelay_command, "stop"],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                    timeout=30,
+                )
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    status_result = subprocess.run(
+                        [tracerelay_command, "status"],
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        check=False,
+                        timeout=15,
+                    )
+                    status_raw = (
+                        status_result.stdout.strip() or status_result.stderr.strip()
+                    )
+                    status = json.loads(status_raw.decode("utf-8", errors="replace"))
+                    if status.get("state") == "NOT_RUNNING":
+                        break
+                    time.sleep(0.1)
+
 
 if __name__ == "__main__":
-    unittest.main()
+    if len(sys.argv) == 3 and sys.argv[1] == "--execution-crash-worker":
+        _run_execution_crash_worker(Path(sys.argv[2]).resolve())
+    else:
+        unittest.main()

@@ -307,6 +307,113 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             )
         )
 
+    def test_c_and_d_reject_changes_to_the_control_envelope(self) -> None:
+        state = {
+            "artifact_path": "C:/artifacts",
+            "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+            "status": True,
+        }
+        cases = (
+            ("artifact_path", "C:/other"),
+            ("reasoning_ledger_context_pack", "C:/other/context.json"),
+            ("status", 1),
+        )
+        for node, role in (
+            (main.test_executor_node, main.TEST_EXECUTOR_ROLE),
+            (main.test_result_reviewer_node, main.TEST_RESULT_REVIEWER_ROLE),
+        ):
+            for field, value in cases:
+                with self.subTest(node=node.__name__, field=field):
+                    response = {**state, field: value}
+                    with patch.object(
+                        main,
+                        "send_execution_prompt",
+                        side_effect=lambda actual_role, _prompt: (
+                            json.dumps(response)
+                            if actual_role == role
+                            else (_ for _ in ()).throw(AssertionError(actual_role))
+                        ),
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError,
+                            "changed coordinator-owned|non-boolean status",
+                        ):
+                            node(state)
+
+    def test_compiled_graph_runs_d_fail_c_d_pass_then_legacy_e_f(self) -> None:
+        execution_calls: list[str] = []
+        legacy_calls: list[str] = []
+        reviewer_statuses = iter([False, True])
+        state = {
+            "artifact_path": "C:/artifacts",
+            "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+            "status": True,
+        }
+
+        class FakeCoordinator:
+            def run_execution_agent(
+                self,
+                role_key: str,
+                prompt: str,
+                *,
+                output_schema: dict[str, Any],
+                developer_instructions: str,
+                timeout_seconds: float,
+            ) -> str:
+                del prompt, output_schema, developer_instructions, timeout_seconds
+                execution_calls.append(role_key)
+                status = (
+                    next(reviewer_statuses)
+                    if role_key == main.TEST_RESULT_REVIEWER_ROLE
+                    else True
+                )
+                return json.dumps({**state, "status": status})
+
+        def legacy_send(thread_id: str, prompt: str) -> str:
+            del prompt
+            legacy_calls.append(thread_id)
+            return json.dumps({**state, "status": True})
+
+        configs = {
+            role: {"role_key": role, "role_description": role}
+            for role in (
+                main.TEST_EXECUTOR_ROLE,
+                main.TEST_RESULT_REVIEWER_ROLE,
+            )
+        }
+        with (
+            patch.object(
+                main, "active_runtime_coordinator", return_value=FakeCoordinator()
+            ),
+            patch.object(
+                main, "load_agent_config", side_effect=lambda role: configs[role]
+            ),
+            patch.object(
+                main,
+                "load_agent_thread_map",
+                return_value={
+                    main.TEST_REPORT_WRITER_ROLE: "legacy-e",
+                    main.FINAL_REVIEWER_ROLE: "legacy-f",
+                },
+            ),
+            patch.object(main, "send_prompt_to_thread", side_effect=legacy_send),
+        ):
+            result = main.create_graph(
+                start_node=main.TEST_RESULT_REVIEWER_NODE
+            ).invoke(state)
+
+        self.assertEqual(
+            execution_calls,
+            [
+                main.TEST_RESULT_REVIEWER_ROLE,
+                main.TEST_EXECUTOR_ROLE,
+                main.TEST_RESULT_REVIEWER_ROLE,
+            ],
+        )
+        self.assertEqual(legacy_calls, ["legacy-e", "legacy-f"])
+        self.assertEqual(result["current_node"], main.FINAL_REVIEWER_NODE)
+        self.assertTrue(result["status"])
+
     def test_review_model_status_cannot_bypass_coordinator_threshold(self) -> None:
         closed = {"value": False}
 

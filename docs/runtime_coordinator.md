@@ -162,9 +162,13 @@ process, PID, and evidence session do not.
 Recovery is fail-closed:
 
 - a completed turn is replayed only from its hash-verified response after every
-  linked session has raw and application status `VALID_COMPLETE`;
+  linked journal is re-read from disk, returns `VALID_COMPLETE`, has nonzero
+  traffic in both directions, and reproduces the recorded final hash;
 - a known turn ID is read from the persistent thread in a new traced process and
   is never resubmitted;
+- after a coordinator process crash, the saved Windows Job PID and exact
+  TraceRelay session identity are used to terminate the old App Server tree,
+  seal and verify that journal, then recover the known turn in a new session;
 - `submitting` without a turn ID is ambiguous and cannot be retried;
 - a lost `thread/start` result leaves the role `allocating` and cannot be
   replaced silently;
@@ -226,8 +230,8 @@ verdict: PASS
 codex-cli: 0.145.0
 model: gpt-5.6-sol
 reasoning effort: high
-report: C:\code\aegis_artifacts\as_pilot\c49c052e2873\ACCEPTANCE_REPORT.json
-report SHA-256: 4F37E344C01CBCE8912A20D3C03B8EBBA066FF6D06D857416A59B5DA69D478E5
+report: C:\code\aegis_artifacts\as_pilot\5aa71c0efdd0\ACCEPTANCE_REPORT.json
+report SHA-256: 088FAF1BA2AA10D2FF2B68EBD5D42B4021EFF64EFD71D8C221AF659BE3F32A62
 TraceRelay journal evidence: VALID_COMPLETE
 application evidence: VALID_COMPLETE
 planning rounds: 1 (approved)
@@ -241,6 +245,21 @@ TEST_RESULT_REVIEWER thread independent
 synthetic command stdout: True
 synthetic command exit code: 0
 cross-process thread continuity marker: C-PERSISTENT-THREAD
+```
+
+Hard-crash recovery acceptance:
+
+```text
+verdict: PASS
+report: C:\code\aegis_artifacts\as_crash_recovery\5062703af7f5\CRASH_RECOVERY_REPORT.json
+report SHA-256: 562D0901ED8C84E35B8751B743A91A533C9E21E270613722846EC132146D34A8
+forced coordinator exit code: 91
+Codex turn IDs created: 1
+TraceRelay sessions: 2, distinct
+App Server Windows Job PIDs: 2, distinct
+both saved Windows Job PIDs terminated after recovery: yes
+old session sealed before known-turn recovery: yes
+all raw and application evidence: VALID_COMPLETE
 ```
 
 ## Recorded follow-up work

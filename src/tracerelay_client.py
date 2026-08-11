@@ -53,6 +53,7 @@ class ProcessLike(Protocol):
 CliRunner = Callable[[list[str], float], subprocess.CompletedProcess[str]]
 StatusRequester = Callable[[], dict[str, object]]
 PopenFactory = Callable[..., ProcessLike]
+ProcessTerminator = Callable[[int], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,7 +146,7 @@ class ManagedEvidenceProcess:
             try:
                 verification = self._client._finish(self.registration)
                 self._client.last_verification = verification
-                _require_bidirectional_evidence(verification)
+                _require_complete_verification(verification)
             except BaseException as cleanup_error:
                 if primary is not None:
                     primary.add_note(
@@ -218,6 +219,7 @@ class TraceRelayClient:
         cli_runner: CliRunner | None = None,
         status_requester: StatusRequester | None = None,
         popen_factory: PopenFactory | None = None,
+        process_terminator: ProcessTerminator | None = None,
         alarm_directory: str | Path | None = None,
         monitor_interval_seconds: float = 1.0,
         verification_timeout_seconds: float = VERIFY_TIMEOUT_SECONDS,
@@ -226,6 +228,9 @@ class TraceRelayClient:
         self._cli_runner = cli_runner or _run_cli
         self._status_requester = status_requester or _request_status
         self._popen_factory = popen_factory or subprocess.Popen
+        self._process_terminator = (
+            process_terminator or _terminate_windows_process_by_pid
+        )
         self.alarm_directory = (
             Path(alarm_directory).resolve()
             if alarm_directory is not None
@@ -254,6 +259,41 @@ class TraceRelayClient:
                 f"state={payload['state']}"
             )
         return payload
+
+    def recover_managed_session(
+        self,
+        registration: TraceRelayRegistration,
+        *,
+        process_pid: int,
+    ) -> dict[str, object]:
+        """Stop and seal the exact managed session left by a crashed coordinator."""
+        if (
+            isinstance(process_pid, bool)
+            or not isinstance(process_pid, int)
+            or process_pid <= 0
+        ):
+            raise ValueError("process_pid must be a positive integer")
+        self._alarm_baseline = self._alarm_names()
+        payload = self._invoke(["start"])
+        self._validate_identity(payload, "start", pin_pids=True)
+        self._assert_no_new_alarms()
+        self._require_registration_status(payload, registration)
+        self._process_terminator(process_pid)
+        verification = self._finish(registration)
+        _require_complete_verification(verification)
+        self.last_registration = registration
+        self.last_verification = dict(verification)
+        return dict(verification)
+
+    def verify_session(self, session_path: str | Path) -> dict[str, object]:
+        """Re-read a sealed journal instead of trusting cached RUN_STATE fields."""
+        if self._service_pid is None or self._supervisor_pid is None:
+            raise TraceRelayError("TraceRelay start must complete before verification")
+        resolved_path = Path(session_path).resolve()
+        verification = self._invoke(["verify", str(resolved_path)], require_ok=False)
+        _require_complete_verification(verification)
+        self._assert_no_new_alarms()
+        return verification
 
     def run_process(
         self,
@@ -298,7 +338,9 @@ class TraceRelayClient:
             try:
                 self.last_verification = self._finish(registration)
             except BaseException as cleanup_error:
-                error.add_note(f"TraceRelay evidence finalization also failed: {cleanup_error}")
+                error.add_note(
+                    f"TraceRelay evidence finalization also failed: {cleanup_error}"
+                )
             raise
 
         deadline = time.monotonic() + timeout_seconds
@@ -314,7 +356,9 @@ class TraceRelayClient:
             try:
                 self.last_verification = self._finish(registration)
             except BaseException as cleanup_error:
-                error.add_note(f"TraceRelay evidence finalization also failed: {cleanup_error}")
+                error.add_note(
+                    f"TraceRelay evidence finalization also failed: {cleanup_error}"
+                )
             raise
         except BaseException as error:
             _terminate_preserving_error(process, error)
@@ -457,6 +501,7 @@ class TraceRelayClient:
         payload = self._status_requester()
         self._validate_identity(payload, "status")
         self._assert_no_new_alarms()
+        self._require_registration_status(payload, registration)
         if payload["state"] in ACTIVE_STATES:
             closed = self._invoke(["close"])
             self._validate_identity(closed, "close")
@@ -465,6 +510,7 @@ class TraceRelayClient:
             payload = self._status_requester()
             self._validate_identity(payload, "status")
             self._assert_no_new_alarms()
+            self._require_registration_status(payload, registration)
         if payload["state"] == "IDLE":
             if payload.get("last_session_id") != registration.session_id:
                 raise TraceRelayError("TraceRelay completed a different session")
@@ -482,6 +528,31 @@ class TraceRelayClient:
             )
         self._assert_no_new_alarms()
         return verification
+
+    def _require_registration_status(
+        self,
+        payload: Mapping[str, object],
+        registration: TraceRelayRegistration,
+    ) -> None:
+        state = payload.get("state")
+        if state in ACTIVE_STATES:
+            session_id = payload.get("session_id")
+            session_path = payload.get("session_path")
+        elif state == "IDLE":
+            session_id = payload.get("last_session_id")
+            session_path = payload.get("last_session_path")
+        else:
+            raise TraceRelayError(
+                f"TraceRelay cannot identify session from state={state}"
+            )
+        if session_id != registration.session_id:
+            raise TraceRelayError("TraceRelay status identifies a different session")
+        if not isinstance(session_path, str) or not session_path:
+            raise TraceRelayError("TraceRelay status has no session path")
+        if Path(session_path).resolve() != registration.session_path.resolve():
+            raise TraceRelayError(
+                "TraceRelay status identifies a different session path"
+            )
 
     def _validate_identity(
         self,
@@ -548,7 +619,9 @@ class TraceRelayClient:
         try:
             return {path.name for path in self.alarm_directory.glob("*.json")}
         except OSError as error:
-            raise TraceRelayError(f"cannot inspect TraceRelay alarms: {error}") from error
+            raise TraceRelayError(
+                f"cannot inspect TraceRelay alarms: {error}"
+            ) from error
 
     def _assert_no_new_alarms(self) -> None:
         new_alarms = self._alarm_names() - self._alarm_baseline
@@ -668,6 +741,79 @@ def _require_bidirectional_evidence(verification: Mapping[str, object]) -> None:
         raise TraceRelayError(
             "managed process produced no bidirectional TraceRelay traffic evidence"
         )
+
+
+def _require_complete_verification(verification: Mapping[str, object]) -> str:
+    if verification.get("status") != "VALID_COMPLETE":
+        raise TraceRelayError(
+            "TraceRelay evidence verification did not return VALID_COMPLETE"
+        )
+    final_hash = verification.get("final_hash")
+    if (
+        not isinstance(final_hash, str)
+        or len(final_hash) != 64
+        or any(character not in "0123456789abcdefABCDEF" for character in final_hash)
+    ):
+        raise TraceRelayError("TraceRelay verification has an invalid final hash")
+    _require_bidirectional_evidence(verification)
+    return final_hash.lower()
+
+
+def _terminate_windows_process_by_pid(process_pid: int) -> None:
+    if sys.platform != "win32":
+        raise TraceRelayError("managed process recovery requires Windows")
+
+    import ctypes
+    from ctypes import wintypes
+
+    process_terminate = 0x0001
+    synchronize = 0x00100000
+    wait_object_0 = 0x00000000
+    wait_timeout = 0x00000102
+    error_invalid_parameter = 87
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    process = kernel32.OpenProcess(
+        process_terminate | synchronize,
+        False,
+        process_pid,
+    )
+    if not process:
+        error = ctypes.get_last_error()
+        if error == error_invalid_parameter:
+            return
+        raise TraceRelayError(
+            f"cannot open stale managed process PID {process_pid}: Windows error {error}"
+        )
+    try:
+        wait_result = kernel32.WaitForSingleObject(process, 0)
+        if wait_result == wait_object_0:
+            return
+        if wait_result != wait_timeout:
+            raise TraceRelayError(
+                f"cannot inspect stale managed process PID {process_pid}"
+            )
+        if not kernel32.TerminateProcess(process, 1):
+            error = ctypes.get_last_error()
+            raise TraceRelayError(
+                f"cannot terminate stale managed process PID {process_pid}: "
+                f"Windows error {error}"
+            )
+        if kernel32.WaitForSingleObject(process, 5_000) != wait_object_0:
+            raise TraceRelayError(
+                f"stale managed process PID {process_pid} did not terminate"
+            )
+    finally:
+        kernel32.CloseHandle(process)
 
 
 def _windows_job_command(command: Sequence[str]) -> list[str]:

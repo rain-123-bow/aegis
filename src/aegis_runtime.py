@@ -161,6 +161,7 @@ class RuntimeCoordinator:
             isinstance(x, dict) for x in evidence
         ):
             raise RuntimeStateError("prior evidence sessions must be a list of objects")
+        _validate_execution_evidence_records(evidence)
         if not isinstance(planning_agents, dict) or not all(
             isinstance(role, str) and isinstance(value, dict)
             for role, value in planning_agents.items()
@@ -272,8 +273,10 @@ class RuntimeCoordinator:
                 self._state_writable = True
             if self._planning_stage_status == "completed":
                 self._validate_completed_planning_stage()
-            self._validate_persisted_execution_receipts()
+            self._validate_persisted_execution_receipt_cache()
+            self._recover_persisted_execution_sessions()
             self.relay_client.start()
+            self._validate_persisted_execution_receipts()
         except BaseException as error:
             if self._state_writable:
                 self._write_state("failed", error)
@@ -1330,15 +1333,94 @@ class RuntimeCoordinator:
                 raise RuntimeStateError(
                     "execution turn has incomplete TraceRelay evidence"
                 )
-            process_pid = entry.get("process_pid")
-            if (
-                isinstance(process_pid, bool)
-                or not isinstance(process_pid, int)
-                or process_pid <= 0
-            ):
+            _validate_execution_evidence_record(entry)
+            expected_hash = _require_sha256(entry.get("final_hash"), "final_hash")
+            verification = self.relay_client.verify_session(str(entry["session_path"]))
+            actual_hash = _require_sha256(
+                verification.get("final_hash"), "verified final_hash"
+            )
+            if actual_hash != expected_hash:
                 raise RuntimeStateError(
-                    "execution turn evidence has no valid App Server PID"
+                    "execution TraceRelay evidence final hash mismatch"
                 )
+
+    def _validate_persisted_execution_receipt_cache(self) -> None:
+        evidence_by_id = {
+            entry.get("session_id"): entry for entry in self._evidence_sessions
+        }
+        for receipt in self._execution_turns:
+            status = receipt.get("status")
+            session_ids = receipt.get("evidence_session_ids")
+            assert isinstance(session_ids, list)
+            if not session_ids and status != "preparing":
+                raise RuntimeStateError("execution turn has no TraceRelay evidence")
+            for session_id in session_ids:
+                entry = evidence_by_id.get(session_id)
+                if entry is None or entry.get("node") != receipt.get("node"):
+                    raise RuntimeStateError(
+                        "execution turn has incomplete TraceRelay evidence"
+                    )
+                _validate_execution_evidence_record(entry)
+                raw_status = entry.get("verification_status")
+                application_status = entry.get("application_verification_status")
+                if (
+                    raw_status == "VALID_COMPLETE"
+                    and application_status == "VALID_COMPLETE"
+                ):
+                    continue
+                if raw_status == "UNVERIFIED" and application_status is None:
+                    continue
+                raise RuntimeStateError(
+                    "execution turn has incomplete TraceRelay evidence"
+                )
+            if status == "completed":
+                self._read_completed_execution_response(receipt)
+
+    def _recover_persisted_execution_sessions(self) -> None:
+        if not self._is_resume:
+            return
+        recoverable: list[dict[str, object]] = []
+        linked_ids = {
+            session_id
+            for receipt in self._execution_turns
+            for session_id in receipt["evidence_session_ids"]
+        }
+        for entry in self._evidence_sessions:
+            if entry.get("session_id") not in linked_ids:
+                continue
+            if (
+                entry.get("verification_status") == "UNVERIFIED"
+                and entry.get("application_verification_status") is None
+            ):
+                recoverable.append(entry)
+        if len(recoverable) > 1:
+            raise RuntimeStateError(
+                "multiple unfinished execution TraceRelay sessions cannot be recovered"
+            )
+        if not recoverable:
+            return
+        entry = recoverable[0]
+        _validate_execution_evidence_record(entry)
+        registration = TraceRelayRegistration(
+            session_id=str(entry["session_id"]),
+            proxy_host="127.0.0.1",
+            proxy_port=1,
+            upstream_port=self.upstream_port,
+            session_path=Path(str(entry["session_path"])),
+        )
+        verification = self.relay_client.recover_managed_session(
+            registration,
+            process_pid=int(entry["process_pid"]),
+        )
+        _require_complete_execution_verification(verification)
+        self._record_evidence(
+            registration,
+            verification,
+            node=str(entry["node"]),
+            application_verification_status="VALID_COMPLETE",
+            process_pid=int(entry["process_pid"]),
+        )
+        self._write_state("running")
 
     def _validate_persisted_execution_receipts(self) -> None:
         for receipt in self._execution_turns:
@@ -1554,6 +1636,16 @@ class RuntimeCoordinator:
         application_verification_status: str | None = None,
         process_pid: int | None = None,
     ) -> None:
+        resolved_node = node or self._current_node
+        if (
+            resolved_node in EXECUTION_NODE_ROLES
+            and application_verification_status == "VALID_COMPLETE"
+        ):
+            if verification is None:
+                raise RuntimeStateError(
+                    "valid execution evidence requires a verification payload"
+                )
+            _require_complete_execution_verification(verification)
         prior = next(
             (
                 entry
@@ -1566,7 +1658,7 @@ class RuntimeCoordinator:
             saved_pid = prior.get("process_pid")
             process_pid = saved_pid if isinstance(saved_pid, int) else None
         entry = {
-            "node": node or self._current_node,
+            "node": resolved_node,
             "session_id": registration.session_id,
             "session_path": str(registration.session_path),
             "verification_status": (
@@ -1576,6 +1668,8 @@ class RuntimeCoordinator:
             "final_hash": verification.get("final_hash") if verification else None,
             "process_pid": process_pid,
         }
+        if resolved_node in EXECUTION_NODE_ROLES:
+            _validate_execution_evidence_record(entry)
         for index, existing in enumerate(self._evidence_sessions):
             if existing.get("session_id") == registration.session_id:
                 self._evidence_sessions[index] = entry
@@ -1844,6 +1938,77 @@ def _state_sha256(state: Mapping[str, Any]) -> str:
             f"execution graph state is not deterministic JSON: {error}"
         ) from error
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _require_complete_execution_verification(
+    verification: Mapping[str, object],
+) -> str:
+    if verification.get("status") != "VALID_COMPLETE":
+        raise RuntimeStateError(
+            "execution TraceRelay verification is not VALID_COMPLETE"
+        )
+    final_hash = _require_sha256(verification.get("final_hash"), "final_hash")
+    observed = verification.get("observed_bytes")
+    if not isinstance(observed, Mapping):
+        raise RuntimeStateError(
+            "execution TraceRelay verification has no observed byte counts"
+        )
+    for direction in ("client_to_upstream", "upstream_to_client"):
+        value = observed.get(direction)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise RuntimeStateError(
+                "execution TraceRelay verification has no bidirectional traffic"
+            )
+    return final_hash
+
+
+def _validate_execution_evidence_records(
+    evidence: Sequence[Mapping[str, object]],
+) -> None:
+    for entry in evidence:
+        if entry.get("node") in EXECUTION_NODE_ROLES:
+            _validate_execution_evidence_record(entry)
+
+
+def _validate_execution_evidence_record(entry: Mapping[str, object]) -> None:
+    node = entry.get("node")
+    if node not in EXECUTION_NODE_ROLES:
+        raise RuntimeStateError("execution evidence has an invalid node")
+    session_id = entry.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        raise RuntimeStateError("execution evidence has an invalid session ID")
+    session_path = entry.get("session_path")
+    if not isinstance(session_path, str) or not session_path:
+        raise RuntimeStateError("execution evidence has an invalid session path")
+    path = Path(session_path)
+    if not path.is_absolute() or path.name != session_id:
+        raise RuntimeStateError(
+            "execution evidence session path does not match its session ID"
+        )
+    process_pid = entry.get("process_pid")
+    if (
+        isinstance(process_pid, bool)
+        or not isinstance(process_pid, int)
+        or process_pid <= 0
+    ):
+        raise RuntimeStateError("execution turn evidence has no valid App Server PID")
+    raw_status = entry.get("verification_status")
+    if not isinstance(raw_status, str) or not raw_status:
+        raise RuntimeStateError("execution evidence has an invalid verification status")
+    application_status = entry.get("application_verification_status")
+    if application_status not in {None, "VALID_COMPLETE", "INVALID"}:
+        raise RuntimeStateError(
+            "execution evidence has an invalid application verification status"
+        )
+    final_hash = entry.get("final_hash")
+    if final_hash is not None:
+        _require_sha256(final_hash, "final_hash")
+    if raw_status == "VALID_COMPLETE":
+        _require_sha256(final_hash, "final_hash")
+    if application_status == "VALID_COMPLETE" and raw_status != "VALID_COMPLETE":
+        raise RuntimeStateError(
+            "execution evidence application status contradicts raw verification"
+        )
 
 
 def _validate_execution_agents(agents: Mapping[str, Mapping[str, object]]) -> None:

@@ -309,7 +309,7 @@ def send_execution_prompt(role_key: str, prompt: str) -> str:
     )
 
 
-def require_planning_paths_unchanged(
+def require_control_envelope_unchanged(
     node_name: str, node_input: State, node_output: State
 ) -> None:
     for field_name in ("artifact_path", "reasoning_ledger_context_pack"):
@@ -319,6 +319,8 @@ def require_planning_paths_unchanged(
             raise RuntimeError(f"{node_name} returned an invalid {field_name}")
         if Path(actual).resolve() != Path(expected).resolve():
             raise RuntimeError(f"{node_name} changed coordinator-owned {field_name}")
+    if not isinstance(node_output.get("status"), bool):
+        raise RuntimeError(f"{node_name} returned a non-boolean status")
 
 
 def test_plan_author_node(state: State) -> State:
@@ -349,7 +351,9 @@ def test_plan_author_node(state: State) -> State:
     node_output = json.loads(response)
     require_node_success(TEST_PLAN_AUTHOR_NODE, node_output)
     if coordinator is not None:
-        require_planning_paths_unchanged(TEST_PLAN_AUTHOR_NODE, node_input, node_output)
+        require_control_envelope_unchanged(
+            TEST_PLAN_AUTHOR_NODE, node_input, node_output
+        )
         assert control is not None
         coordinator.freeze_planning_plan(str(control["round_id"]))
     log_node_event(TEST_PLAN_AUTHOR_NODE, "done")
@@ -381,7 +385,7 @@ def test_plan_reviewer_node(state: State) -> State:
                 job_id=str(control["job_id"]),
             )
             node_output = json.loads(response)
-            require_planning_paths_unchanged(
+            require_control_envelope_unchanged(
                 TEST_PLAN_REVIEWER_NODE, node_input, node_output
             )
             accepted = coordinator.record_planning_review(
@@ -415,6 +419,7 @@ def test_executor_node(state: State) -> State:
     prompt = build_node_prompt(node_input)
     response = send_execution_prompt(TEST_EXECUTOR_ROLE, prompt)
     node_output = json.loads(response)
+    require_control_envelope_unchanged(TEST_EXECUTOR_NODE, node_input, node_output)
     require_node_success(TEST_EXECUTOR_NODE, node_output)
     log_node_event(TEST_EXECUTOR_NODE, "done")
     return {
@@ -432,6 +437,9 @@ def test_result_reviewer_node(state: State) -> State:
     prompt = build_node_prompt(node_input)
     response = send_execution_prompt(TEST_RESULT_REVIEWER_ROLE, prompt)
     node_output = json.loads(response)
+    require_control_envelope_unchanged(
+        TEST_RESULT_REVIEWER_NODE, node_input, node_output
+    )
     log_node_event(TEST_RESULT_REVIEWER_NODE, "done")
     return {
         **node_input,

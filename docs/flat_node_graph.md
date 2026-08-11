@@ -49,6 +49,12 @@ every node turn runs in a new App Server process and TraceRelay session. E/F
 remain on the legacy per-node `codex exec resume` path. LangGraph controls node
 order; no role thread communicates directly with another role thread.
 
+C/D responses cannot change the coordinator-owned artifact or reasoning-ledger
+paths. Completed C/D receipts are accepted only after the linked TraceRelay
+journals are reverified from disk. A coordinator crash seals the exact saved
+session and terminates its saved Windows Job before the known Codex turn is read
+from a new traced process; an uncertain submission is never repeated.
+
 ## Detailed Operating Rules
 
 ### Project Manager Runtime
