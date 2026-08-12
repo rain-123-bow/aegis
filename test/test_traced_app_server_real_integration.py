@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -74,6 +75,40 @@ REQUIRED_REGISTRATION_CRASH_MODES = (
     "after_popen_before_identity_checkpoint",
 )
 
+REGISTRATION_CRASH_CASE_FIELDS = frozenset(
+    {
+        "crash_mode",
+        "worker_exit_code",
+        "operation_id",
+        "session_id",
+        "session_path",
+        "marker",
+        "recovery_cli_commands",
+        "verification",
+        "application_verification_status",
+        "persisted_process_pid",
+        "persisted_process_creation_time_100ns",
+    }
+)
+REGISTRATION_CRASH_VERIFICATION_FIELDS = frozenset(
+    {
+        "final_hash",
+        "observed_bytes",
+        "observed_connection_count",
+        "record_count",
+        "sent_error_bytes",
+        "sent_success_bytes",
+        "status",
+        "unknown_bytes",
+    }
+)
+REGISTRATION_CRASH_BYTE_DIRECTIONS = frozenset(
+    {"client_to_upstream", "upstream_to_client"}
+)
+TRACERELAY_SESSION_ID_PATTERN = re.compile(
+    r"[0-9]{8}T[0-9]{6}\.[0-9]{6}Z_[0-9a-f]{32}"
+)
+
 
 def _source_sha256(*relative_paths: str) -> dict[str, str]:
     return {
@@ -103,6 +138,8 @@ def _validate_registration_crash_cases(
     operation_ids: set[str] = set()
     session_ids: set[str] = set()
     for case in cases:
+        if set(case) != REGISTRATION_CRASH_CASE_FIELDS:
+            raise AssertionError("registration crash case has an invalid field set")
         crash_mode = case["crash_mode"]
         operation_id = case.get("operation_id")
         session_id = case.get("session_id")
@@ -119,19 +156,29 @@ def _validate_registration_crash_cases(
         operation_ids.add(operation_id)
         if (
             not isinstance(session_id, str)
-            or not session_id
+            or TRACERELAY_SESSION_ID_PATTERN.fullmatch(session_id) is None
             or session_id in session_ids
             or not isinstance(session_path, str)
             or not Path(session_path).is_absolute()
             or Path(session_path).name != session_id
         ):
             raise AssertionError("registration crash session identity is invalid")
+        try:
+            datetime.strptime(session_id.split("_", maxsplit=1)[0], "%Y%m%dT%H%M%S.%fZ")
+        except ValueError as error:
+            raise AssertionError(
+                "registration crash session timestamp is invalid"
+            ) from error
         session_ids.add(session_id)
 
         marker = case.get("marker")
         expected_popen = crash_mode == "after_popen_before_identity_checkpoint"
+        expected_marker_fields = {"crash_mode", "popen_started"}
+        if expected_popen:
+            expected_marker_fields.add("observed_process_pid")
         if (
             not isinstance(marker, dict)
+            or set(marker) != expected_marker_fields
             or marker.get("crash_mode") != crash_mode
             or marker.get("popen_started") is not expected_popen
         ):
@@ -155,15 +202,55 @@ def _validate_registration_crash_cases(
         if case.get("recovery_cli_commands") != expected_commands:
             raise AssertionError("registration crash recovery command sequence is invalid")
         verification = case.get("verification")
-        if not isinstance(verification, dict) or verification.get("status") != (
-            "VALID_COMPLETE"
+        if (
+            not isinstance(verification, dict)
+            or set(verification) != REGISTRATION_CRASH_VERIFICATION_FIELDS
+            or verification.get("status") != "VALID_COMPLETE"
         ):
             raise AssertionError("registration crash journal is not VALID_COMPLETE")
+        final_hash = verification.get("final_hash")
+        if (
+            not isinstance(final_hash, str)
+            or len(final_hash) != 64
+            or any(character not in "0123456789abcdef" for character in final_hash)
+        ):
+            raise AssertionError("registration crash journal has an invalid final hash")
+        for count_field in ("observed_connection_count", "record_count"):
+            count = verification.get(count_field)
+            if type(count) is not int or count < 0:
+                raise AssertionError(
+                    f"registration crash journal has an invalid {count_field}"
+                )
+        byte_maps: dict[str, dict[str, int]] = {}
+        for byte_field in (
+            "observed_bytes",
+            "sent_error_bytes",
+            "sent_success_bytes",
+            "unknown_bytes",
+        ):
+            byte_counts = verification.get(byte_field)
+            if (
+                not isinstance(byte_counts, dict)
+                or set(byte_counts) != REGISTRATION_CRASH_BYTE_DIRECTIONS
+                or any(type(value) is not int or value < 0 for value in byte_counts.values())
+            ):
+                raise AssertionError(
+                    f"registration crash journal has invalid {byte_field}"
+                )
+            byte_maps[byte_field] = byte_counts
+        for direction in REGISTRATION_CRASH_BYTE_DIRECTIONS:
+            if byte_maps["observed_bytes"][direction] != sum(
+                byte_maps[field][direction]
+                for field in ("sent_success_bytes", "sent_error_bytes", "unknown_bytes")
+            ):
+                raise AssertionError(
+                    "registration crash journal byte accounting is inconsistent"
+                )
         if case.get("application_verification_status") != "INVALID":
             raise AssertionError("registration crash application verdict is not INVALID")
         if (
-            case.get("persisted_process_pid") is not None
-            or case.get("persisted_process_creation_time_100ns") is not None
+            case["persisted_process_pid"] is not None
+            or case["persisted_process_creation_time_100ns"] is not None
         ):
             raise AssertionError("registration crash report persisted an unverified identity")
 

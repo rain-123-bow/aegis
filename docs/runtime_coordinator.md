@@ -260,8 +260,8 @@ verdict: PASS
 codex-cli: 0.145.0
 model: gpt-5.6-sol
 reasoning effort: high
-report: C:\ar\b7full\as_pilot\90ae0dd4e1d2\ACCEPTANCE_REPORT.json
-report SHA-256: 4D45D3311EC8956B86B7D7CEDC0D718E4DFFEB9D9AA4D26174CAD363B85DBD7C
+report: C:\ar\b8full\as_pilot\793b3149347e\ACCEPTANCE_REPORT.json
+report SHA-256: 2B5C7EA1F9360F43C26D333DCB57EB0ED5C37D72223BE332A435703204EA6C1F
 TraceRelay journal evidence: VALID_COMPLETE
 application evidence: VALID_COMPLETE
 registration operation IDs: 7, distinct
@@ -277,7 +277,7 @@ TEST_RESULT_REVIEWER thread reused across both D turns
 TEST_REPORT_WRITER and FINAL_REVIEWER threads independent
 synthetic command stdout: True
 synthetic command exit code: 0
-E report SHA-256: 439279AD76EE7946A32BAAC959E9223942BD32A3278698B193D15CD5A48CDD00
+E report SHA-256: 3599CF889EFEB9CCB36A070462CD0BB153B41E1129C40086CB59AE83F1286492
 F review binds the exact E report SHA-256: yes
 ```
 
@@ -286,8 +286,8 @@ Hard-crash recovery acceptance:
 ```text
 verdict: PASS
 node: F
-report: C:\ar\b7known\as_crash_recovery\b4d4b0d369b0\CRASH_RECOVERY_REPORT.json
-report SHA-256: 172BF275A69180E16F425422ECBC63125C2DA6E32C4B5A518A0DEA3A53BC1651
+report: C:\ar\b8known\as_crash_recovery\f6dc09238c05\CRASH_RECOVERY_REPORT.json
+report SHA-256: 42577597C9025E23DE52F7E918BFD44CCD0AA519A9586C29E4D5489AB42188DB
 forced coordinator exit code: 91
 Codex turn IDs created: 1
 TraceRelay sessions: 2, distinct
@@ -302,8 +302,8 @@ Registration-checkpoint crash acceptance:
 
 ```text
 verdict: PASS
-report: C:\ar\b7r\as_registration_crash\9920714f115c\REGISTRATION_CRASH_REPORT.json
-report SHA-256: 61540FD2644DB707CF0567FE5DAFAC5E52B81B4D47750DB0CF0EFADAF089BFBD
+report: C:\ar\b8r\as_registration_crash\48646fc3cd62\REGISTRATION_CRASH_REPORT.json
+report SHA-256: A670565CEAFC8E33BDB5B3DCA6C942FBBBAEC8334833DC8E80942590C465649E
 forced coordinator exit code: 91
 register response before Popen crash: recovered exact session
 Popen before PID/FILETIME checkpoint crash: recovered exact session
@@ -311,6 +311,8 @@ recovery started TraceRelay or registered a new session: no
 recovered application evidence: INVALID
 persisted PID/FILETIME without a verified identity: null/null
 missing, duplicate, failed, or invalid cases publish PASS: no
+missing case, marker, verification, or byte-direction fields publish PASS: no
+noncanonical or calendar-invalid session IDs publish PASS: no
 ```
 
 TraceRelay service-failure acceptance:
