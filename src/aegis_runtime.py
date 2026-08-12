@@ -168,6 +168,7 @@ class RuntimeCoordinator:
         ):
             raise RuntimeStateError("prior evidence sessions must be a list of objects")
         _validate_execution_evidence_records(evidence)
+        _validate_planning_evidence_records(evidence)
         if not isinstance(planning_agents, dict) or not all(
             isinstance(role, str) and isinstance(value, dict)
             for role, value in planning_agents.items()
@@ -279,6 +280,7 @@ class RuntimeCoordinator:
                 self._state_writable = True
             if self._planning_stage_status == "completed":
                 self._validate_completed_planning_stage()
+            self._validate_persisted_planning_evidence_cache()
             self._validate_persisted_execution_receipt_cache()
             self._recover_persisted_execution_sessions()
             self.relay_client.start()
@@ -454,11 +456,23 @@ class RuntimeCoordinator:
             nonlocal process
             if process is not None:
                 raise RuntimeStateError("execution App Server process already exists")
-            process = self.relay_client.open_managed_process(
-                process_command,
-                upstream_port=self.upstream_port,
-                **popen_options,
-            )
+            try:
+                process = self.relay_client.open_managed_process(
+                    process_command,
+                    upstream_port=self.upstream_port,
+                    **popen_options,
+                )
+            except BaseException as error:
+                try:
+                    self._record_registered_process_start_failure(
+                        node=str(node), receipt=receipt
+                    )
+                except BaseException as persistence_error:
+                    error.add_note(
+                        "registered TraceRelay session persistence also failed: "
+                        f"{persistence_error}"
+                    )
+                raise
             session_ids = receipt["evidence_session_ids"]
             assert isinstance(session_ids, list)
             session_ids.append(process.registration.session_id)
@@ -1094,6 +1108,22 @@ class RuntimeCoordinator:
         ):
             raise RuntimeStateError("planning stage has incomplete TraceRelay evidence")
 
+    def _validate_persisted_planning_evidence_cache(self) -> None:
+        for entry in self._evidence_sessions:
+            if entry.get("node") != "planning":
+                continue
+            _validate_planning_evidence_record(entry)
+            raw_status = entry.get("verification_status")
+            application_status = entry.get("application_verification_status")
+            if (
+                raw_status == "VALID_COMPLETE"
+                and application_status == "VALID_COMPLETE"
+            ):
+                continue
+            if raw_status == "UNVERIFIED" and application_status is None:
+                continue
+            raise RuntimeStateError("planning stage has incomplete TraceRelay evidence")
+
     def _begin_execution_attempt(
         self, node: str, state: Mapping[str, Any]
     ) -> dict[str, object]:
@@ -1503,11 +1533,21 @@ class RuntimeCoordinator:
         ) -> ManagedEvidenceProcess:
             if self._planning_process is not None:
                 raise RuntimeStateError("planning App Server process already exists")
-            process = self.relay_client.open_managed_process(
-                process_command,
-                upstream_port=self.upstream_port,
-                **popen_options,
-            )
+            try:
+                process = self.relay_client.open_managed_process(
+                    process_command,
+                    upstream_port=self.upstream_port,
+                    **popen_options,
+                )
+            except BaseException as error:
+                try:
+                    self._record_registered_process_start_failure(node="planning")
+                except BaseException as persistence_error:
+                    error.add_note(
+                        "registered TraceRelay session persistence also failed: "
+                        f"{persistence_error}"
+                    )
+                raise
             self._planning_process = process
             self._record_evidence(process.registration, None, node="planning")
             self._write_state("running")
@@ -1705,6 +1745,32 @@ class RuntimeCoordinator:
                 self._evidence_sessions[index] = entry
                 return
         self._evidence_sessions.append(entry)
+
+    def _record_registered_process_start_failure(
+        self,
+        *,
+        node: str,
+        receipt: dict[str, object] | None = None,
+    ) -> None:
+        registration = getattr(self.relay_client, "last_registration", None)
+        if not isinstance(registration, TraceRelayRegistration):
+            return
+        if receipt is not None:
+            session_ids = receipt.get("evidence_session_ids")
+            if not isinstance(session_ids, list):
+                raise RuntimeStateError(
+                    "execution turn has invalid evidence session IDs"
+                )
+            if registration.session_id not in session_ids:
+                session_ids.append(registration.session_id)
+        verification = getattr(self.relay_client, "last_verification", None)
+        self._record_evidence(
+            registration,
+            verification if isinstance(verification, Mapping) else None,
+            node=node,
+            application_verification_status="INVALID",
+        )
+        self._write_state("running")
 
     def complete(self, state: dict[str, Any]) -> None:
         self.finish_planning_stage()
@@ -2004,44 +2070,39 @@ def _validate_execution_evidence_records(
             _validate_execution_evidence_record(entry)
 
 
-def _validate_execution_evidence_record(entry: Mapping[str, object]) -> None:
-    node = entry.get("node")
-    if node not in EXECUTION_NODE_ROLES:
-        raise RuntimeStateError("execution evidence has an invalid node")
+def _validate_planning_evidence_records(
+    evidence: Sequence[Mapping[str, object]],
+) -> None:
+    for entry in evidence:
+        if entry.get("node") == "planning":
+            _validate_planning_evidence_record(entry)
+
+
+def _validate_evidence_identity_and_status(
+    entry: Mapping[str, object],
+    *,
+    evidence_kind: str,
+) -> tuple[object, object, object]:
     session_id = entry.get("session_id")
     if not isinstance(session_id, str) or not session_id:
-        raise RuntimeStateError("execution evidence has an invalid session ID")
+        raise RuntimeStateError(f"{evidence_kind} evidence has an invalid session ID")
     session_path = entry.get("session_path")
     if not isinstance(session_path, str) or not session_path:
-        raise RuntimeStateError("execution evidence has an invalid session path")
+        raise RuntimeStateError(f"{evidence_kind} evidence has an invalid session path")
     path = Path(session_path)
     if not path.is_absolute() or path.name != session_id:
         raise RuntimeStateError(
-            "execution evidence session path does not match its session ID"
-        )
-    process_pid = entry.get("process_pid")
-    if (
-        isinstance(process_pid, bool)
-        or not isinstance(process_pid, int)
-        or process_pid <= 0
-    ):
-        raise RuntimeStateError("execution turn evidence has no valid App Server PID")
-    creation_time = entry.get("process_creation_time_100ns")
-    if (
-        isinstance(creation_time, bool)
-        or not isinstance(creation_time, int)
-        or creation_time <= 0
-    ):
-        raise RuntimeStateError(
-            "execution turn evidence has no valid App Server creation time"
+            f"{evidence_kind} evidence session path does not match its session ID"
         )
     raw_status = entry.get("verification_status")
     if not isinstance(raw_status, str) or not raw_status:
-        raise RuntimeStateError("execution evidence has an invalid verification status")
+        raise RuntimeStateError(
+            f"{evidence_kind} evidence has an invalid verification status"
+        )
     application_status = entry.get("application_verification_status")
     if application_status not in {None, "VALID_COMPLETE", "INVALID"}:
         raise RuntimeStateError(
-            "execution evidence has an invalid application verification status"
+            f"{evidence_kind} evidence has an invalid application verification status"
         )
     final_hash = entry.get("final_hash")
     if final_hash is not None:
@@ -2050,7 +2111,63 @@ def _validate_execution_evidence_record(entry: Mapping[str, object]) -> None:
         _require_sha256(final_hash, "final_hash")
     if application_status == "VALID_COMPLETE" and raw_status != "VALID_COMPLETE":
         raise RuntimeStateError(
-            "execution evidence application status contradicts raw verification"
+            f"{evidence_kind} evidence application status contradicts raw verification"
+        )
+    return raw_status, application_status, final_hash
+
+
+def _validate_planning_evidence_record(entry: Mapping[str, object]) -> None:
+    if entry.get("node") != "planning":
+        raise RuntimeStateError("planning evidence has an invalid node")
+    _validate_evidence_identity_and_status(entry, evidence_kind="planning")
+    process_pid = entry.get("process_pid")
+    creation_time = entry.get("process_creation_time_100ns")
+    if (process_pid is None) != (creation_time is None):
+        raise RuntimeStateError("planning evidence has a partial process identity")
+    if process_pid is not None:
+        if (
+            isinstance(process_pid, bool)
+            or not isinstance(process_pid, int)
+            or process_pid <= 0
+            or isinstance(creation_time, bool)
+            or not isinstance(creation_time, int)
+            or creation_time <= 0
+        ):
+            raise RuntimeStateError("planning evidence has an invalid process identity")
+
+
+def _validate_execution_evidence_record(entry: Mapping[str, object]) -> None:
+    node = entry.get("node")
+    if node not in EXECUTION_NODE_ROLES:
+        raise RuntimeStateError("execution evidence has an invalid node")
+    _raw_status, application_status, _final_hash = (
+        _validate_evidence_identity_and_status(entry, evidence_kind="execution")
+    )
+    process_pid = entry.get("process_pid")
+    creation_time = entry.get("process_creation_time_100ns")
+    if process_pid is None and creation_time is None:
+        if application_status != "INVALID":
+            raise RuntimeStateError(
+                "execution evidence without process identity must be application-invalid"
+            )
+        return
+    if (process_pid is None) != (creation_time is None):
+        raise RuntimeStateError(
+            "execution turn evidence has a partial App Server PID/creation time identity"
+        )
+    if (
+        isinstance(process_pid, bool)
+        or not isinstance(process_pid, int)
+        or process_pid <= 0
+    ):
+        raise RuntimeStateError("execution turn evidence has no valid App Server PID")
+    if (
+        isinstance(creation_time, bool)
+        or not isinstance(creation_time, int)
+        or creation_time <= 0
+    ):
+        raise RuntimeStateError(
+            "execution turn evidence has no valid App Server creation time"
         )
 
 
@@ -2258,13 +2375,22 @@ def _validate_execution_bindings(
                     "execution turn evidence binding is missing or inconsistent"
                 )
             process_pid = entry.get("process_pid")
-            if (
+            creation_time = entry.get("process_creation_time_100ns")
+            if process_pid is None and creation_time is None:
+                if entry.get("application_verification_status") != "INVALID":
+                    raise RuntimeStateError(
+                        "execution evidence without process identity is not invalid"
+                    )
+            elif (
                 isinstance(process_pid, bool)
                 or not isinstance(process_pid, int)
                 or process_pid <= 0
+                or isinstance(creation_time, bool)
+                or not isinstance(creation_time, int)
+                or creation_time <= 0
             ):
                 raise RuntimeStateError(
-                    "execution turn evidence has no valid App Server PID"
+                    "execution turn evidence has no valid App Server process identity"
                 )
     for session_id, entry in evidence_by_id.items():
         if (

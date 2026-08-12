@@ -550,6 +550,47 @@ class TraceRelayClientTests(unittest.TestCase):
             self.assertFalse(process.communicate_called)
             self.assertIsInstance(managed.failure(), aegis_runtime.TraceRelayError)
 
+    def test_creation_time_failure_keeps_the_registered_session_and_verification(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session_path = root / "sessions" / "session-1"
+            process = InteractiveFakeProcess()
+            client, _commands, _captured = self.make_client(
+                root,
+                status_payloads=[
+                    relay_payload("status"),
+                    {
+                        **relay_payload("status", "WAITING"),
+                        "session_id": "session-1",
+                        "session_path": str(session_path),
+                    },
+                    {
+                        **relay_payload("status"),
+                        "last_session_id": "session-1",
+                        "last_session_path": str(session_path),
+                    },
+                ],
+                process=process,
+            )
+            client._process_creation_time_reader = lambda _pid: (_ for _ in ()).throw(
+                OSError("FILETIME read failed")
+            )
+            client.start()
+
+            with self.assertRaisesRegex(OSError, "FILETIME read failed"):
+                client.open_managed_process(
+                    ["codex.exe", "app-server"], upstream_port=7_899
+                )
+
+            self.assertTrue(process.terminated)
+            self.assertEqual(client.last_registration.session_id, "session-1")
+            self.assertEqual(
+                client.last_verification["status"],
+                "VALID_COMPLETE",
+            )
+
     def test_invalid_managed_environment_is_rejected_before_registration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -866,6 +907,39 @@ class ExecutionRelayClient(FakeRelayClient):
         return self.verify_session(registration.session_path)
 
 
+class RegisteredProcessStartFailureRelay(FakeRelayClient):
+    def __init__(
+        self,
+        root: Path,
+        *,
+        session_id: str,
+        error: BaseException,
+        verification: dict[str, object] | None,
+    ) -> None:
+        super().__init__()
+        self.registration = aegis_runtime.TraceRelayRegistration(
+            session_id=session_id,
+            proxy_host="127.0.0.1",
+            proxy_port=45_000,
+            upstream_port=7_899,
+            session_path=root / "sessions" / session_id,
+        )
+        self.error = error
+        self.verification = verification
+        self.last_registration: aegis_runtime.TraceRelayRegistration | None = None
+        self.last_verification: dict[str, object] | None = None
+        self.open_count = 0
+
+    def open_managed_process(self, *args: object, **kwargs: object) -> object:
+        del args, kwargs
+        self.open_count += 1
+        self.last_registration = self.registration
+        self.last_verification = (
+            dict(self.verification) if self.verification is not None else None
+        )
+        raise self.error
+
+
 class ExecutionAppServer:
     def __init__(self, harness: ExecutionTurnHarness, **kwargs: Any) -> None:
         self.harness = harness
@@ -1048,6 +1122,93 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         return coordinator.execute_node(node, operation, state)
 
+    def assert_execution_registration_failure_is_durable(
+        self,
+        *,
+        root: Path,
+        run_id: str,
+        session_id: str,
+        error: BaseException,
+        verification: dict[str, object] | None,
+    ) -> None:
+        project = self.make_sealed_project(root)
+        harness = ExecutionTurnHarness(root)
+        relay = RegisteredProcessStartFailureRelay(
+            root,
+            session_id=session_id,
+            error=error,
+            verification=verification,
+        )
+        coordinator = aegis_runtime.RuntimeCoordinator(
+            project_root=project,
+            artifact_path=root / "artifacts",
+            run_id=run_id,
+            upstream_port=7_899,
+            relay_client=relay,
+            start_node="F",
+        )
+        coordinator.preflight()
+        with (
+            patch.object(
+                aegis_runtime,
+                "AppServerClient",
+                side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+            ),
+            patch.object(
+                aegis_runtime,
+                "default_app_server_command",
+                return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+            ),
+            patch.object(
+                aegis_runtime,
+                "read_codex_cli_version",
+                return_value="codex-cli 0.145.0",
+            ),
+        ):
+            with self.assertRaisesRegex(type(error), str(error)):
+                self.run_execution_node(
+                    coordinator,
+                    "F",
+                    "FINAL_REVIEWER",
+                    {"status": True},
+                )
+
+        saved = aegis_runtime.load_run_state(root / "artifacts", run_id)
+        self.assertEqual(saved["execution_turns"][0]["status"], "preparing")
+        self.assertEqual(
+            saved["execution_turns"][0]["evidence_session_ids"],
+            [session_id],
+        )
+        self.assertEqual(len(saved["evidence_sessions"]), 1)
+        evidence = saved["evidence_sessions"][0]
+        self.assertEqual(evidence["session_id"], session_id)
+        self.assertEqual(evidence["node"], "F")
+        self.assertEqual(
+            evidence["verification_status"],
+            verification["status"] if verification is not None else "UNVERIFIED",
+        )
+        self.assertEqual(evidence["application_verification_status"], "INVALID")
+        self.assertIsNone(evidence["process_pid"])
+        self.assertIsNone(evidence["process_creation_time_100ns"])
+
+        resumed_relay = ExecutionRelayClient(harness)
+        resumed = aegis_runtime.RuntimeCoordinator(
+            project_root=project,
+            artifact_path=root / "artifacts",
+            run_id=run_id,
+            upstream_port=7_899,
+            relay_client=resumed_relay,
+            start_node="F",
+            prior_state=saved,
+        )
+        with self.assertRaisesRegex(
+            aegis_runtime.RuntimeStateError,
+            "incomplete TraceRelay evidence",
+        ):
+            resumed.preflight()
+        self.assertFalse(resumed_relay.started)
+        self.assertEqual(harness.open_count, 0)
+
     def test_node_failure_is_saved_atomically_after_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1075,6 +1236,119 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertEqual(saved["current_node"], "A")
             self.assertEqual(saved["graph_state"], {"status": True})
             self.assertEqual(saved["error"]["type"], "RuntimeError")
+
+    def test_planning_registration_is_persisted_when_process_start_fails(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            relay = RegisteredProcessStartFailureRelay(
+                root,
+                session_id="planning-registered-before-popen-failure",
+                error=OSError("CreateProcess failed after TraceRelay registration"),
+                verification=None,
+            )
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="planning-registered-process-failure",
+                upstream_port=7_899,
+                relay_client=relay,
+                start_node="A",
+            )
+            coordinator.preflight()
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=(
+                        "codex.cmd",
+                        "app-server",
+                        "--listen",
+                        "stdio://",
+                    ),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                with self.assertRaisesRegex(OSError, "CreateProcess failed"):
+                    coordinator.run_planning_agent(
+                        "TEST_PLAN_AUTHOR",
+                        "planning prompt",
+                        output_schema={"type": "object"},
+                        developer_instructions="persistent planning author",
+                    )
+
+            saved = aegis_runtime.load_run_state(
+                root / "artifacts", "planning-registered-process-failure"
+            )
+            self.assertEqual(len(saved["evidence_sessions"]), 1)
+            evidence = saved["evidence_sessions"][0]
+            self.assertEqual(evidence["node"], "planning")
+            self.assertEqual(
+                evidence["session_id"],
+                "planning-registered-before-popen-failure",
+            )
+            self.assertEqual(evidence["verification_status"], "UNVERIFIED")
+            self.assertEqual(evidence["application_verification_status"], "INVALID")
+            self.assertIsNone(evidence["process_pid"])
+            self.assertIsNone(evidence["process_creation_time_100ns"])
+
+            resumed_relay = FakeRelayClient()
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="planning-registered-process-failure",
+                upstream_port=7_899,
+                relay_client=resumed_relay,
+                start_node="A",
+                prior_state=saved,
+            )
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "planning stage has incomplete TraceRelay evidence",
+            ):
+                resumed.preflight()
+            self.assertFalse(resumed_relay.started)
+
+    def test_execution_popen_failure_persists_registered_invalid_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assert_execution_registration_failure_is_durable(
+                root=Path(directory),
+                run_id="execution-popen-after-register-failure",
+                session_id="execution-registered-before-popen-failure",
+                error=OSError("CreateProcess failed after TraceRelay registration"),
+                verification=None,
+            )
+
+    def test_execution_creation_time_failure_persists_without_fake_identity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assert_execution_registration_failure_is_durable(
+                root=Path(directory),
+                run_id="execution-filetime-after-register-failure",
+                session_id="execution-registered-before-filetime-failure",
+                error=aegis_runtime.TraceRelayError("FILETIME read failed"),
+                verification={
+                    "status": "VALID_COMPLETE",
+                    "final_hash": "ab" * 32,
+                    "observed_bytes": {
+                        "client_to_upstream": 0,
+                        "upstream_to_client": 0,
+                    },
+                },
+            )
 
     def test_c_through_f_roles_keep_threads_but_use_one_process_and_session_per_turn(
         self,
@@ -3025,16 +3299,12 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     start_node="A",
                     prior_state=interim,
                 )
-                resumed.preflight()
-                attach_managed_process(
-                    resumed, second_relay, root, "later-valid-session"
-                )
-
                 with self.assertRaisesRegex(
                     aegis_runtime.RuntimeStateError,
-                    "incomplete TraceRelay evidence",
+                    "planning stage has incomplete TraceRelay evidence",
                 ):
-                    resumed.complete_planning_stage()
+                    resumed.preflight()
+                self.assertFalse(second_relay.started)
 
                 final_state = aegis_runtime.load_run_state(artifact_path, run_id)
                 self.assertEqual(final_state["planning_stage_status"], "active")
@@ -3043,7 +3313,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                         entry["application_verification_status"]
                         for entry in final_state["evidence_sessions"]
                     ],
-                    ["INVALID", "VALID_COMPLETE"],
+                    ["INVALID"],
                 )
 
     def test_all_planning_evidence_sessions_allow_completion_and_resume(self) -> None:

@@ -79,6 +79,14 @@ terminates the full `cmd/node/codex/tool` descendant tree. Proxy bypass variable
 are removed and all HTTP proxy selectors are pinned to the registered relay
 endpoint.
 
+Registration is itself durable evidence. If TraceRelay registers a session but
+App Server process creation or Windows creation-FILETIME acquisition fails,
+Aegis links that session to the active turn before rethrowing. The record is
+application `INVALID`; both process identity fields remain null because no
+verified identity was obtained. Planning uses the same rule without a turn
+receipt. A later resume rejects either record before starting TraceRelay, so a
+new valid session cannot hide it.
+
 ### A/B App Server and frozen planning handoff
 
 When the graph starts at A or B, the coordinator starts one traced
@@ -213,6 +221,10 @@ TraceRelay starts. Only `--resume-run-id` may reopen that identity.
 Raw Codex responses remain under `<run>/responses/`, including malformed output.
 TraceRelay failure terminates the active Codex child; Aegis writes the failure
 state and exits without restarting TraceRelay or continuing the graph.
+The service-failure acceptance JSON sets `verdict=PASS` only after all checks and
+binds `aegis_runtime.py`, `main.py`, both control-plane clients, and the
+acceptance script by SHA-256. Report generation fails if any required binding is
+missing, malformed, or no longer matches the executed source bytes.
 
 Version-1 through version-3 run states are rejected on resume. Version 3 cannot
 prove whether a legacy E/F turn already produced a report or final-review side
@@ -239,8 +251,8 @@ verdict: PASS
 codex-cli: 0.145.0
 model: gpt-5.6-sol
 reasoning effort: high
-report: C:\code\aegis_artifacts\as_pilot\1e1497df823c\ACCEPTANCE_REPORT.json
-report SHA-256: 76CB7B776A1A2EC85A167FD693297D550D4010E562D0CC5B682AEDCA01DD12CC
+report: C:\code\aegis_artifacts\as_pilot\7ae8aa76a44d\ACCEPTANCE_REPORT.json
+report SHA-256: 5660FB9A5E033F8B73E9C2590F774E22C90E0D547C61B65B0408CC6AE7B18C92
 TraceRelay journal evidence: VALID_COMPLETE
 application evidence: VALID_COMPLETE
 planning rounds: 1 (approved)
@@ -255,7 +267,7 @@ TEST_RESULT_REVIEWER thread reused across both D turns
 TEST_REPORT_WRITER and FINAL_REVIEWER threads independent
 synthetic command stdout: True
 synthetic command exit code: 0
-E report SHA-256: 3599CF889EFEB9CCB36A070462CD0BB153B41E1129C40086CB59AE83F1286492
+E report SHA-256: 439279AD76EE7946A32BAAC959E9223942BD32A3278698B193D15CD5A48CDD00
 F review binds the exact E report SHA-256: yes
 ```
 
@@ -264,8 +276,8 @@ Hard-crash recovery acceptance:
 ```text
 verdict: PASS
 node: F
-report: C:\code\aegis_artifacts\as_crash_recovery\6660509e0f3f\CRASH_RECOVERY_REPORT.json
-report SHA-256: 4BE86B73E6DE23E2523C4F77EC7A6C7D312286CB7193100762E6F82C0886CA61
+report: C:\code\aegis_artifacts\as_crash_recovery\a8e2302cc5f5\CRASH_RECOVERY_REPORT.json
+report SHA-256: BC3875125A2D170AFE36E0B03B7D90ADDFA7B8F485C34CE76199CADE9C469E54
 forced coordinator exit code: 91
 Codex turn IDs created: 1
 TraceRelay sessions: 2, distinct
@@ -280,8 +292,8 @@ TraceRelay service-failure acceptance:
 
 ```text
 verdict: PASS
-report: C:\ar\ef0812d\RUNTIME_CODEX_ACCEPTANCE_20260812T094709Z.json
-report SHA-256: EFB384730816D1E9631222BF026C5FDAAF965E92F59A864891F8A0598EEBBC70
+report: C:\ar\ef0812f\RUNTIME_CODEX_ACCEPTANCE_20260812T104005Z.json
+report SHA-256: 06BE6A72A41B6301E5D43C8DD4C7CA6ED9375E116B86FEA9623C1AA789238407
 normal F evidence: VALID_COMPLETE, bidirectional bytes > 0
 fault F evidence: VALID_INCOMPLETE
 fault RUN_STATE evidence: UNVERIFIED/INVALID

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
 import json
 import locale
 import os
@@ -20,9 +21,46 @@ from uuid import uuid4
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+REQUIRED_SOURCE_BINDINGS = (
+    "src/aegis_runtime.py",
+    "src/main.py",
+    "src/tracerelay_client.py",
+    "src/codex_app_server_client.py",
+    "test/runtime_codex_acceptance.py",
+)
+
 import main as aegis_main
 from project_seal_store import record_project_seal, verify_expected_project_seal
 from tracerelay_client import TraceRelayClient
+
+
+def _source_sha256() -> dict[str, str]:
+    return {
+        relative_path: hashlib.sha256(
+            (PROJECT_ROOT / relative_path).read_bytes()
+        ).hexdigest()
+        for relative_path in REQUIRED_SOURCE_BINDINGS
+    }
+
+
+def _validate_report_source_binding(report: dict[str, object]) -> None:
+    if report.get("verdict") != "PASS":
+        raise AssertionError("acceptance report verdict is not PASS")
+    source_sha256 = report.get("source_sha256")
+    if not isinstance(source_sha256, dict):
+        raise AssertionError("acceptance report source_sha256 is missing")
+    current = _source_sha256()
+    for relative_path in REQUIRED_SOURCE_BINDINGS:
+        saved = source_sha256.get(relative_path)
+        if (
+            not isinstance(saved, str)
+            or len(saved) != 64
+            or any(character not in "0123456789abcdef" for character in saved)
+            or saved != current[relative_path]
+        ):
+            raise AssertionError(
+                f"acceptance report source_sha256 mismatch: {relative_path}"
+            )
 
 
 def _cli_json(command: str, *arguments: str) -> tuple[int, dict[str, object]]:
@@ -258,6 +296,7 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
     evidence_root.mkdir(parents=True, exist_ok=True)
     project = evidence_root / "project"
     _prepare_project(project)
+    source_sha256 = _source_sha256()
 
     _returncode, initial_status = _cli_json(tracerelay_command, "status")
     if initial_status.get("state") != "NOT_RUNNING":
@@ -464,6 +503,10 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
         "resume_error": str(resume_error),
         "resume_started_process": False,
     }
+
+    report["verdict"] = "PASS"
+    report["source_sha256"] = source_sha256
+    _validate_report_source_binding(report)
 
     report_path = evidence_root / f"RUNTIME_CODEX_ACCEPTANCE_{stamp}.json"
     report_path.write_text(
