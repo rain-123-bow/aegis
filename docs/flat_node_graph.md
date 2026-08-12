@@ -44,13 +44,13 @@ The Project Manager has the full user interaction context, but later agents must
 The graph is flat by design. There is no parent graph / subgraph split in this runtime model. Each node is a long-lived role-bound agent, and graph state only carries the next message envelope.
 
 Runtime identity is split by role and turn. A/B use persistent role threads in
-one planning App Server process. C/D also retain persistent role threads, but
-every node turn runs in a new App Server process and TraceRelay session. E/F
-remain on the legacy per-node `codex exec resume` path. LangGraph controls node
-order; no role thread communicates directly with another role thread.
+one planning App Server process. C-F also retain one persistent thread per role,
+but every node turn runs in a new App Server process and TraceRelay session.
+LangGraph controls node order; no role thread communicates directly with another
+role thread.
 
-C/D responses cannot change the coordinator-owned artifact or reasoning-ledger
-paths. Completed C/D receipts are accepted only after the linked TraceRelay
+C-F responses cannot change the coordinator-owned artifact or reasoning-ledger
+paths. Completed C-F receipts are accepted only after the linked TraceRelay
 journals are reverified from disk. A coordinator crash seals the exact saved
 session and terminates the saved App Server only when both its PID and Windows
 process creation FILETIME match before the known Codex turn is read from a new

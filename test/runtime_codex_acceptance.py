@@ -191,7 +191,6 @@ def _run_graph_once(
     project: Path,
     artifact_path: Path,
     run_id: str,
-    thread_id: str,
     tracerelay_command: str,
     upstream_port: int,
     prompt: str,
@@ -215,7 +214,6 @@ def _run_graph_once(
         monitor_interval_seconds=0.1,
     )
     client_box["client"] = client
-    thread_map = {aegis_main.FINAL_REVIEWER_ROLE: thread_id}
     arguments = [
         "--project-root",
         str(project),
@@ -232,11 +230,13 @@ def _run_graph_once(
         arguments.extend(["--run-id", run_id, "--start-node", "F"])
     with (
         patch.object(aegis_main, "TraceRelayClient", return_value=client),
-        patch.object(aegis_main, "load_agent_thread_map", return_value=thread_map),
         patch.object(
             aegis_main,
             "load_agent_config",
-            return_value={"artifact_path": str(artifact_path)},
+            return_value={
+                "role_key": aegis_main.FINAL_REVIEWER_ROLE,
+                "role_description": "runtime acceptance final reviewer",
+            },
         ),
         patch.object(aegis_main, "build_node_prompt", return_value=prompt),
     ):
@@ -263,15 +263,15 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
     if initial_status.get("state") != "NOT_RUNNING":
         raise RuntimeError("TraceRelay is already running; ownership is ambiguous")
 
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-    normal_run_id = f"acceptance-normal-{stamp}-{uuid4().hex}"
-    fault_run_id = f"acceptance-fault-{stamp}-{uuid4().hex}"
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    nonce = uuid4().hex[:8]
+    normal_run_id = f"normal-{stamp}-{nonce}"
+    fault_run_id = f"fault-{stamp}-{nonce}"
     normal_artifacts = evidence_root / "runs" / normal_run_id
     fault_artifacts = evidence_root / "runs" / fault_run_id
     report: dict[str, object] = {
-        "schema": "aegis.runtime_codex_acceptance.v1",
+        "schema": "aegis.runtime_codex_acceptance.v3",
         "created_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "thread_id": args.thread_id,
         "normal_run_id": normal_run_id,
         "fault_run_id": fault_run_id,
     }
@@ -290,7 +290,6 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
             project=project,
             artifact_path=normal_artifacts,
             run_id=normal_run_id,
-            thread_id=args.thread_id,
             tracerelay_command=tracerelay_command,
             upstream_port=args.upstream_port,
             prompt=_prompt(normal_artifacts),
@@ -338,7 +337,6 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
                 project=project,
                 artifact_path=fault_artifacts,
                 run_id=fault_run_id,
-                thread_id=args.thread_id,
                 tracerelay_command=tracerelay_command,
                 upstream_port=args.upstream_port,
                 prompt=_prompt(fault_artifacts, sleep_marker=fault_marker),
@@ -385,10 +383,15 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
         )
         raise RuntimeError("fault-injected Aegis run did not terminate")
     if len(fault_error) != 1 or type(fault_error[0]).__name__ != "TraceRelayError":
-        raise AssertionError(f"original TraceRelayError was not preserved: {fault_error}")
+        raise AssertionError(
+            f"original TraceRelayError was not preserved: {fault_error}"
+        )
     _wait_for_not_running(tracerelay_command)
     deadline = time.monotonic() + 10
-    while any(_process_is_active(pid) for pid in captured_pids) and time.monotonic() < deadline:
+    while (
+        any(_process_is_active(pid) for pid in captured_pids)
+        and time.monotonic() < deadline
+    ):
         time.sleep(0.05)
     if any(_process_is_active(pid) for pid in captured_pids):
         raise AssertionError("real Codex process tree survived relay failure")
@@ -402,6 +405,13 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
     if fault_state.get("error", {}).get("type") != "TraceRelayError":
         raise AssertionError("RUN_STATE did not preserve TraceRelayError")
     incomplete_session = fault_state["evidence_sessions"][-1]
+    if (
+        incomplete_session.get("verification_status") != "UNVERIFIED"
+        or incomplete_session.get("application_verification_status") != "INVALID"
+    ):
+        raise AssertionError(
+            "fault RUN_STATE did not persist UNVERIFIED/INVALID evidence"
+        )
     incomplete_verify = _verify_session(
         tracerelay_command, incomplete_session["session_path"]
     )
@@ -409,42 +419,51 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
         raise AssertionError("fault evidence is not VALID_INCOMPLETE")
 
     resume_observation: dict[str, object] = {}
+    resume_error: BaseException | None = None
     try:
-        resumed = _run_graph_once(
-            project=project,
-            artifact_path=fault_artifacts,
-            run_id=fault_run_id,
-            thread_id=args.thread_id,
-            tracerelay_command=tracerelay_command,
-            upstream_port=args.upstream_port,
-            prompt=_prompt(fault_artifacts),
-            resume=True,
-            observation=resume_observation,
-        )
-        resumed_state = json.loads(fault_state_path.read_text(encoding="utf-8"))
-        if resumed.get("status") is not True or resumed_state.get("status") != "completed":
-            raise AssertionError("resume did not complete the failed F node")
-        if len(resumed_state.get("evidence_sessions", [])) != 2:
-            raise AssertionError("resume did not retain both evidence sessions")
-        complete_session = resumed_state["evidence_sessions"][-1]
-        complete_verify = _verify_session(
-            tracerelay_command, complete_session["session_path"]
-        )
-        if complete_verify.get("status") != "VALID_COMPLETE":
-            raise AssertionError("resumed evidence is not VALID_COMPLETE")
-        report["fault_and_resume"] = {
-            "run_state_path": str(fault_state_path),
-            "captured_processes": descendants,
-            "all_captured_pids_exited": True,
-            "original_error": str(fault_error[0]),
-            "incomplete_session_path": incomplete_session["session_path"],
-            "incomplete_verification": incomplete_verify,
-            "complete_session_path": complete_session["session_path"],
-            "complete_verification": complete_verify,
-        }
+        try:
+            _run_graph_once(
+                project=project,
+                artifact_path=fault_artifacts,
+                run_id=fault_run_id,
+                tracerelay_command=tracerelay_command,
+                upstream_port=args.upstream_port,
+                prompt=_prompt(fault_artifacts),
+                resume=True,
+                observation=resume_observation,
+            )
+        except BaseException as error:
+            resume_error = error
     finally:
         _cli_json(tracerelay_command, "stop")
         _wait_for_not_running(tracerelay_command)
+    if (
+        resume_error is None
+        or type(resume_error).__name__ != "RuntimeStateError"
+        or "incomplete TraceRelay evidence" not in str(resume_error)
+    ):
+        raise AssertionError(
+            f"same-run resume did not fail closed on incomplete evidence: {resume_error}"
+        )
+    if resume_observation:
+        raise AssertionError("rejected resume started a new Codex process")
+    rejected_state = json.loads(fault_state_path.read_text(encoding="utf-8"))
+    if (
+        rejected_state.get("status") != "failed"
+        or rejected_state.get("error", {}).get("type") != "RuntimeStateError"
+        or len(rejected_state.get("evidence_sessions", [])) != 1
+    ):
+        raise AssertionError("rejected resume did not preserve the failed run evidence")
+    report["fault_and_rejection"] = {
+        "run_state_path": str(fault_state_path),
+        "captured_processes": descendants,
+        "all_captured_pids_exited": True,
+        "original_error": str(fault_error[0]),
+        "incomplete_session_path": incomplete_session["session_path"],
+        "incomplete_verification": incomplete_verify,
+        "resume_error": str(resume_error),
+        "resume_started_process": False,
+    }
 
     report_path = evidence_root / f"RUNTIME_CODEX_ACCEPTANCE_{stamp}.json"
     report_path.write_text(
@@ -454,14 +473,14 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
     markdown_path.write_text(
         "# Runtime Codex Acceptance\n\n"
         "- verdict: PASS\n"
-        f"- thread_id: `{args.thread_id}`\n"
+        "- F control plane: persistent App Server thread with per-turn TraceRelay sessions\n"
         f"- normal_run_id: `{normal_run_id}`\n"
         f"- fault_run_id: `{fault_run_id}`\n"
         f"- JSON evidence: `{report_path}`\n"
         "- normal evidence: `VALID_COMPLETE`, bidirectional bytes > 0\n"
         "- injected failure: complete real Codex process tree exited\n"
         "- failure evidence: `VALID_INCOMPLETE`\n"
-        "- same-run resume evidence: `VALID_COMPLETE`\n",
+        "- same-run resume: rejected before TraceRelay restart or Codex process creation\n",
         encoding="utf-8",
     )
     report["report_path"] = str(report_path)
@@ -471,7 +490,6 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--thread-id", required=True)
     parser.add_argument("--tracerelay-command", required=True)
     parser.add_argument("--upstream-port", type=int, default=7899)
     parser.add_argument(

@@ -71,13 +71,13 @@ it is provenance metadata, not a second startup integrity gate.
 The TraceRelay upstream defaults to the loopback `HTTPS_PROXY`/`HTTP_PROXY`
 port. It can be fixed explicitly with `--tracerelay-upstream-port`.
 
-Each E/F `codex exec resume` child receives a fresh TraceRelay application-session
-registration before the process starts. Its endpoint remains stable for the
-child application's sequential and concurrent proxy connections until Aegis
-explicitly closes the evidence session. The child runs in a
-Windows Job Object; a relay fault terminates the full `cmd/node/codex/tool`
-descendant tree. Proxy bypass variables are removed and all HTTP proxy selectors
-are pinned to the registered relay endpoint.
+Each C-F turn receives a fresh TraceRelay application-session registration before
+its App Server process starts. Its endpoint remains stable for the process's
+sequential and concurrent proxy connections until Aegis explicitly closes the
+evidence session. The process runs in a Windows Job Object; a relay fault
+terminates the full `cmd/node/codex/tool` descendant tree. Proxy bypass variables
+are removed and all HTTP proxy selectors are pinned to the registered relay
+endpoint.
 
 ### A/B App Server and frozen planning handoff
 
@@ -93,7 +93,6 @@ Both roles share the App Server process and one TraceRelay session, but retain
 different Codex thread IDs. A failed review keeps the same process and role
 threads for the B -> A loop. A passing review stops the App Server and requires
 `VALID_COMPLETE` evidence with bytes in both directions before node C can start.
-E/F retain the existing per-node `codex exec resume` path.
 
 Each A attempt receives a unique directory:
 
@@ -145,15 +144,15 @@ interrupted `publishing` operation idempotently. An `approved` round is never
 trusted from its status alone: score, error count, verdict, frozen files,
 published plan, and the complete handoff object are revalidated.
 
-### C/D per-turn App Server transactions
+### C-F per-turn App Server transactions
 
-C and D each own one persistent, non-ephemeral Codex thread for the run. The
+C, D, E, and F each own one persistent, non-ephemeral Codex thread for the run. The
 coordinator creates a new `codex app-server` process and a new TraceRelay
-session for every C or D turn, resumes the role thread in that process, executes
-or recovers exactly one turn, then closes and verifies both resources before
-the node may return. E and F remain on `codex exec resume`.
+session for every C-F turn, resumes the role thread in that process, executes or
+recovers exactly one turn, then closes and verifies both resources before the
+node may return.
 
-The coordinator records a monotonic execution attempt before entering C or D.
+The coordinator records a monotonic execution attempt before entering C-F.
 This identity separates a crash retry from the legal `C -> D -> C` loop. Each
 turn records its attempt, role thread ID, turn ID, request hash, response path
 and hash, TraceRelay session IDs, and App Server identity: PID plus Windows
@@ -177,6 +176,9 @@ Recovery is fail-closed:
 - an invalid older session cannot be hidden by a newer valid session;
 - App Server close, process termination, or evidence finalization failure blocks
   routing.
+- run completion requires the terminal graph state, last completed node, final
+  attempt, response hash, and evidence to bind to F. F may return `status=false`;
+  that remains a business verdict while the run lifecycle becomes completed.
 
 ## Resume a failed run
 
@@ -190,8 +192,12 @@ Read the generated run ID from `RUN_STATE.json`, then use:
   --tracerelay-command "$env:APPDATA\Python\Python313\Scripts\tracerelay.exe"
 ```
 
-Resume uses the same LangGraph thread ID and passes no new input state. The
-failed node runs again; completed nodes do not.
+Resume uses the same LangGraph thread ID and passes no new input state. A known
+pending turn may resume only while its saved TraceRelay session remains
+recoverable (`UNVERIFIED` with no application verdict). If finalization marked a
+session `INVALID`, or the journal verifies as `VALID_INCOMPLETE`, the run remains
+failed and resume is rejected before TraceRelay or a new Codex process starts.
+Completed nodes do not run again.
 
 ## Durable state
 
@@ -200,7 +206,7 @@ failed node runs again; completed nodes do not.
 <artifact_path>/.aegis/runs/<run-id>/RUN_STATE.json
 ```
 
-`RUN_STATE.json` uses `aegis.run_state.v3` and records the current node, last completed node, latest graph
+`RUN_STATE.json` uses `aegis.run_state.v4` and records the current node, last completed node, latest graph
 state, TraceRelay session paths, verification results, and the terminal error.
 New runs reserve the same identity in `RUN_STATE.json` and SQLite before
 TraceRelay starts. Only `--resume-run-id` may reopen that identity.
@@ -208,9 +214,9 @@ Raw Codex responses remain under `<run>/responses/`, including malformed output.
 TraceRelay failure terminates the active Codex child; Aegis writes the failure
 state and exits without restarting TraceRelay or continuing the graph.
 
-Version-1 and version-2 run states are rejected on resume. They cannot prove
-whether a C/D test turn already executed, so conversion could duplicate test
-side effects. Start a new run instead.
+Version-1 through version-3 run states are rejected on resume. Version 3 cannot
+prove whether a legacy E/F turn already produced a report or final-review side
+effect, so conversion could duplicate it. Start a new run instead.
 
 The real App Server control-plane acceptance is opt-in:
 
@@ -221,9 +227,10 @@ $env:TRACERELAY_UPSTREAM_PORT = '7899'
 ```
 
 It proves both boundaries on a sealed synthetic project: A/B share one traced
-process, while C/D/C use three new processes and sessions, reuse the C thread,
-keep D independent, execute a real synthetic command, and write an external
-`ACCEPTANCE_REPORT.json`. It does not use a user project.
+process, while C/D/C/D/E/F use six new processes and sessions, reuse the C and D
+threads, keep all four execution roles independent, bind the E report into the F
+review, and write an external `ACCEPTANCE_REPORT.json`. It does not use a user
+project.
 
 Current Windows acceptance:
 
@@ -232,30 +239,33 @@ verdict: PASS
 codex-cli: 0.145.0
 model: gpt-5.6-sol
 reasoning effort: high
-report: C:\code\aegis_artifacts\as_pilot\d77812f386bb\ACCEPTANCE_REPORT.json
-report SHA-256: F181397BBF16C3D1B98AB0935BAFC33A58B27548724D9C09E20832ECB787F4B7
+report: C:\code\aegis_artifacts\as_pilot\1e1497df823c\ACCEPTANCE_REPORT.json
+report SHA-256: 76CB7B776A1A2EC85A167FD693297D550D4010E562D0CC5B682AEDCA01DD12CC
 TraceRelay journal evidence: VALID_COMPLETE
 application evidence: VALID_COMPLETE
 planning rounds: 1 (approved)
 planning review: PASS, score 100, error count 0
 approved plan SHA-256 equals reviewed plan SHA-256
-C/D/C execution turns: 3
-C/D/C TraceRelay sessions: 3, distinct
-C/D/C App Server PIDs: 3, distinct
-C/D/C App Server creation FILETIMEs: 3, distinct
+C/D/C/D/E/F execution turns: 6
+C/D/C/D/E/F TraceRelay sessions: 6, distinct
+C/D/C/D/E/F App Server PIDs: 6, distinct
+C/D/C/D/E/F App Server creation FILETIMEs: 6, distinct
 TEST_EXECUTOR thread reused across both C turns
-TEST_RESULT_REVIEWER thread independent
+TEST_RESULT_REVIEWER thread reused across both D turns
+TEST_REPORT_WRITER and FINAL_REVIEWER threads independent
 synthetic command stdout: True
 synthetic command exit code: 0
-cross-process thread continuity marker: C-PERSISTENT-THREAD
+E report SHA-256: 3599CF889EFEB9CCB36A070462CD0BB153B41E1129C40086CB59AE83F1286492
+F review binds the exact E report SHA-256: yes
 ```
 
 Hard-crash recovery acceptance:
 
 ```text
 verdict: PASS
-report: C:\code\aegis_artifacts\as_crash_recovery\8aad8d934c8a\CRASH_RECOVERY_REPORT.json
-report SHA-256: EBE5D54C58B42219822EC813EF6D92C8B58B5BE89BB89432562DC0F8B2B213EC
+node: F
+report: C:\code\aegis_artifacts\as_crash_recovery\6660509e0f3f\CRASH_RECOVERY_REPORT.json
+report SHA-256: 4BE86B73E6DE23E2523C4F77EC7A6C7D312286CB7193100762E6F82C0886CA61
 forced coordinator exit code: 91
 Codex turn IDs created: 1
 TraceRelay sessions: 2, distinct
@@ -264,6 +274,20 @@ App Server creation FILETIMEs: 2, distinct
 both saved Windows Job PIDs terminated after recovery: yes
 old session sealed before known-turn recovery: yes
 all raw and application evidence: VALID_COMPLETE
+```
+
+TraceRelay service-failure acceptance:
+
+```text
+verdict: PASS
+report: C:\ar\ef0812d\RUNTIME_CODEX_ACCEPTANCE_20260812T094709Z.json
+report SHA-256: EFB384730816D1E9631222BF026C5FDAAF965E92F59A864891F8A0598EEBBC70
+normal F evidence: VALID_COMPLETE, bidirectional bytes > 0
+fault F evidence: VALID_INCOMPLETE
+fault RUN_STATE evidence: UNVERIFIED/INVALID
+runner plus 10 observed descendants terminated: yes
+same-run resume rejected before TraceRelay restart: yes
+same-run resume started a Codex process: no
 ```
 
 ## Recorded follow-up work

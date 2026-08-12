@@ -38,7 +38,7 @@ RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 RESERVATION_TOKEN_PATTERN = re.compile(r"[0-9a-f]{32}")
 CHECKPOINT_RELATIVE_PATH = Path(".aegis/runtime/checkpoints.sqlite3")
 RESERVATION_TABLE = "aegis_run_reservations"
-RUN_STATE_SCHEMA = "aegis.run_state.v3"
+RUN_STATE_SCHEMA = "aegis.run_state.v4"
 PLANNING_STAGE_STATUSES = frozenset({"not_started", "active", "completed"})
 PLANNING_ROUND_STATUSES = frozenset(
     {
@@ -54,6 +54,8 @@ PLANNING_REVIEW_THRESHOLD = 95
 EXECUTION_NODE_ROLES = {
     "C": "TEST_EXECUTOR",
     "D": "TEST_RESULT_REVIEWER",
+    "E": "TEST_REPORT_WRITER",
+    "F": "FINAL_REVIEWER",
 }
 EXECUTION_AGENT_STATUSES = frozenset({"allocating", "ready"})
 EXECUTION_TURN_STATUSES = frozenset(
@@ -124,9 +126,13 @@ class RuntimeCoordinator:
             self._restore(prior_state)
 
     def _restore(self, state: Mapping[str, object]) -> None:
-        if state.get("schema") in {"aegis.run_state.v1", "aegis.run_state.v2"}:
+        if state.get("schema") in {
+            "aegis.run_state.v1",
+            "aegis.run_state.v2",
+            "aegis.run_state.v3",
+        }:
             raise RuntimeStateError(
-                "run state predates C/D App Server transactions; start a new run"
+                "run state predates C-F App Server transactions; start a new run"
             )
         if state.get("schema") != RUN_STATE_SCHEMA:
             raise RuntimeStateError("run state schema is unsupported")
@@ -362,7 +368,7 @@ class RuntimeCoordinator:
         attempt = self._active_execution_attempt
         if attempt is None:
             raise RuntimeStateError(
-                "execution agent turns require an active C or D node attempt"
+                "execution agent turns require an active C-F node attempt"
             )
         node = attempt.get("node")
         if EXECUTION_NODE_ROLES.get(str(node)) != role_key:
@@ -1435,15 +1441,15 @@ class RuntimeCoordinator:
             if status == "completed":
                 self._read_completed_execution_response(receipt)
 
-    def _validate_execution_stage_complete(self) -> None:
+    def _validate_execution_stage_complete(self, state: Mapping[str, Any]) -> None:
         if any(
             agent.get("status") != "ready" for agent in self._execution_agents.values()
         ):
-            raise RuntimeStateError("Aegis run has an unresolved C/D thread allocation")
+            raise RuntimeStateError("Aegis run has an unresolved C-F thread allocation")
         if any(
             attempt.get("status") != "completed" for attempt in self._execution_attempts
         ):
-            raise RuntimeStateError("Aegis run has an incomplete C/D node attempt")
+            raise RuntimeStateError("Aegis run has an incomplete C-F node attempt")
         turns_by_attempt = {
             turn.get("attempt_id"): turn for turn in self._execution_turns
         }
@@ -1451,8 +1457,22 @@ class RuntimeCoordinator:
             receipt = turns_by_attempt.get(attempt.get("attempt_id"))
             if receipt is None or receipt.get("status") != "completed":
                 raise RuntimeStateError(
-                    "Aegis run has an incomplete C/D App Server turn"
+                    "Aegis run has an incomplete C-F App Server turn"
                 )
+        if state.get("current_node") != "F" or self._last_completed_node != "F":
+            raise RuntimeStateError("Aegis run has not completed the terminal F node")
+        final_attempt = (
+            self._execution_attempts[-1] if self._execution_attempts else None
+        )
+        if (
+            final_attempt is None
+            or final_attempt.get("node") != "F"
+            or final_attempt.get("status") != "completed"
+            or final_attempt.get("output_sha256") != _state_sha256(state)
+        ):
+            raise RuntimeStateError(
+                "Aegis terminal state does not match the completed F attempt"
+            )
         self._validate_persisted_execution_receipts()
 
     def _ensure_planning_app_server(self) -> AppServerClient:
@@ -1688,7 +1708,7 @@ class RuntimeCoordinator:
 
     def complete(self, state: dict[str, Any]) -> None:
         self.finish_planning_stage()
-        self._validate_execution_stage_complete()
+        self._validate_execution_stage_complete(state)
         self._current_node = None
         self._last_state = dict(state)
         self._write_state("completed")
@@ -1768,9 +1788,13 @@ def load_run_state(artifact_path: str | Path, run_id: str) -> dict[str, object]:
         raise RuntimeStateError(f"cannot load run state: {path}: {error}") from error
     if not isinstance(payload, dict):
         raise RuntimeStateError("run state must be an object")
-    if payload.get("schema") in {"aegis.run_state.v1", "aegis.run_state.v2"}:
+    if payload.get("schema") in {
+        "aegis.run_state.v1",
+        "aegis.run_state.v2",
+        "aegis.run_state.v3",
+    }:
         raise RuntimeStateError(
-            "run state predates C/D App Server transactions; start a new run"
+            "run state predates C-F App Server transactions; start a new run"
         )
     if payload.get("schema") != RUN_STATE_SCHEMA:
         raise RuntimeStateError("run state has an unsupported schema")

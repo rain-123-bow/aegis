@@ -1044,7 +1044,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 developer_instructions=f"persistent {role}",
                 timeout_seconds=5,
             )
-            return {**node_state, "response": response}
+            return {**node_state, "response": response, "current_node": node}
 
         return coordinator.execute_node(node, operation, state)
 
@@ -1076,7 +1076,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertEqual(saved["graph_state"], {"status": True})
             self.assertEqual(saved["error"]["type"], "RuntimeError")
 
-    def test_execution_roles_keep_threads_but_use_one_process_and_session_per_turn(
+    def test_c_through_f_roles_keep_threads_but_use_one_process_and_session_per_turn(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1087,7 +1087,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             coordinator = aegis_runtime.RuntimeCoordinator(
                 project_root=project,
                 artifact_path=root / "artifacts",
-                run_id="execution-c-d-c",
+                run_id="execution-c-d-c-e-f",
                 upstream_port=7899,
                 relay_client=relay,
                 start_node="C",
@@ -1129,13 +1129,25 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     "TEST_EXECUTOR",
                     {**first_d, "status": False, "cycle": 2},
                 )
+                reported = self.run_execution_node(
+                    coordinator,
+                    "E",
+                    "TEST_REPORT_WRITER",
+                    {**first_d, "status": True},
+                )
+                self.run_execution_node(
+                    coordinator,
+                    "F",
+                    "FINAL_REVIEWER",
+                    {**reported, "status": True},
+                )
 
             saved = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
-            self.assertEqual(harness.open_count, 3)
-            self.assertEqual(harness.finalize_count, 3)
-            self.assertEqual(len({process.pid for process in harness.processes}), 3)
+            self.assertEqual(harness.open_count, 5)
+            self.assertEqual(harness.finalize_count, 5)
+            self.assertEqual(len({process.pid for process in harness.processes}), 5)
             self.assertTrue(all(server.closed for server in harness.app_servers))
-            self.assertEqual(harness.thread_count, 2)
+            self.assertEqual(harness.thread_count, 4)
             self.assertEqual(
                 harness.resume_thread_ids,
                 ["execution-thread-1"],
@@ -1146,11 +1158,13 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     "execution-thread-1",
                     "execution-thread-2",
                     "execution-thread-1",
+                    "execution-thread-3",
+                    "execution-thread-4",
                 ],
             )
             self.assertEqual(
                 [turn["status"] for turn in saved["execution_turns"]],
-                ["completed", "completed", "completed"],
+                ["completed"] * 5,
             )
             self.assertEqual(
                 [turn["evidence_session_ids"] for turn in saved["execution_turns"]],
@@ -1158,6 +1172,8 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     ["execution-session-1"],
                     ["execution-session-2"],
                     ["execution-session-3"],
+                    ["execution-session-4"],
+                    ["execution-session-5"],
                 ],
             )
             self.assertTrue(
@@ -1169,15 +1185,132 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             )
             self.assertEqual(
                 {entry["process_pid"] for entry in saved["evidence_sessions"]},
-                {1_001, 1_002, 1_003},
+                {1_001, 1_002, 1_003, 1_004, 1_005},
             )
             self.assertEqual(
                 {
                     entry["process_creation_time_100ns"]
                     for entry in saved["evidence_sessions"]
                 },
-                {10_000_001, 10_000_002, 10_000_003},
+                {10_000_001, 10_000_002, 10_000_003, 10_000_004, 10_000_005},
             )
+
+    def test_completed_final_review_can_finish_after_terminal_checkpoint_gap(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-final-checkpoint-gap",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="F",
+            )
+            coordinator.preflight()
+            state = {"status": True, "current_node": "E"}
+
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                result = self.run_execution_node(
+                    coordinator,
+                    "F",
+                    "FINAL_REVIEWER",
+                    state,
+                )
+
+            interrupted = aegis_runtime.load_run_state(
+                root / "artifacts", "execution-final-checkpoint-gap"
+            )
+            self.assertEqual(interrupted["status"], "running")
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-final-checkpoint-gap",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="F",
+                prior_state=interrupted,
+            )
+            resumed.preflight()
+            resumed.complete(result)
+
+            completed = aegis_runtime.load_run_state(
+                root / "artifacts", "execution-final-checkpoint-gap"
+            )
+            self.assertEqual(completed["status"], "completed")
+            self.assertEqual(harness.open_count, 1)
+
+    def test_complete_requires_terminal_f_attempt_and_accepts_false_verdict(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-terminal-binding",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="F",
+            )
+            coordinator.preflight()
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "terminal F node",
+            ):
+                coordinator.complete({"status": True, "current_node": "F"})
+
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                final = self.run_execution_node(
+                    coordinator,
+                    "F",
+                    "FINAL_REVIEWER",
+                    {"status": False},
+                )
+            coordinator.complete(final)
+
+            completed = aegis_runtime.load_run_state(
+                root / "artifacts", "execution-terminal-binding"
+            )
+            self.assertEqual(completed["status"], "completed")
+            self.assertIs(completed["graph_state"]["status"], False)
 
     def test_completed_execution_turn_replays_after_node_checkpoint_gap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3139,7 +3272,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
             self.assertFalse(relay.started)
 
-    def test_v1_and_v2_run_state_are_rejected_instead_of_guessing_c_d_history(
+    def test_v1_through_v3_run_state_are_rejected_instead_of_guessing_c_f_history(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3157,7 +3290,11 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             )
             first.preflight()
             saved = aegis_runtime.load_run_state(artifact_path, run_id)
-            for schema in ("aegis.run_state.v1", "aegis.run_state.v2"):
+            for schema in (
+                "aegis.run_state.v1",
+                "aegis.run_state.v2",
+                "aegis.run_state.v3",
+            ):
                 with self.subTest(schema=schema):
                     saved["schema"] = schema
                     first.run_state_path.write_text(
@@ -3166,7 +3303,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
                     with self.assertRaisesRegex(
                         aegis_runtime.RuntimeStateError,
-                        "predates C/D App Server transactions",
+                        "predates C-F App Server transactions",
                     ):
                         aegis_runtime.load_run_state(artifact_path, run_id)
 

@@ -227,12 +227,13 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
         self.assertIn("executor role", events[-1][3])
         self.assertIn("Do not use Aegis-specific skills", events[-1][3])
 
-    def test_c_and_d_use_app_server_turns_while_e_and_f_keep_legacy_exec(self) -> None:
+    def test_c_through_f_use_app_server_turns_without_legacy_exec(self) -> None:
         execution_calls: list[tuple[str, str]] = []
-        legacy_calls: list[tuple[str, str]] = []
         responses = {
             main.TEST_EXECUTOR_ROLE: True,
             main.TEST_RESULT_REVIEWER_ROLE: True,
+            main.TEST_REPORT_WRITER_ROLE: True,
+            main.FINAL_REVIEWER_ROLE: True,
         }
 
         class FakeCoordinator:
@@ -265,16 +266,10 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             for role in (
                 main.TEST_EXECUTOR_ROLE,
                 main.TEST_RESULT_REVIEWER_ROLE,
+                main.TEST_REPORT_WRITER_ROLE,
+                main.FINAL_REVIEWER_ROLE,
             )
         }
-        legacy_threads = {
-            main.TEST_REPORT_WRITER_ROLE: "legacy-e",
-            main.FINAL_REVIEWER_ROLE: "legacy-f",
-        }
-
-        def legacy_send(thread_id: str, prompt: str) -> str:
-            legacy_calls.append((thread_id, prompt))
-            return json.dumps({**state, "status": True})
 
         with (
             patch.object(
@@ -283,8 +278,16 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             patch.object(
                 main, "load_agent_config", side_effect=lambda role: configs[role]
             ),
-            patch.object(main, "load_agent_thread_map", return_value=legacy_threads),
-            patch.object(main, "send_prompt_to_thread", side_effect=legacy_send),
+            patch.object(
+                main,
+                "load_agent_thread_map",
+                side_effect=AssertionError("E/F loaded legacy thread IDs"),
+            ),
+            patch.object(
+                main,
+                "send_prompt_to_thread",
+                side_effect=AssertionError("E/F used legacy codex exec"),
+            ),
         ):
             executed = main.test_executor_node(state)
             reviewed = main.test_result_reviewer_node(executed)
@@ -294,11 +297,12 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
         self.assertTrue(finalized["status"])
         self.assertEqual(
             [role for role, _instructions in execution_calls],
-            [main.TEST_EXECUTOR_ROLE, main.TEST_RESULT_REVIEWER_ROLE],
-        )
-        self.assertEqual(
-            [thread_id for thread_id, _prompt in legacy_calls],
-            ["legacy-e", "legacy-f"],
+            [
+                main.TEST_EXECUTOR_ROLE,
+                main.TEST_RESULT_REVIEWER_ROLE,
+                main.TEST_REPORT_WRITER_ROLE,
+                main.FINAL_REVIEWER_ROLE,
+            ],
         )
         self.assertTrue(
             all(
@@ -307,7 +311,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             )
         )
 
-    def test_c_and_d_reject_changes_to_the_control_envelope(self) -> None:
+    def test_c_through_f_reject_changes_to_the_control_envelope(self) -> None:
         state = {
             "artifact_path": "C:/artifacts",
             "reasoning_ledger_context_pack": "C:/artifacts/context.json",
@@ -321,17 +325,34 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
         for node, role in (
             (main.test_executor_node, main.TEST_EXECUTOR_ROLE),
             (main.test_result_reviewer_node, main.TEST_RESULT_REVIEWER_ROLE),
+            (main.test_report_writer_node, main.TEST_REPORT_WRITER_ROLE),
+            (main.final_reviewer_node, main.FINAL_REVIEWER_ROLE),
         ):
             for field, value in cases:
                 with self.subTest(node=node.__name__, field=field):
                     response = {**state, field: value}
-                    with patch.object(
-                        main,
-                        "send_execution_prompt",
-                        side_effect=lambda actual_role, _prompt: (
-                            json.dumps(response)
-                            if actual_role == role
-                            else (_ for _ in ()).throw(AssertionError(actual_role))
+                    with (
+                        patch.object(
+                            main,
+                            "send_execution_prompt",
+                            side_effect=lambda actual_role, _prompt: (
+                                json.dumps(response)
+                                if actual_role == role
+                                else (_ for _ in ()).throw(AssertionError(actual_role))
+                            ),
+                        ),
+                        patch.object(
+                            main,
+                            "load_agent_thread_map",
+                            return_value={
+                                main.TEST_REPORT_WRITER_ROLE: "legacy-e",
+                                main.FINAL_REVIEWER_ROLE: "legacy-f",
+                            },
+                        ),
+                        patch.object(
+                            main,
+                            "send_prompt_to_thread",
+                            return_value=json.dumps(response),
                         ),
                     ):
                         with self.assertRaisesRegex(
@@ -340,9 +361,8 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                         ):
                             node(state)
 
-    def test_compiled_graph_runs_d_fail_c_d_pass_then_legacy_e_f(self) -> None:
+    def test_compiled_graph_runs_d_fail_then_c_d_e_f_app_server_turns(self) -> None:
         execution_calls: list[str] = []
-        legacy_calls: list[str] = []
         reviewer_statuses = iter([False, True])
         state = {
             "artifact_path": "C:/artifacts",
@@ -369,16 +389,13 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 )
                 return json.dumps({**state, "status": status})
 
-        def legacy_send(thread_id: str, prompt: str) -> str:
-            del prompt
-            legacy_calls.append(thread_id)
-            return json.dumps({**state, "status": True})
-
         configs = {
             role: {"role_key": role, "role_description": role}
             for role in (
                 main.TEST_EXECUTOR_ROLE,
                 main.TEST_RESULT_REVIEWER_ROLE,
+                main.TEST_REPORT_WRITER_ROLE,
+                main.FINAL_REVIEWER_ROLE,
             )
         }
         with (
@@ -391,12 +408,13 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             patch.object(
                 main,
                 "load_agent_thread_map",
-                return_value={
-                    main.TEST_REPORT_WRITER_ROLE: "legacy-e",
-                    main.FINAL_REVIEWER_ROLE: "legacy-f",
-                },
+                side_effect=AssertionError("E/F loaded legacy thread IDs"),
             ),
-            patch.object(main, "send_prompt_to_thread", side_effect=legacy_send),
+            patch.object(
+                main,
+                "send_prompt_to_thread",
+                side_effect=AssertionError("E/F used legacy codex exec"),
+            ),
         ):
             result = main.create_graph(
                 start_node=main.TEST_RESULT_REVIEWER_NODE
@@ -408,9 +426,10 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 main.TEST_RESULT_REVIEWER_ROLE,
                 main.TEST_EXECUTOR_ROLE,
                 main.TEST_RESULT_REVIEWER_ROLE,
+                main.TEST_REPORT_WRITER_ROLE,
+                main.FINAL_REVIEWER_ROLE,
             ],
         )
-        self.assertEqual(legacy_calls, ["legacy-e", "legacy-f"])
         self.assertEqual(result["current_node"], main.FINAL_REVIEWER_NODE)
         self.assertTrue(result["status"])
 
@@ -832,7 +851,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 return FakeGraph()
 
             saved = {
-                "schema": "aegis.run_state.v3",
+                "schema": "aegis.run_state.v4",
                 "run_id": "run-resume",
                 "status": "failed",
                 "project_root": str(root.resolve()),
@@ -917,7 +936,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 yield object()
 
             saved = {
-                "schema": "aegis.run_state.v3",
+                "schema": "aegis.run_state.v4",
                 "run_id": "run-resume-after-planning",
                 "status": "failed",
                 "project_root": str(root.resolve()),

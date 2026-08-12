@@ -58,6 +58,8 @@ PLANNING_APP_SERVER_ROLES = {
 EXECUTION_APP_SERVER_ROLES = {
     TEST_EXECUTOR_ROLE,
     TEST_RESULT_REVIEWER_ROLE,
+    TEST_REPORT_WRITER_ROLE,
+    FINAL_REVIEWER_ROLE,
 }
 
 
@@ -450,13 +452,13 @@ def test_result_reviewer_node(state: State) -> State:
 
 def test_report_writer_node(state: State) -> State:
     log_node_event(TEST_REPORT_WRITER_NODE, "start")
-    agent_thread_map = load_agent_thread_map()
     node_input = dict(state)
     node_input["status"] = True
     node_input["current_node"] = TEST_REPORT_WRITER_NODE
     prompt = build_node_prompt(node_input)
-    response = send_prompt_to_thread(agent_thread_map[TEST_REPORT_WRITER_ROLE], prompt)
+    response = send_execution_prompt(TEST_REPORT_WRITER_ROLE, prompt)
     node_output = json.loads(response)
+    require_control_envelope_unchanged(TEST_REPORT_WRITER_NODE, node_input, node_output)
     log_node_event(TEST_REPORT_WRITER_NODE, "done")
     return {
         **node_input,
@@ -467,13 +469,13 @@ def test_report_writer_node(state: State) -> State:
 
 def final_reviewer_node(state: State) -> State:
     log_node_event(FINAL_REVIEWER_NODE, "start")
-    agent_thread_map = load_agent_thread_map()
     node_input = dict(state)
     node_input["status"] = True
     node_input["current_node"] = FINAL_REVIEWER_NODE
     prompt = build_node_prompt(node_input)
-    response = send_prompt_to_thread(agent_thread_map[FINAL_REVIEWER_ROLE], prompt)
+    response = send_execution_prompt(FINAL_REVIEWER_ROLE, prompt)
     node_output = json.loads(response)
+    require_control_envelope_unchanged(FINAL_REVIEWER_NODE, node_input, node_output)
     log_node_event(FINAL_REVIEWER_NODE, "done")
     return {
         **node_input,

@@ -75,7 +75,7 @@ def _run_execution_crash_worker(config_path: Path) -> None:
             command=str(config["tracerelay_command"]),
             monitor_interval_seconds=0.05,
         ),
-        start_node="C",
+        start_node="F",
     )
     coordinator.preflight()
 
@@ -86,15 +86,15 @@ def _run_execution_crash_worker(config_path: Path) -> None:
 
     def operation(node_state: dict[str, object]) -> dict[str, object]:
         response = coordinator.run_execution_agent(
-            "TEST_EXECUTOR",
+            "FINAL_REVIEWER",
             str(config["prompt"]),
             output_schema=NODE_SCHEMA,
             developer_instructions=str(config["developer_instructions"]),
             timeout_seconds=300,
         )
-        return {**node_state, "response": response}
+        return {**node_state, "response": response, "current_node": "F"}
 
-    coordinator.execute_node("C", operation, state)
+    coordinator.execute_node("F", operation, state)
     raise AssertionError("crash worker unexpectedly returned")
 
 
@@ -268,6 +268,15 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                     "Independent synthetic evidence reviewer. Read only the requested evidence "
                     "files. Do not use Aegis-specific skills. Return only schema-valid JSON."
                 ),
+                "TEST_REPORT_WRITER": (
+                    "Persistent synthetic report writer. Read the accepted evidence and write "
+                    "only the requested report. Do not use Aegis-specific skills. Return only "
+                    "schema-valid JSON after the report is durable."
+                ),
+                "FINAL_REVIEWER": (
+                    "Independent synthetic final reviewer. Read the requested report and source "
+                    "evidence. Do not use Aegis-specific skills. Return only schema-valid JSON."
+                ),
             }
 
             def execute_turn(
@@ -275,6 +284,7 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 role: str,
                 prompt: str,
                 node_state: dict[str, object],
+                expected_output: dict[str, object] | None = None,
             ) -> dict[str, object]:
                 def operation(input_state: dict[str, object]) -> dict[str, object]:
                     raw = coordinator.run_execution_agent(
@@ -285,8 +295,8 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                         timeout_seconds=1_800,
                     )
                     output = json.loads(raw)
-                    self.assertEqual(output, expected)
-                    return {**input_state, **output}
+                    self.assertEqual(output, expected_output or expected)
+                    return {**input_state, **output, "current_node": node}
 
                 return coordinator.execute_node(node, operation, node_state)
 
@@ -308,12 +318,14 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 "TEST_RESULT_REVIEWER",
                 (
                     "Read artifact_path/EXECUTION_EVIDENCE.txt. Accept only when it records "
-                    "stdout True and exit code 0. Return exactly this JSON object when valid: "
-                    f"{expected_json}"
+                    "stdout True and exit code 0. For this first review round, deliberately "
+                    "request one retest by returning exactly this JSON object: "
+                    f"{json.dumps({**expected, 'status': False}, ensure_ascii=False, separators=(',', ':'))}"
                 ),
                 first_c,
+                {**expected, "status": False},
             )
-            execute_turn(
+            second_c = execute_turn(
                 "C",
                 "TEST_EXECUTOR",
                 (
@@ -321,9 +333,47 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                     "told to remember to artifact_path/THREAD_CONTINUITY.txt. Return exactly "
                     f"this JSON object: {expected_json}"
                 ),
-                {**first_d, "status": False, "retry": 2},
+                {**first_d, "retry": 2},
             )
-            coordinator.complete(expected)
+            second_d = execute_turn(
+                "D",
+                "TEST_RESULT_REVIEWER",
+                (
+                    "This is the second review turn on your persistent role. Re-read "
+                    "artifact_path/EXECUTION_EVIDENCE.txt and accept only when it records "
+                    "stdout True and exit code 0. Return exactly this JSON object when valid: "
+                    f"{expected_json}"
+                ),
+                second_c,
+            )
+            reported = execute_turn(
+                "E",
+                "TEST_REPORT_WRITER",
+                (
+                    "Read artifact_path/EXECUTION_EVIDENCE.txt and write a concise final test "
+                    "report to artifact_path/TEST_REPORT.md. It must state stdout True, exit "
+                    "code 0, and PASS. Return exactly this JSON object after the report is "
+                    f"durable: {expected_json}"
+                ),
+                second_d,
+            )
+            report_sha256 = hashlib.sha256(
+                (artifact_path / "TEST_REPORT.md").read_bytes()
+            ).hexdigest()
+            finalized = execute_turn(
+                "F",
+                "FINAL_REVIEWER",
+                (
+                    "Independently read artifact_path/TEST_REPORT.md and "
+                    "artifact_path/EXECUTION_EVIDENCE.txt. Accept only when both bind stdout "
+                    "True and exit code 0 to PASS. Write artifact_path/FINAL_REVIEW.md with "
+                    f"verdict PASS and the exact report SHA-256 {report_sha256}. Return exactly "
+                    "this JSON object when valid: "
+                    f"{expected_json}"
+                ),
+                reported,
+            )
+            coordinator.complete(finalized)
 
             state = json.loads(coordinator.run_state_path.read_text(encoding="utf-8"))
             planning_threads = {
@@ -337,17 +387,27 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             execution_turns = state["execution_turns"]
             self.assertEqual(len(planning_threads), 2)
             self.assertEqual(len(planning_turns), len(state["planning_rounds"]) * 2)
-            self.assertEqual(len(execution_threads), 2)
+            self.assertEqual(len(execution_threads), 4)
+            self.assertEqual(
+                [item["node"] for item in state["execution_attempts"]],
+                ["C", "D", "C", "D", "E", "F"],
+            )
             self.assertEqual(
                 [item["codex_thread_id"] for item in execution_turns],
                 [
                     execution_threads["TEST_EXECUTOR"],
                     execution_threads["TEST_RESULT_REVIEWER"],
                     execution_threads["TEST_EXECUTOR"],
+                    execution_threads["TEST_RESULT_REVIEWER"],
+                    execution_threads["TEST_REPORT_WRITER"],
+                    execution_threads["FINAL_REVIEWER"],
                 ],
             )
             self.assertEqual(
-                len({item["codex_turn_id"] for item in execution_turns}), 3
+                len({item["codex_turn_id"] for item in execution_turns}), 6
+            )
+            self.assertTrue(
+                all(len(item["evidence_session_ids"]) == 1 for item in execution_turns)
             )
             self.assertEqual(state["status"], "completed")
             self.assertEqual(state["planning_stage_status"], "completed")
@@ -362,21 +422,27 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             execution_evidence = [
                 item
                 for item in state["evidence_sessions"]
-                if item["node"] in {"C", "D"}
+                if item["node"] in {"C", "D", "E", "F"}
             ]
             self.assertEqual(len(planning_evidence), 1)
-            self.assertEqual(len(execution_evidence), 3)
+            self.assertEqual(len(execution_evidence), 6)
             self.assertEqual(
-                len({item["session_id"] for item in execution_evidence}), 3
+                len({item["session_id"] for item in execution_evidence}), 6
             )
             self.assertEqual(
-                len({item["process_pid"] for item in execution_evidence}), 3
+                len({item["process_pid"] for item in execution_evidence}), 6
+            )
+            self.assertFalse(
+                any(
+                    _windows_process_is_running(item["process_pid"])
+                    for item in execution_evidence
+                )
             )
             self.assertEqual(
                 len(
                     {item["process_creation_time_100ns"] for item in execution_evidence}
                 ),
-                3,
+                6,
             )
             self.assertTrue(
                 all(
@@ -403,9 +469,18 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 .strip(),
                 "C-PERSISTENT-THREAD",
             )
+            report_text = (artifact_path / "TEST_REPORT.md").read_text(encoding="utf-8")
+            self.assertIn("True", report_text)
+            self.assertIn("0", report_text)
+            self.assertIn("PASS", report_text.upper())
+            final_review_text = (artifact_path / "FINAL_REVIEW.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("PASS", final_review_text.upper())
+            self.assertIn(report_sha256, final_review_text.lower())
 
             report = {
-                "schema": "aegis.app_server_control_acceptance.v2",
+                "schema": "aegis.app_server_control_acceptance.v3",
                 "verdict": "PASS",
                 "created_at_utc": stamp,
                 "run_id": run_id,
@@ -526,7 +601,7 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             f"{context_path}; set status to true. Do not use tools."
         )
         developer_instructions = (
-            "You are the persistent TEST_EXECUTOR role in a deterministic crash "
+            "You are the persistent FINAL_REVIEWER role in a deterministic crash "
             "recovery acceptance. Return only schema-valid JSON. Do not use "
             "Aegis-specific skills."
         )
@@ -590,22 +665,22 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 run_id=run_id,
                 upstream_port=upstream_port,
                 relay_client=relay,
-                start_node="C",
+                start_node="F",
                 prior_state=interrupted,
             )
             coordinator.preflight()
 
             def operation(node_state: dict[str, object]) -> dict[str, object]:
                 response = coordinator.run_execution_agent(
-                    "TEST_EXECUTOR",
+                    "FINAL_REVIEWER",
                     prompt,
                     output_schema=NODE_SCHEMA,
                     developer_instructions=developer_instructions,
                     timeout_seconds=300,
                 )
-                return {**node_state, "response": response}
+                return {**node_state, "response": response, "current_node": "F"}
 
-            recovered = coordinator.execute_node("C", operation, state)
+            recovered = coordinator.execute_node("F", operation, state)
             coordinator.complete(recovered)
             completed = json.loads(state_path.read_text(encoding="utf-8"))
             receipt = completed["execution_turns"][0]
