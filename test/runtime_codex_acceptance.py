@@ -26,6 +26,11 @@ REQUIRED_SOURCE_BINDINGS = (
     "src/main.py",
     "src/tracerelay_client.py",
     "src/codex_app_server_client.py",
+    "submodules/TraceRelay/src/tracerelay/cli.py",
+    "submodules/TraceRelay/src/tracerelay/config.py",
+    "submodules/TraceRelay/src/tracerelay/service.py",
+    "submodules/TraceRelay/src/tracerelay/session.py",
+    "submodules/TraceRelay/src/tracerelay/verify.py",
     "test/runtime_codex_acceptance.py",
 )
 
@@ -61,6 +66,20 @@ def _validate_report_source_binding(report: dict[str, object]) -> None:
             raise AssertionError(
                 f"acceptance report source_sha256 mismatch: {relative_path}"
             )
+    tracerelay_command = report.get("tracerelay_command")
+    command_sha256 = report.get("tracerelay_command_sha256")
+    if not isinstance(tracerelay_command, str) or not tracerelay_command:
+        raise AssertionError("acceptance report TraceRelay command is missing")
+    command_path = Path(tracerelay_command)
+    if not command_path.is_absolute() or not command_path.is_file():
+        raise AssertionError("acceptance report TraceRelay command is unavailable")
+    if (
+        not isinstance(command_sha256, str)
+        or len(command_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in command_sha256)
+        or command_sha256 != hashlib.sha256(command_path.read_bytes()).hexdigest()
+    ):
+        raise AssertionError("acceptance report TraceRelay command hash mismatch")
 
 
 def _cli_json(command: str, *arguments: str) -> tuple[int, dict[str, object]]:
@@ -297,6 +316,9 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
     project = evidence_root / "project"
     _prepare_project(project)
     source_sha256 = _source_sha256()
+    tracerelay_command_sha256 = hashlib.sha256(
+        Path(tracerelay_command).read_bytes()
+    ).hexdigest()
 
     _returncode, initial_status = _cli_json(tracerelay_command, "status")
     if initial_status.get("state") != "NOT_RUNNING":
@@ -313,6 +335,8 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
         "created_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "normal_run_id": normal_run_id,
         "fault_run_id": fault_run_id,
+        "tracerelay_command": tracerelay_command,
+        "tracerelay_command_sha256": tracerelay_command_sha256,
     }
 
     hostile = {

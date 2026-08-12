@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import sys
 import unittest
 from pathlib import Path
@@ -14,9 +15,14 @@ import runtime_codex_acceptance
 
 class RuntimeCodexAcceptanceReportTests(unittest.TestCase):
     def valid_report(self) -> dict[str, object]:
+        tracerelay_command = str(Path(sys.executable).resolve())
         return {
             "verdict": "PASS",
             "source_sha256": runtime_codex_acceptance._source_sha256(),
+            "tracerelay_command": tracerelay_command,
+            "tracerelay_command_sha256": hashlib.sha256(
+                Path(tracerelay_command).read_bytes()
+            ).hexdigest(),
         }
 
     def test_report_binding_accepts_the_current_execution_sources(self) -> None:
@@ -51,6 +57,22 @@ class RuntimeCodexAcceptanceReportTests(unittest.TestCase):
                 report["source_sha256"] = source_sha256
                 with self.assertRaisesRegex(AssertionError, "source_sha256"):
                     runtime_codex_acceptance._validate_report_source_binding(report)
+
+    def test_report_binding_requires_the_current_tracerelay_command_hash(self) -> None:
+        for missing_field in (
+            "tracerelay_command",
+            "tracerelay_command_sha256",
+        ):
+            with self.subTest(missing_field=missing_field):
+                report = self.valid_report()
+                report.pop(missing_field)
+                with self.assertRaisesRegex(AssertionError, "TraceRelay command"):
+                    runtime_codex_acceptance._validate_report_source_binding(report)
+
+        mismatched = self.valid_report()
+        mismatched["tracerelay_command_sha256"] = "0" * 64
+        with self.assertRaisesRegex(AssertionError, "TraceRelay command"):
+            runtime_codex_acceptance._validate_report_source_binding(mismatched)
 
 
 if __name__ == "__main__":

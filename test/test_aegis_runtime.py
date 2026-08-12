@@ -131,7 +131,11 @@ class TraceRelayClientTests(unittest.TestCase):
             if operation == "start":
                 payload = relay_payload("start")
             elif operation == "register":
-                payload = registration
+                payload = dict(registration)
+                if "--operation-id" in arguments:
+                    payload["operation_id"] = arguments[
+                        arguments.index("--operation-id") + 1
+                    ]
             elif operation == "verify":
                 payload = {
                     "status": "VALID_COMPLETE",
@@ -591,6 +595,119 @@ class TraceRelayClientTests(unittest.TestCase):
                 "VALID_COMPLETE",
             )
 
+    def test_registration_operation_is_echoed_into_the_managed_process(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            operation_id = "ab" * 16
+            client, commands, _captured = self.make_client(
+                root,
+                status_payloads=[relay_payload("status")],
+                process=InteractiveFakeProcess(),
+            )
+            client.start()
+
+            managed = client.open_managed_process(
+                ["codex.exe", "app-server"],
+                upstream_port=7_899,
+                registration_operation_id=operation_id,
+            )
+
+            self.assertEqual(managed.registration.operation_id, operation_id)
+            self.assertEqual(
+                commands[1][1:],
+                [
+                    "register",
+                    "--upstream-port",
+                    "7899",
+                    "--operation-id",
+                    operation_id,
+                ],
+            )
+            managed.terminate()
+            managed.wait(timeout=1)
+
+    def test_uncheckpointed_registration_resolves_and_seals_without_a_pid(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session_path = root / "sessions" / "resolved-session"
+            operation_id = "cd" * 16
+            events: list[str] = []
+            statuses = iter(
+                [
+                    {
+                        **relay_payload("status", "WAITING"),
+                        "session_id": "resolved-session",
+                        "session_path": str(session_path),
+                    },
+                    {
+                        **relay_payload("status", "WAITING"),
+                        "session_id": "resolved-session",
+                        "session_path": str(session_path),
+                    },
+                    {
+                        **relay_payload("status"),
+                        "last_session_id": "resolved-session",
+                        "last_session_path": str(session_path),
+                    },
+                ]
+            )
+
+            def cli_runner(
+                arguments: list[str], timeout: float
+            ) -> subprocess.CompletedProcess[str]:
+                del timeout
+                operation = arguments[1]
+                events.append(operation)
+                if operation == "resolve-registration":
+                    payload = {
+                        "ok": True,
+                        "command": operation,
+                        "found": True,
+                        "operation_id": operation_id,
+                        "session_id": "resolved-session",
+                        "proxy_host": "127.0.0.1",
+                        "proxy_port": 45_000,
+                        "upstream_host": "127.0.0.1",
+                        "upstream_port": 7_899,
+                        "session_path": str(session_path),
+                    }
+                elif operation == "close":
+                    payload = {
+                        **relay_payload("close"),
+                        "closed": True,
+                    }
+                elif operation == "verify":
+                    payload = {
+                        "status": "VALID_COMPLETE",
+                        "final_hash": "ab" * 32,
+                        "observed_bytes": {
+                            "client_to_upstream": 0,
+                            "upstream_to_client": 0,
+                        },
+                    }
+                else:
+                    raise AssertionError(operation)
+                return subprocess.CompletedProcess(
+                    arguments, 0, json.dumps(payload), ""
+                )
+
+            client = aegis_runtime.TraceRelayClient(
+                command="C:/TraceRelay/tracerelay.exe",
+                cli_runner=cli_runner,
+                status_requester=lambda: next(statuses),
+                process_terminator=lambda *_args: self.fail(
+                    "uncheckpointed recovery must not terminate an unverified PID"
+                ),
+                alarm_directory=root / "alarms",
+            )
+
+            registration = client.resolve_registration_operation(operation_id)
+            assert registration is not None
+            verification = client.recover_uncheckpointed_registration(registration)
+
+            self.assertEqual(verification["status"], "VALID_COMPLETE")
+            self.assertEqual(events, ["resolve-registration", "close", "verify"])
+
     def test_invalid_managed_environment_is_rejected_before_registration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -809,6 +926,7 @@ class ExecutionManagedProcess:
         harness: ExecutionTurnHarness,
         relay: ExecutionRelayClient,
         session_index: int,
+        operation_id: str,
     ) -> None:
         self.harness = harness
         self.relay = relay
@@ -820,6 +938,7 @@ class ExecutionManagedProcess:
             session_path=harness.root
             / "sessions"
             / f"execution-session-{session_index}",
+            operation_id=operation_id,
         )
         self.stdin = io.StringIO()
         self.stdout = io.StringIO()
@@ -871,9 +990,17 @@ class ExecutionRelayClient(FakeRelayClient):
     def open_managed_process(
         self, *args: object, **kwargs: object
     ) -> ExecutionManagedProcess:
-        del args, kwargs
+        del args
+        operation_id = kwargs.pop("registration_operation_id")
+        assert isinstance(operation_id, str)
+        del kwargs
         self.harness.open_count += 1
-        process = ExecutionManagedProcess(self.harness, self, self.harness.open_count)
+        process = ExecutionManagedProcess(
+            self.harness,
+            self,
+            self.harness.open_count,
+            operation_id,
+        )
         self.harness.processes.append(process)
         self.last_registration = process.registration
         self.last_verification = None
@@ -931,13 +1058,59 @@ class RegisteredProcessStartFailureRelay(FakeRelayClient):
         self.open_count = 0
 
     def open_managed_process(self, *args: object, **kwargs: object) -> object:
-        del args, kwargs
+        del args
+        operation_id = kwargs.pop("registration_operation_id")
+        assert isinstance(operation_id, str)
+        del kwargs
         self.open_count += 1
-        self.last_registration = self.registration
+        self.last_registration = aegis_runtime.TraceRelayRegistration(
+            session_id=self.registration.session_id,
+            proxy_host=self.registration.proxy_host,
+            proxy_port=self.registration.proxy_port,
+            upstream_port=self.registration.upstream_port,
+            session_path=self.registration.session_path,
+            operation_id=operation_id,
+        )
         self.last_verification = (
             dict(self.verification) if self.verification is not None else None
         )
         raise self.error
+
+
+class RegistrationIntentRecoveryRelay(FakeRelayClient):
+    def __init__(
+        self,
+        registration: aegis_runtime.TraceRelayRegistration | None,
+        *,
+        verification_status: str = "VALID_COMPLETE",
+    ) -> None:
+        super().__init__()
+        self.registration = registration
+        self.verification_status = verification_status
+        self.resolve_count = 0
+        self.recover_count = 0
+
+    def resolve_registration_operation(
+        self, operation_id: str
+    ) -> aegis_runtime.TraceRelayRegistration | None:
+        self.resolve_count += 1
+        if self.registration is not None:
+            assert self.registration.operation_id == operation_id
+        return self.registration
+
+    def recover_uncheckpointed_registration(
+        self, registration: aegis_runtime.TraceRelayRegistration
+    ) -> dict[str, object]:
+        self.recover_count += 1
+        assert registration == self.registration
+        return {
+            "status": self.verification_status,
+            "final_hash": "de" * 32,
+            "observed_bytes": {
+                "client_to_upstream": 0,
+                "upstream_to_client": 0,
+            },
+        }
 
 
 class ExecutionAppServer:
@@ -1026,6 +1199,7 @@ class FailingRelayClient(FakeRelayClient):
             proxy_port=45000,
             upstream_port=7899,
             session_path=session_path,
+            operation_id="fa" * 16,
         )
 
     def run_process(self, *args: object, **kwargs: object) -> object:
@@ -1088,6 +1262,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             proxy_port=45000,
             upstream_port=7899,
             session_path=root / "sessions" / session_id,
+            operation_id="fb" * 16,
         )
         coordinator._planning_app_server = SimpleNamespace(  # type: ignore[assignment]
             close=lambda: None
@@ -1349,6 +1524,195 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     },
                 },
             )
+
+    def test_execution_registration_intent_recovers_exact_session_before_start(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifact_path = root / "artifacts"
+            run_id = "execution-registration-intent-crash"
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id=run_id,
+                upstream_port=7_899,
+                relay_client=FakeRelayClient(),
+                start_node="F",
+            )
+            coordinator.preflight()
+            state = {"status": True}
+            coordinator._current_node = "F"
+            coordinator._last_state = dict(state)
+            attempt = coordinator._begin_execution_attempt("F", state)
+            receipt = {
+                "attempt_id": attempt["attempt_id"],
+                "job_id": attempt["job_id"],
+                "node": "F",
+                "role": "FINAL_REVIEWER",
+                "client_message_id": f"{attempt['job_id']}:submission",
+                "request_sha256": "ab" * 32,
+                "developer_instructions_sha256": "cd" * 32,
+                "codex_thread_id": None,
+                "codex_turn_id": None,
+                "status": "preparing",
+                "raw_response_path": None,
+                "raw_response_sha256": None,
+                "evidence_session_ids": [],
+            }
+            coordinator._execution_turns.append(receipt)
+            operation_id = coordinator._begin_registration_intent(
+                node="F", receipt=receipt
+            )
+            interrupted = aegis_runtime.load_run_state(artifact_path, run_id)
+            self.assertEqual(
+                interrupted["registration_intent"]["operation_id"], operation_id
+            )
+            self.assertEqual(interrupted["evidence_sessions"], [])
+
+            registration = aegis_runtime.TraceRelayRegistration(
+                session_id="resolved-execution-session",
+                proxy_host="127.0.0.1",
+                proxy_port=45_000,
+                upstream_port=7_899,
+                session_path=root / "sessions" / "resolved-execution-session",
+                operation_id=operation_id,
+            )
+            relay = RegistrationIntentRecoveryRelay(registration)
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id=run_id,
+                upstream_port=7_899,
+                relay_client=relay,
+                start_node="F",
+                prior_state=interrupted,
+            )
+
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "uncheckpointed TraceRelay registration invalidates",
+            ):
+                resumed.preflight()
+
+            self.assertFalse(relay.started)
+            self.assertEqual(relay.resolve_count, 1)
+            self.assertEqual(relay.recover_count, 1)
+            saved = aegis_runtime.load_run_state(artifact_path, run_id)
+            self.assertIsNone(saved["registration_intent"])
+            self.assertEqual(
+                saved["execution_turns"][0]["evidence_session_ids"],
+                [registration.session_id],
+            )
+            evidence = saved["evidence_sessions"][0]
+            self.assertEqual(evidence["session_id"], registration.session_id)
+            self.assertEqual(
+                evidence["registration_operation_id"], operation_id
+            )
+            self.assertEqual(evidence["application_verification_status"], "INVALID")
+            self.assertIsNone(evidence["process_pid"])
+            self.assertIsNone(evidence["process_creation_time_100ns"])
+
+    def test_planning_registration_intent_recovers_exact_session_before_start(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifact_path = root / "artifacts"
+            run_id = "planning-registration-intent-crash"
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id=run_id,
+                upstream_port=7_899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+            coordinator._planning_stage_status = "active"
+            operation_id = coordinator._begin_registration_intent(node="planning")
+            interrupted = aegis_runtime.load_run_state(artifact_path, run_id)
+            registration = aegis_runtime.TraceRelayRegistration(
+                session_id="resolved-planning-session",
+                proxy_host="127.0.0.1",
+                proxy_port=45_000,
+                upstream_port=7_899,
+                session_path=root / "sessions" / "resolved-planning-session",
+                operation_id=operation_id,
+            )
+            relay = RegistrationIntentRecoveryRelay(
+                registration, verification_status="VALID_INCOMPLETE"
+            )
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id=run_id,
+                upstream_port=7_899,
+                relay_client=relay,
+                start_node="A",
+                prior_state=interrupted,
+            )
+
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "uncheckpointed TraceRelay registration invalidates",
+            ):
+                resumed.preflight()
+
+            self.assertFalse(relay.started)
+            saved = aegis_runtime.load_run_state(artifact_path, run_id)
+            self.assertIsNone(saved["registration_intent"])
+            evidence = saved["evidence_sessions"][0]
+            self.assertEqual(evidence["node"], "planning")
+            self.assertEqual(evidence["verification_status"], "VALID_INCOMPLETE")
+            self.assertEqual(evidence["application_verification_status"], "INVALID")
+            self.assertIsNone(evidence["process_pid"])
+
+    def test_unresolved_registration_intent_blocks_before_relay_start(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifact_path = root / "artifacts"
+            run_id = "unresolved-registration-intent"
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id=run_id,
+                upstream_port=7_899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+            coordinator._planning_stage_status = "active"
+            operation_id = coordinator._begin_registration_intent(node="planning")
+            interrupted = aegis_runtime.load_run_state(artifact_path, run_id)
+            relay = RegistrationIntentRecoveryRelay(None)
+            resumed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifact_path,
+                run_id=run_id,
+                upstream_port=7_899,
+                relay_client=relay,
+                start_node="A",
+                prior_state=interrupted,
+            )
+
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "registration outcome is unresolved",
+            ):
+                resumed.preflight()
+
+            self.assertFalse(relay.started)
+            self.assertEqual(relay.resolve_count, 1)
+            self.assertEqual(relay.recover_count, 0)
+            saved = aegis_runtime.load_run_state(artifact_path, run_id)
+            self.assertEqual(
+                saved["registration_intent"]["operation_id"], operation_id
+            )
+            self.assertEqual(saved["evidence_sessions"], [])
 
     def test_c_through_f_roles_keep_threads_but_use_one_process_and_session_per_turn(
         self,
@@ -2295,8 +2659,19 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 def open_managed_process(
                     self, *args: object, **kwargs: object
                 ) -> ManagedProcess:
-                    del args, kwargs
+                    del args
+                    operation_id = kwargs.pop("registration_operation_id")
+                    assert isinstance(operation_id, str)
+                    del kwargs
                     self.open_count += 1
+                    self.managed.registration = aegis_runtime.TraceRelayRegistration(
+                        session_id=self.managed.registration.session_id,
+                        proxy_host=self.managed.registration.proxy_host,
+                        proxy_port=self.managed.registration.proxy_port,
+                        upstream_port=self.managed.registration.upstream_port,
+                        session_path=self.managed.registration.session_path,
+                        operation_id=operation_id,
+                    )
                     self.last_registration = self.managed.registration
                     return self.managed
 
@@ -3223,6 +3598,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 proxy_port=45000,
                 upstream_port=7899,
                 session_path=root / "sessions" / session_id,
+                operation_id="fc" * 16,
             )
             stopped_process = SimpleNamespace(
                 pid=12_345,
@@ -3340,6 +3716,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     "verification_status": "VALID_COMPLETE",
                     "application_verification_status": "VALID_COMPLETE",
                     "final_hash": "ab" * 32,
+                    "registration_operation_id": "fd" * 16,
                 }
             ]
             self.attach_planning_evidence_process(
@@ -3542,7 +3919,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
             self.assertFalse(relay.started)
 
-    def test_v1_through_v3_run_state_are_rejected_instead_of_guessing_c_f_history(
+    def test_v1_through_v4_run_state_are_rejected_without_registration_intent(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3564,6 +3941,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 "aegis.run_state.v1",
                 "aegis.run_state.v2",
                 "aegis.run_state.v3",
+                "aegis.run_state.v4",
             ):
                 with self.subTest(schema=schema):
                     saved["schema"] = schema
@@ -3573,7 +3951,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
                     with self.assertRaisesRegex(
                         aegis_runtime.RuntimeStateError,
-                        "predates C-F App Server transactions",
+                        "predates durable TraceRelay registration intents",
                     ):
                         aegis_runtime.load_run_state(artifact_path, run_id)
 

@@ -851,7 +851,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 return FakeGraph()
 
             saved = {
-                "schema": "aegis.run_state.v4",
+                "schema": "aegis.run_state.v5",
                 "run_id": "run-resume",
                 "status": "failed",
                 "project_root": str(root.resolve()),
@@ -936,7 +936,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 yield object()
 
             saved = {
-                "schema": "aegis.run_state.v4",
+                "schema": "aegis.run_state.v5",
                 "run_id": "run-resume-after-planning",
                 "status": "failed",
                 "project_root": str(root.resolve()),

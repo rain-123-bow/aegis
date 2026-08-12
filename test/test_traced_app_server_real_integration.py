@@ -60,6 +60,23 @@ REVIEW_NODE_SCHEMA = {
     },
 }
 
+TRACERELAY_SOURCE_BINDINGS = (
+    "submodules/TraceRelay/src/tracerelay/cli.py",
+    "submodules/TraceRelay/src/tracerelay/config.py",
+    "submodules/TraceRelay/src/tracerelay/service.py",
+    "submodules/TraceRelay/src/tracerelay/session.py",
+    "submodules/TraceRelay/src/tracerelay/verify.py",
+)
+
+
+def _source_sha256(*relative_paths: str) -> dict[str, str]:
+    return {
+        relative_path: hashlib.sha256(
+            (PROJECT_ROOT / relative_path).read_bytes()
+        ).hexdigest()
+        for relative_path in relative_paths
+    }
+
 
 def _run_execution_crash_worker(config_path: Path) -> None:
     config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -96,6 +113,73 @@ def _run_execution_crash_worker(config_path: Path) -> None:
 
     coordinator.execute_node("F", operation, state)
     raise AssertionError("crash worker unexpectedly returned")
+
+
+def _run_registration_crash_worker(config_path: Path) -> None:
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    crash_mode = str(config["crash_mode"])
+    marker_path = Path(config["marker_path"])
+
+    def crash_before_popen(*_args: object, **_kwargs: object) -> object:
+        marker_path.write_text(
+            json.dumps({"crash_mode": crash_mode, "popen_started": False}) + "\n",
+            encoding="utf-8",
+        )
+        os._exit(91)
+
+    def crash_before_creation_time_checkpoint(process_pid: int) -> int:
+        marker_path.write_text(
+            json.dumps(
+                {
+                    "crash_mode": crash_mode,
+                    "popen_started": True,
+                    "observed_process_pid": process_pid,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        os._exit(91)
+
+    relay_options: dict[str, object] = {}
+    if crash_mode == "after_register_before_popen":
+        relay_options["popen_factory"] = crash_before_popen
+    elif crash_mode == "after_popen_before_identity_checkpoint":
+        relay_options["process_creation_time_reader"] = (
+            crash_before_creation_time_checkpoint
+        )
+    else:
+        raise ValueError(f"unsupported registration crash mode: {crash_mode}")
+
+    project = Path(config["project"])
+    artifact_path = Path(config["artifact_path"])
+    state = dict(config["state"])
+    coordinator = RuntimeCoordinator(
+        project_root=project,
+        artifact_path=artifact_path,
+        run_id=str(config["run_id"]),
+        upstream_port=int(config["upstream_port"]),
+        relay_client=TraceRelayClient(
+            command=str(config["tracerelay_command"]),
+            monitor_interval_seconds=0.05,
+            **relay_options,
+        ),
+        start_node="F",
+    )
+    coordinator.preflight()
+
+    def operation(node_state: dict[str, object]) -> dict[str, object]:
+        response = coordinator.run_execution_agent(
+            "FINAL_REVIEWER",
+            str(config["prompt"]),
+            output_schema=NODE_SCHEMA,
+            developer_instructions=str(config["developer_instructions"]),
+            timeout_seconds=300,
+        )
+        return {**node_state, "response": response, "current_node": "F"}
+
+    coordinator.execute_node("F", operation, state)
+    raise AssertionError("registration crash worker unexpectedly returned")
 
 
 def _windows_process_is_running(process_pid: int) -> bool:
@@ -498,17 +582,18 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                         encoding="utf-8"
                     )
                 ),
-                "source_sha256": {
-                    str(path.relative_to(PROJECT_ROOT)).replace(
-                        "\\", "/"
-                    ): hashlib.sha256(path.read_bytes()).hexdigest()
-                    for path in (
-                        PROJECT_ROOT / "src" / "codex_app_server_client.py",
-                        PROJECT_ROOT / "src" / "tracerelay_client.py",
-                        PROJECT_ROOT / "src" / "aegis_runtime.py",
-                        PROJECT_ROOT / "src" / "main.py",
-                    )
-                },
+                "tracerelay_command": tracerelay_command,
+                "tracerelay_command_sha256": hashlib.sha256(
+                    Path(tracerelay_command).read_bytes()
+                ).hexdigest(),
+                "source_sha256": _source_sha256(
+                    "src/codex_app_server_client.py",
+                    "src/tracerelay_client.py",
+                    "src/aegis_runtime.py",
+                    "src/main.py",
+                    "test/test_traced_app_server_real_integration.py",
+                    *TRACERELAY_SOURCE_BINDINGS,
+                ),
             }
             report_path = root / "ACCEPTANCE_REPORT.json"
             report_path.write_text(
@@ -715,15 +800,16 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 "process_pids": process_pids,
                 "process_creation_times_100ns": process_creation_times,
                 "processes_terminated": True,
-                "source_sha256": {
-                    str(path.relative_to(PROJECT_ROOT)).replace(
-                        "\\", "/"
-                    ): hashlib.sha256(path.read_bytes()).hexdigest()
-                    for path in (
-                        PROJECT_ROOT / "src" / "tracerelay_client.py",
-                        PROJECT_ROOT / "src" / "aegis_runtime.py",
-                    )
-                },
+                "tracerelay_command": tracerelay_command,
+                "tracerelay_command_sha256": hashlib.sha256(
+                    Path(tracerelay_command).read_bytes()
+                ).hexdigest(),
+                "source_sha256": _source_sha256(
+                    "src/tracerelay_client.py",
+                    "src/aegis_runtime.py",
+                    "test/test_traced_app_server_real_integration.py",
+                    *TRACERELAY_SOURCE_BINDINGS,
+                ),
             }
             report_path = root / "CRASH_RECOVERY_REPORT.json"
             report_path.write_text(
@@ -760,9 +846,286 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                         break
                     time.sleep(0.1)
 
+    def test_registration_intent_recovers_both_real_pre_checkpoint_crashes(
+        self,
+    ) -> None:
+        tracerelay_command = str(Path(os.environ["TRACERELAY_COMMAND"]).resolve())
+
+        def run_cli(*arguments: str) -> tuple[int, dict[str, object]]:
+            completed = subprocess.run(
+                [tracerelay_command, *arguments],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+            raw = completed.stdout.strip() or completed.stderr.strip()
+            payload = json.loads(raw.decode("utf-8", errors="replace"))
+            self.assertIsInstance(payload, dict)
+            return completed.returncode, payload
+
+        def wait_for_not_running() -> None:
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                _returncode, payload = run_cli("status")
+                if payload.get("state") == "NOT_RUNNING":
+                    return
+                time.sleep(0.1)
+            self.fail("TraceRelay did not stop after registration crash acceptance")
+
+        _returncode, initial_status = run_cli("status")
+        if initial_status.get("state") != "NOT_RUNNING":
+            self.skipTest("TraceRelay is already running; ownership is ambiguous")
+
+        short_id = uuid4().hex[:12]
+        root = (
+            Path(
+                os.environ.get(
+                    "AEGIS_APP_SERVER_ACCEPTANCE_ROOT", r"C:\code\aegis_artifacts"
+                )
+            )
+            / "as_registration_crash"
+            / short_id
+        ).resolve()
+        project = root / "project"
+        source = project / "src" / "acceptance_target.py"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("ACCEPTANCE_TARGET = True\n", encoding="utf-8")
+        record_project_seal(
+            project,
+            git_head_before_record="c" * 40,
+            project_id=bytes(range(16)),
+            run_id=bytes(range(16, 32)),
+        )
+        upstream_port = int(os.environ.get("TRACERELAY_UPSTREAM_PORT", "7899"))
+        cases: list[dict[str, object]] = []
+
+        for crash_mode in (
+            "after_register_before_popen",
+            "after_popen_before_identity_checkpoint",
+        ):
+            with self.subTest(crash_mode=crash_mode):
+                run_id = f"registration-{crash_mode}-{short_id}"
+                artifact_path = root / crash_mode / "artifacts"
+                artifact_path.mkdir(parents=True, exist_ok=True)
+                context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
+                context_path.write_text("{}\n", encoding="utf-8")
+                state = {
+                    "artifact_path": str(artifact_path),
+                    "reasoning_ledger_context_pack": str(context_path),
+                    "status": True,
+                }
+                marker_path = root / crash_mode / "CRASH_MARKER.json"
+                config = {
+                    "crash_mode": crash_mode,
+                    "marker_path": str(marker_path),
+                    "project": str(project),
+                    "artifact_path": str(artifact_path),
+                    "run_id": run_id,
+                    "upstream_port": upstream_port,
+                    "tracerelay_command": tracerelay_command,
+                    "state": state,
+                    "prompt": (
+                        "Return exactly one JSON object matching the output schema. "
+                        f"Preserve artifact_path as {artifact_path} and "
+                        "reasoning_ledger_context_pack as "
+                        f"{context_path}; set status to true. Do not use tools."
+                    ),
+                    "developer_instructions": (
+                        "Return only schema-valid JSON for the registration crash "
+                        "acceptance. Do not use Aegis-specific skills."
+                    ),
+                }
+                config_path = root / crash_mode / "CRASH_WORKER_CONFIG.json"
+                config_path.write_text(
+                    json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+
+                try:
+                    crashed = subprocess.run(
+                        [
+                            sys.executable,
+                            "-B",
+                            str(Path(__file__).resolve()),
+                            "--registration-crash-worker",
+                            str(config_path),
+                        ],
+                        cwd=PROJECT_ROOT,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        check=False,
+                        timeout=120,
+                    )
+                    self.assertEqual(
+                        crashed.returncode,
+                        91,
+                        msg=f"stdout={crashed.stdout}\nstderr={crashed.stderr}",
+                    )
+                    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+                    self.assertEqual(marker["crash_mode"], crash_mode)
+                    self.assertEqual(
+                        marker["popen_started"],
+                        crash_mode == "after_popen_before_identity_checkpoint",
+                    )
+
+                    state_path = (
+                        artifact_path
+                        / ".aegis"
+                        / "runs"
+                        / run_id
+                        / "RUN_STATE.json"
+                    )
+                    interrupted = json.loads(state_path.read_text(encoding="utf-8"))
+                    intent = interrupted["registration_intent"]
+                    receipt = interrupted["execution_turns"][0]
+                    self.assertEqual(intent["run_id"], run_id)
+                    self.assertEqual(intent["node"], "F")
+                    self.assertEqual(intent["attempt_id"], receipt["attempt_id"])
+                    self.assertEqual(intent["job_id"], receipt["job_id"])
+                    self.assertEqual(receipt["status"], "preparing")
+                    self.assertEqual(receipt["evidence_session_ids"], [])
+                    self.assertEqual(interrupted["evidence_sessions"], [])
+
+                    resolver = TraceRelayClient(
+                        command=tracerelay_command,
+                        monitor_interval_seconds=0.05,
+                    )
+                    registration = resolver.resolve_registration_operation(
+                        intent["operation_id"]
+                    )
+                    self.assertIsNotNone(registration)
+                    assert registration is not None
+                    self.assertEqual(registration.operation_id, intent["operation_id"])
+                    metadata = json.loads(
+                        (registration.session_path / "session.json").read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                    self.assertEqual(metadata["operation_id"], intent["operation_id"])
+
+                    recovery_commands: list[list[str]] = []
+
+                    def recording_cli_runner(
+                        command: list[str], timeout: float
+                    ) -> subprocess.CompletedProcess[str]:
+                        recovery_commands.append(command[1:])
+                        return subprocess.run(
+                            command,
+                            stdin=subprocess.DEVNULL,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="strict",
+                            check=False,
+                            timeout=timeout,
+                        )
+
+                    recovery = RuntimeCoordinator(
+                        project_root=project,
+                        artifact_path=artifact_path,
+                        run_id=run_id,
+                        upstream_port=upstream_port,
+                        relay_client=TraceRelayClient(
+                            command=tracerelay_command,
+                            cli_runner=recording_cli_runner,
+                            monitor_interval_seconds=0.05,
+                        ),
+                        start_node="F",
+                        prior_state=interrupted,
+                    )
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "uncheckpointed TraceRelay registration invalidates this run",
+                    ):
+                        recovery.preflight()
+
+                    invoked_commands = [command[0] for command in recovery_commands]
+                    self.assertNotIn("start", invoked_commands)
+                    self.assertNotIn("register", invoked_commands)
+                    self.assertIn("resolve-registration", invoked_commands)
+                    self.assertIn("verify", invoked_commands)
+
+                    recovered = json.loads(state_path.read_text(encoding="utf-8"))
+                    self.assertEqual(recovered["status"], "failed")
+                    self.assertIsNone(recovered["registration_intent"])
+                    recovered_receipt = recovered["execution_turns"][0]
+                    recovered_evidence = recovered["evidence_sessions"]
+                    self.assertEqual(
+                        recovered_receipt["evidence_session_ids"],
+                        [registration.session_id],
+                    )
+                    self.assertEqual(len(recovered_evidence), 1)
+                    evidence = recovered_evidence[0]
+                    self.assertEqual(evidence["session_id"], registration.session_id)
+                    self.assertEqual(
+                        evidence["registration_operation_id"], intent["operation_id"]
+                    )
+                    self.assertEqual(
+                        evidence["application_verification_status"], "INVALID"
+                    )
+                    self.assertIsNone(evidence["process_pid"])
+                    self.assertIsNone(evidence["process_creation_time_100ns"])
+                    verification_returncode, verification = run_cli(
+                        "verify", str(registration.session_path)
+                    )
+                    self.assertEqual(verification_returncode, 0)
+                    self.assertEqual(verification["status"], "VALID_COMPLETE")
+
+                    _returncode, recovered_status = run_cli("status")
+                    self.assertEqual(recovered_status["state"], "IDLE")
+                    cases.append(
+                        {
+                            "crash_mode": crash_mode,
+                            "worker_exit_code": crashed.returncode,
+                            "operation_id": intent["operation_id"],
+                            "session_id": registration.session_id,
+                            "session_path": str(registration.session_path),
+                            "marker": marker,
+                            "recovery_cli_commands": recovery_commands,
+                            "verification": verification,
+                            "application_verification_status": "INVALID",
+                            "persisted_process_pid": evidence["process_pid"],
+                            "persisted_process_creation_time_100ns": evidence[
+                                "process_creation_time_100ns"
+                            ],
+                        }
+                    )
+                finally:
+                    run_cli("stop")
+                    wait_for_not_running()
+
+        report = {
+            "schema": "aegis.registration_crash_acceptance.v1",
+            "verdict": "PASS",
+            "created_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "cases": cases,
+            "tracerelay_command": tracerelay_command,
+            "tracerelay_command_sha256": hashlib.sha256(
+                Path(tracerelay_command).read_bytes()
+            ).hexdigest(),
+            "source_sha256": _source_sha256(
+                "src/tracerelay_client.py",
+                "src/aegis_runtime.py",
+                "test/test_traced_app_server_real_integration.py",
+                *TRACERELAY_SOURCE_BINDINGS,
+            ),
+        }
+        report_path = root / "REGISTRATION_CRASH_REPORT.json"
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"REGISTRATION_CRASH_REPORT={report_path}")
+
 
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--execution-crash-worker":
         _run_execution_crash_worker(Path(sys.argv[2]).resolve())
+    elif len(sys.argv) == 3 and sys.argv[1] == "--registration-crash-worker":
+        _run_registration_crash_worker(Path(sys.argv[2]).resolve())
     else:
         unittest.main()

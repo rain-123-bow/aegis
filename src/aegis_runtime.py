@@ -38,7 +38,7 @@ RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 RESERVATION_TOKEN_PATTERN = re.compile(r"[0-9a-f]{32}")
 CHECKPOINT_RELATIVE_PATH = Path(".aegis/runtime/checkpoints.sqlite3")
 RESERVATION_TABLE = "aegis_run_reservations"
-RUN_STATE_SCHEMA = "aegis.run_state.v4"
+RUN_STATE_SCHEMA = "aegis.run_state.v5"
 PLANNING_STAGE_STATUSES = frozenset({"not_started", "active", "completed"})
 PLANNING_ROUND_STATUSES = frozenset(
     {
@@ -115,6 +115,7 @@ class RuntimeCoordinator:
         self._execution_turns: list[dict[str, object]] = []
         self._execution_attempts: list[dict[str, object]] = []
         self._active_execution_attempt: dict[str, object] | None = None
+        self._registration_intent: dict[str, object] | None = None
         self._planning_ready_roles: set[str] = set()
         self._planning_stage_status = "not_started"
         self._codex_cli_path: str | None = None
@@ -130,9 +131,11 @@ class RuntimeCoordinator:
             "aegis.run_state.v1",
             "aegis.run_state.v2",
             "aegis.run_state.v3",
+            "aegis.run_state.v4",
         }:
             raise RuntimeStateError(
-                "run state predates C-F App Server transactions; start a new run"
+                "run state predates durable TraceRelay registration intents; "
+                "start a new run"
             )
         if state.get("schema") != RUN_STATE_SCHEMA:
             raise RuntimeStateError("run state schema is unsupported")
@@ -155,6 +158,7 @@ class RuntimeCoordinator:
         execution_agents = state.get("execution_agents")
         execution_turns = state.get("execution_turns")
         execution_attempts = state.get("execution_attempts")
+        registration_intent = state.get("registration_intent")
         codex_cli_path = state.get("codex_cli_path")
         codex_cli_version = state.get("codex_cli_version")
         planning_stage_status = state.get("planning_stage_status")
@@ -209,6 +213,16 @@ class RuntimeCoordinator:
             evidence,
             run_id=self.run_id,
         )
+        if registration_intent is not None and not isinstance(
+            registration_intent, dict
+        ):
+            raise RuntimeStateError("prior registration intent must be an object or null")
+        _validate_registration_intent(
+            registration_intent,
+            run_id=self.run_id,
+            upstream_port=self.upstream_port,
+            execution_turns=execution_turns,
+        )
         if codex_cli_path is not None and not isinstance(codex_cli_path, str):
             raise RuntimeStateError("prior Codex CLI path must be a string or null")
         if codex_cli_version is not None and not isinstance(codex_cli_version, str):
@@ -235,6 +249,11 @@ class RuntimeCoordinator:
         }
         self._execution_turns = [dict(item) for item in execution_turns]
         self._execution_attempts = [dict(item) for item in execution_attempts]
+        self._registration_intent = (
+            dict(registration_intent)
+            if isinstance(registration_intent, dict)
+            else None
+        )
         if (
             self._execution_attempts
             and self._execution_attempts[-1].get("status") == "running"
@@ -280,6 +299,7 @@ class RuntimeCoordinator:
                 self._state_writable = True
             if self._planning_stage_status == "completed":
                 self._validate_completed_planning_stage()
+            self._reconcile_registration_intent()
             self._validate_persisted_planning_evidence_cache()
             self._validate_persisted_execution_receipt_cache()
             self._recover_persisted_execution_sessions()
@@ -456,10 +476,14 @@ class RuntimeCoordinator:
             nonlocal process
             if process is not None:
                 raise RuntimeStateError("execution App Server process already exists")
+            operation_id = self._begin_registration_intent(
+                node=str(node), receipt=receipt
+            )
             try:
                 process = self.relay_client.open_managed_process(
                     process_command,
                     upstream_port=self.upstream_port,
+                    registration_operation_id=operation_id,
                     **popen_options,
                 )
             except BaseException as error:
@@ -473,17 +497,14 @@ class RuntimeCoordinator:
                         f"{persistence_error}"
                     )
                 raise
-            session_ids = receipt["evidence_session_ids"]
-            assert isinstance(session_ids, list)
-            session_ids.append(process.registration.session_id)
-            self._record_evidence(
+            self._persist_registration_result(
                 process.registration,
                 None,
                 node=str(node),
+                receipt=receipt,
                 process_pid=process.pid,
                 process_creation_time_100ns=process.creation_time_100ns,
             )
-            self._write_state("running")
             return process
 
         client = AppServerClient(
@@ -1444,6 +1465,11 @@ class RuntimeCoordinator:
             proxy_port=1,
             upstream_port=self.upstream_port,
             session_path=Path(str(entry["session_path"])),
+            operation_id=(
+                str(entry["registration_operation_id"])
+                if isinstance(entry.get("registration_operation_id"), str)
+                else None
+            ),
         )
         verification = self.relay_client.recover_managed_session(
             registration,
@@ -1533,10 +1559,12 @@ class RuntimeCoordinator:
         ) -> ManagedEvidenceProcess:
             if self._planning_process is not None:
                 raise RuntimeStateError("planning App Server process already exists")
+            operation_id = self._begin_registration_intent(node="planning")
             try:
                 process = self.relay_client.open_managed_process(
                     process_command,
                     upstream_port=self.upstream_port,
+                    registration_operation_id=operation_id,
                     **popen_options,
                 )
             except BaseException as error:
@@ -1549,8 +1577,11 @@ class RuntimeCoordinator:
                     )
                 raise
             self._planning_process = process
-            self._record_evidence(process.registration, None, node="planning")
-            self._write_state("running")
+            self._persist_registration_result(
+                process.registration,
+                None,
+                node="planning",
+            )
             return process
 
         client = AppServerClient(
@@ -1690,6 +1721,150 @@ class RuntimeCoordinator:
         directory.mkdir(parents=True, exist_ok=True)
         return directory / f"{node_name}-{uuid4().hex}.txt"
 
+    def _begin_registration_intent(
+        self,
+        *,
+        node: str,
+        receipt: Mapping[str, object] | None = None,
+    ) -> str:
+        if self._registration_intent is not None:
+            raise RuntimeStateError("a TraceRelay registration intent is already active")
+        if node == "planning":
+            if receipt is not None:
+                raise RuntimeStateError("planning registration cannot bind an execution turn")
+            attempt_id: str | None = None
+            job_id = f"{self.run_id}:planning-app-server"
+        else:
+            if node not in EXECUTION_NODE_ROLES or receipt is None:
+                raise RuntimeStateError("execution registration intent has no turn binding")
+            attempt_id = _required_string(receipt.get("attempt_id"), "attempt_id")
+            job_id = _required_string(receipt.get("job_id"), "job_id")
+            receipt_status = receipt.get("status")
+            if receipt.get("node") != node or receipt_status not in {
+                "preparing",
+                "inProgress",
+            }:
+                raise RuntimeStateError(
+                    "execution registration intent does not match a recoverable turn"
+                )
+            if (
+                receipt_status == "preparing"
+                and receipt.get("evidence_session_ids") != []
+            ):
+                raise RuntimeStateError(
+                    "execution registration intent cannot replace existing evidence"
+                )
+        operation_id = uuid4().hex
+        self._registration_intent = {
+            "operation_id": operation_id,
+            "run_id": self.run_id,
+            "node": node,
+            "attempt_id": attempt_id,
+            "job_id": job_id,
+            "upstream_port": self.upstream_port,
+            "created_at_utc": _utc_now_text(),
+        }
+        self._write_state("running")
+        return operation_id
+
+    def _persist_registration_result(
+        self,
+        registration: TraceRelayRegistration,
+        verification: Mapping[str, object] | None,
+        *,
+        node: str,
+        receipt: dict[str, object] | None = None,
+        application_verification_status: str | None = None,
+        process_pid: int | None = None,
+        process_creation_time_100ns: int | None = None,
+    ) -> None:
+        intent = self._registration_intent
+        if intent is None:
+            raise RuntimeStateError("TraceRelay registration result has no durable intent")
+        operation_id = _required_string(intent.get("operation_id"), "operation_id")
+        if (
+            intent.get("node") != node
+            or registration.operation_id != operation_id
+            or registration.upstream_port != self.upstream_port
+        ):
+            raise RuntimeStateError("TraceRelay registration result changed durable identity")
+        if node in EXECUTION_NODE_ROLES:
+            if receipt is None:
+                raise RuntimeStateError("execution registration result has no turn receipt")
+            if (
+                receipt.get("attempt_id") != intent.get("attempt_id")
+                or receipt.get("job_id") != intent.get("job_id")
+                or receipt.get("node") != node
+            ):
+                raise RuntimeStateError(
+                    "execution registration result changed its turn binding"
+                )
+            session_ids = receipt.get("evidence_session_ids")
+            if not isinstance(session_ids, list):
+                raise RuntimeStateError(
+                    "execution turn has invalid evidence session IDs"
+                )
+            if registration.session_id not in session_ids:
+                session_ids.append(registration.session_id)
+        elif receipt is not None:
+            raise RuntimeStateError("planning registration cannot bind an execution receipt")
+        self._record_evidence(
+            registration,
+            verification,
+            node=node,
+            application_verification_status=application_verification_status,
+            process_pid=process_pid,
+            process_creation_time_100ns=process_creation_time_100ns,
+        )
+        self._registration_intent = None
+        self._write_state("running")
+
+    def _reconcile_registration_intent(self) -> None:
+        intent = self._registration_intent
+        if intent is None:
+            return
+        operation_id = _required_string(intent.get("operation_id"), "operation_id")
+        registration = self.relay_client.resolve_registration_operation(operation_id)
+        if registration is None:
+            raise RuntimeStateError(
+                "TraceRelay registration outcome is unresolved; refusing a new session"
+            )
+        if (
+            registration.operation_id != operation_id
+            or registration.upstream_port != self.upstream_port
+        ):
+            raise RuntimeStateError("resolved TraceRelay registration changed identity")
+        verification = self.relay_client.recover_uncheckpointed_registration(
+            registration
+        )
+        node = _required_string(intent.get("node"), "node")
+        receipt: dict[str, object] | None = None
+        if node in EXECUTION_NODE_ROLES:
+            receipt = next(
+                (
+                    candidate
+                    for candidate in self._execution_turns
+                    if candidate.get("attempt_id") == intent.get("attempt_id")
+                    and candidate.get("job_id") == intent.get("job_id")
+                    and candidate.get("node") == node
+                ),
+                None,
+            )
+            if receipt is None:
+                raise RuntimeStateError(
+                    "registration intent has no matching execution receipt"
+                )
+        self._persist_registration_result(
+            registration,
+            verification,
+            node=node,
+            receipt=receipt,
+            application_verification_status="INVALID",
+        )
+        raise RuntimeStateError(
+            "uncheckpointed TraceRelay registration invalidates this run"
+        )
+
     def _record_evidence(
         self,
         registration: TraceRelayRegistration,
@@ -1726,6 +1901,12 @@ class RuntimeCoordinator:
             process_creation_time_100ns = (
                 saved_creation_time if isinstance(saved_creation_time, int) else None
             )
+        registration_operation_id = registration.operation_id
+        if registration_operation_id is None and prior is not None:
+            saved_operation_id = prior.get("registration_operation_id")
+            registration_operation_id = (
+                saved_operation_id if isinstance(saved_operation_id, str) else None
+            )
         entry = {
             "node": resolved_node,
             "session_id": registration.session_id,
@@ -1737,6 +1918,7 @@ class RuntimeCoordinator:
             "final_hash": verification.get("final_hash") if verification else None,
             "process_pid": process_pid,
             "process_creation_time_100ns": process_creation_time_100ns,
+            "registration_operation_id": registration_operation_id,
         }
         if resolved_node in EXECUTION_NODE_ROLES:
             _validate_execution_evidence_record(entry)
@@ -1755,22 +1937,14 @@ class RuntimeCoordinator:
         registration = getattr(self.relay_client, "last_registration", None)
         if not isinstance(registration, TraceRelayRegistration):
             return
-        if receipt is not None:
-            session_ids = receipt.get("evidence_session_ids")
-            if not isinstance(session_ids, list):
-                raise RuntimeStateError(
-                    "execution turn has invalid evidence session IDs"
-                )
-            if registration.session_id not in session_ids:
-                session_ids.append(registration.session_id)
         verification = getattr(self.relay_client, "last_verification", None)
-        self._record_evidence(
+        self._persist_registration_result(
             registration,
             verification if isinstance(verification, Mapping) else None,
             node=node,
+            receipt=receipt,
             application_verification_status="INVALID",
         )
-        self._write_state("running")
 
     def complete(self, state: dict[str, Any]) -> None:
         self.finish_planning_stage()
@@ -1825,6 +1999,11 @@ class RuntimeCoordinator:
             },
             "execution_turns": [dict(item) for item in self._execution_turns],
             "execution_attempts": [dict(item) for item in self._execution_attempts],
+            "registration_intent": (
+                dict(self._registration_intent)
+                if self._registration_intent is not None
+                else None
+            ),
             "codex_cli_path": self._codex_cli_path,
             "codex_cli_version": self._codex_cli_version,
             "created_at_utc": self._created_at_utc,
@@ -1858,9 +2037,11 @@ def load_run_state(artifact_path: str | Path, run_id: str) -> dict[str, object]:
         "aegis.run_state.v1",
         "aegis.run_state.v2",
         "aegis.run_state.v3",
+        "aegis.run_state.v4",
     }:
         raise RuntimeStateError(
-            "run state predates C-F App Server transactions; start a new run"
+            "run state predates durable TraceRelay registration intents; "
+            "start a new run"
         )
     if payload.get("schema") != RUN_STATE_SCHEMA:
         raise RuntimeStateError("run state has an unsupported schema")
@@ -2013,6 +2194,12 @@ def _optional_string(value: object) -> str | None:
     return value
 
 
+def _required_string(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise RuntimeStateError(f"{field_name} must be a non-empty string")
+    return value
+
+
 def _planning_request_sha256(prompt: str, output_schema: Mapping[str, Any]) -> str:
     encoded = json.dumps(
         {"output_schema": dict(output_schema), "prompt": prompt},
@@ -2093,6 +2280,14 @@ def _validate_evidence_identity_and_status(
     if not path.is_absolute() or path.name != session_id:
         raise RuntimeStateError(
             f"{evidence_kind} evidence session path does not match its session ID"
+        )
+    registration_operation_id = entry.get("registration_operation_id")
+    if (
+        not isinstance(registration_operation_id, str)
+        or re.fullmatch(r"[0-9a-f]{32}", registration_operation_id) is None
+    ):
+        raise RuntimeStateError(
+            f"{evidence_kind} evidence has an invalid registration operation ID"
         )
     raw_status = entry.get("verification_status")
     if not isinstance(raw_status, str) or not raw_status:
@@ -2314,6 +2509,68 @@ def _validate_execution_turns(turns: Sequence[Mapping[str, object]]) -> None:
             raise RuntimeStateError(
                 "prior execution turn repeats an evidence session ID"
             )
+
+
+def _validate_registration_intent(
+    intent: Mapping[str, object] | None,
+    *,
+    run_id: str,
+    upstream_port: int,
+    execution_turns: Sequence[Mapping[str, object]],
+) -> None:
+    if intent is None:
+        return
+    if set(intent) != {
+        "operation_id",
+        "run_id",
+        "node",
+        "attempt_id",
+        "job_id",
+        "upstream_port",
+        "created_at_utc",
+    }:
+        raise RuntimeStateError("registration intent has an invalid field set")
+    operation_id = intent.get("operation_id")
+    if (
+        not isinstance(operation_id, str)
+        or re.fullmatch(r"[0-9a-f]{32}", operation_id) is None
+    ):
+        raise RuntimeStateError("registration intent has an invalid operation ID")
+    if intent.get("run_id") != run_id or intent.get("upstream_port") != upstream_port:
+        raise RuntimeStateError("registration intent changed run identity")
+    created_at = intent.get("created_at_utc")
+    if not isinstance(created_at, str) or not created_at:
+        raise RuntimeStateError("registration intent has no creation time")
+    node = intent.get("node")
+    if node == "planning":
+        if intent.get("attempt_id") is not None:
+            raise RuntimeStateError("planning registration intent has an attempt ID")
+        if intent.get("job_id") != f"{run_id}:planning-app-server":
+            raise RuntimeStateError("planning registration intent has an invalid job ID")
+        return
+    if node not in EXECUTION_NODE_ROLES:
+        raise RuntimeStateError("registration intent has an invalid node")
+    receipt = next(
+        (
+            candidate
+            for candidate in execution_turns
+            if candidate.get("attempt_id") == intent.get("attempt_id")
+            and candidate.get("job_id") == intent.get("job_id")
+            and candidate.get("node") == node
+        ),
+        None,
+    )
+    if receipt is None or receipt.get("status") not in {"preparing", "inProgress"}:
+        raise RuntimeStateError(
+            "registration intent does not match one recoverable execution turn"
+        )
+    if (
+        receipt.get("status") == "preparing"
+        and receipt.get("evidence_session_ids") != []
+    ):
+        raise RuntimeStateError(
+            "registration intent preparing turn already has evidence"
+        )
 
 
 def _validate_execution_bindings(

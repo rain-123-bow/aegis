@@ -79,13 +79,19 @@ terminates the full `cmd/node/codex/tool` descendant tree. Proxy bypass variable
 are removed and all HTTP proxy selectors are pinned to the registered relay
 endpoint.
 
-Registration is itself durable evidence. If TraceRelay registers a session but
-App Server process creation or Windows creation-FILETIME acquisition fails,
-Aegis links that session to the active turn before rethrowing. The record is
-application `INVALID`; both process identity fields remain null because no
-verified identity was obtained. Planning uses the same rule without a turn
-receipt. A later resume rejects either record before starting TraceRelay, so a
-new valid session cannot hide it.
+Registration is itself durable evidence. Before each `register`, Aegis atomically
+writes a unique operation ID to `RUN_STATE.json`, bound to the run, node,
+attempt/job and upstream port. TraceRelay writes the same ID into `session.json`
+before returning. Normal success links the resulting session and clears the
+intent in one state checkpoint.
+
+Resume resolves any remaining intent from TraceRelay's durable metadata before
+starting the Service or creating a new session. A resolved session is sealed and
+verified without guessing a PID, then recorded application `INVALID` with null
+PID/FILETIME and the run is rejected. No match, multiple matches or unreadable
+metadata also fail closed. The same protocol covers planning and every C-F turn.
+Synchronous process-creation or FILETIME failures use the resolved registration
+directly and follow the same invalid-evidence gate.
 
 ### A/B App Server and frozen planning handoff
 
@@ -214,21 +220,24 @@ Completed nodes do not run again.
 <artifact_path>/.aegis/runs/<run-id>/RUN_STATE.json
 ```
 
-`RUN_STATE.json` uses `aegis.run_state.v4` and records the current node, last completed node, latest graph
-state, TraceRelay session paths, verification results, and the terminal error.
+`RUN_STATE.json` uses `aegis.run_state.v5` and records the current node, last
+completed node, latest graph state, TraceRelay registration intent, session
+paths, verification results, and the terminal error.
 New runs reserve the same identity in `RUN_STATE.json` and SQLite before
 TraceRelay starts. Only `--resume-run-id` may reopen that identity.
 Raw Codex responses remain under `<run>/responses/`, including malformed output.
 TraceRelay failure terminates the active Codex child; Aegis writes the failure
 state and exits without restarting TraceRelay or continuing the graph.
 The service-failure acceptance JSON sets `verdict=PASS` only after all checks and
-binds `aegis_runtime.py`, `main.py`, both control-plane clients, and the
-acceptance script by SHA-256. Report generation fails if any required binding is
-missing, malformed, or no longer matches the executed source bytes.
+binds `aegis_runtime.py`, `main.py`, both control-plane clients, the TraceRelay
+registration implementation, the acceptance script, and the installed
+TraceRelay command by SHA-256. Report generation fails if any required binding
+is missing, malformed, or no longer matches the executed bytes.
 
-Version-1 through version-3 run states are rejected on resume. Version 3 cannot
-prove whether a legacy E/F turn already produced a report or final-review side
-effect, so conversion could duplicate it. Start a new run instead.
+Version-1 through version-4 run states are rejected on resume. Versions 1-3
+cannot prove legacy E/F side effects. Version 4 has no durable TraceRelay
+registration intent, so an empty preparing receipt cannot prove that register
+never happened. Start a new run instead.
 
 The real App Server control-plane acceptance is opt-in:
 
@@ -251,10 +260,11 @@ verdict: PASS
 codex-cli: 0.145.0
 model: gpt-5.6-sol
 reasoning effort: high
-report: C:\code\aegis_artifacts\as_pilot\7ae8aa76a44d\ACCEPTANCE_REPORT.json
-report SHA-256: 5660FB9A5E033F8B73E9C2590F774E22C90E0D547C61B65B0408CC6AE7B18C92
+report: C:\code\aegis_artifacts\as_pilot\aa35cb0ec459\ACCEPTANCE_REPORT.json
+report SHA-256: 751CE49A95820F6FE01567D07160F9DD8BB82010F424FC597E1FFE24D2730A88
 TraceRelay journal evidence: VALID_COMPLETE
 application evidence: VALID_COMPLETE
+registration operation IDs: 7, distinct
 planning rounds: 1 (approved)
 planning review: PASS, score 100, error count 0
 approved plan SHA-256 equals reviewed plan SHA-256
@@ -276,8 +286,8 @@ Hard-crash recovery acceptance:
 ```text
 verdict: PASS
 node: F
-report: C:\code\aegis_artifacts\as_crash_recovery\a8e2302cc5f5\CRASH_RECOVERY_REPORT.json
-report SHA-256: BC3875125A2D170AFE36E0B03B7D90ADDFA7B8F485C34CE76199CADE9C469E54
+report: C:\code\aegis_artifacts\as_crash_recovery\f6cdab85f4e6\CRASH_RECOVERY_REPORT.json
+report SHA-256: 5B4C4090355165A263D8B6D17CE7A1ABC7B78391058887AC087A71B265C453C4
 forced coordinator exit code: 91
 Codex turn IDs created: 1
 TraceRelay sessions: 2, distinct
@@ -288,12 +298,26 @@ old session sealed before known-turn recovery: yes
 all raw and application evidence: VALID_COMPLETE
 ```
 
+Registration-checkpoint crash acceptance:
+
+```text
+verdict: PASS
+report: C:\code\aegis_artifacts\as_registration_crash\88c3e2d60773\REGISTRATION_CRASH_REPORT.json
+report SHA-256: 19F5C5DAF65346BB3CFC48EBE37CCA7D5E3EFC0B0BFBA0C5DD6645FE276846FF
+forced coordinator exit code: 91
+register response before Popen crash: recovered exact session
+Popen before PID/FILETIME checkpoint crash: recovered exact session
+recovery started TraceRelay or registered a new session: no
+recovered application evidence: INVALID
+persisted PID/FILETIME without a verified identity: null/null
+```
+
 TraceRelay service-failure acceptance:
 
 ```text
 verdict: PASS
-report: C:\ar\ef0812f\RUNTIME_CODEX_ACCEPTANCE_20260812T104005Z.json
-report SHA-256: 06BE6A72A41B6301E5D43C8DD4C7CA6ED9375E116B86FEA9623C1AA789238407
+report: C:\ar\v5b005\RUNTIME_CODEX_ACCEPTANCE_20260812T115817Z.json
+report SHA-256: FC4DCC88D0A4C069D24BF4B5BBDE2E9B496799176DC0AAFB770C87AEA3ED437B
 normal F evidence: VALID_COMPLETE, bidirectional bytes > 0
 fault F evidence: VALID_INCOMPLETE
 fault RUN_STATE evidence: UNVERIFIED/INVALID

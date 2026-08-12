@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -32,6 +33,7 @@ PROXY_ENVIRONMENT_NAMES = (
     "all_proxy",
 )
 BYPASS_PROXY_ENVIRONMENT_NAMES = ("NO_PROXY", "no_proxy")
+REGISTRATION_OPERATION_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 
 
 class TraceRelayError(RuntimeError):
@@ -64,6 +66,7 @@ class TraceRelayRegistration:
     proxy_port: int
     upstream_port: int
     session_path: Path
+    operation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,6 +309,85 @@ class TraceRelayClient:
         self.last_verification = dict(verification)
         return dict(verification)
 
+    def resolve_registration_operation(
+        self, operation_id: str
+    ) -> TraceRelayRegistration | None:
+        """Resolve a registration result from durable TraceRelay metadata."""
+        expected_operation_id = _validate_registration_operation_id(operation_id)
+        payload = self._invoke(
+            ["resolve-registration", "--operation-id", expected_operation_id]
+        )
+        if payload.get("command") != "resolve-registration":
+            raise TraceRelayError("TraceRelay registration resolution identity mismatch")
+        found = payload.get("found")
+        if found is False:
+            return None
+        if found is not True:
+            raise TraceRelayError("TraceRelay registration resolution has no verdict")
+        returned_operation_id = _string(payload, "operation_id")
+        if returned_operation_id != expected_operation_id:
+            raise TraceRelayError("TraceRelay resolved a different registration operation")
+        proxy_host = _string(payload, "proxy_host")
+        upstream_host = _string(payload, "upstream_host")
+        if proxy_host != CONTROL_HOST or upstream_host != CONTROL_HOST:
+            raise TraceRelayError("TraceRelay resolved a non-loopback endpoint")
+        return TraceRelayRegistration(
+            session_id=_string(payload, "session_id"),
+            proxy_host=proxy_host,
+            proxy_port=_port(payload, "proxy_port"),
+            upstream_port=_port(payload, "upstream_port"),
+            session_path=Path(_string(payload, "session_path")).resolve(),
+            operation_id=returned_operation_id,
+        )
+
+    def recover_uncheckpointed_registration(
+        self, registration: TraceRelayRegistration
+    ) -> dict[str, object]:
+        """Seal and verify a resolved session without trusting a child PID."""
+        if registration.operation_id is None:
+            raise ValueError("registration operation identity is required")
+        _validate_registration_operation_id(registration.operation_id)
+        self._alarm_baseline = self._alarm_names()
+        try:
+            payload = self._status_requester()
+            self._validate_identity(payload, "status", pin_pids=True)
+            self._assert_no_new_alarms()
+            state = payload.get("state")
+            if state in ACTIVE_STATES:
+                self._require_registration_status(payload, registration)
+                verification = self._finish(registration)
+            elif state == "IDLE":
+                if payload.get("last_session_id") == registration.session_id:
+                    self._require_registration_status(payload, registration)
+                verification = self._verify_resolved_registration(registration)
+            else:
+                raise TraceRelayError(
+                    f"TraceRelay cannot recover registration from state={state}"
+                )
+        except (OSError, TimeoutError, TraceRelayError):
+            verification = self._verify_resolved_registration(registration)
+        self.last_registration = registration
+        self.last_verification = dict(verification)
+        return dict(verification)
+
+    def _verify_resolved_registration(
+        self, registration: TraceRelayRegistration
+    ) -> dict[str, object]:
+        verification = self._invoke(
+            ["verify", str(registration.session_path)],
+            require_ok=False,
+            allow_nonzero=True,
+        )
+        if verification.get("status") not in {
+            "VALID_COMPLETE",
+            "VALID_INCOMPLETE",
+            "INVALID",
+        }:
+            raise TraceRelayError(
+                "resolved TraceRelay registration did not produce valid evidence"
+            )
+        return verification
+
     def verify_session(self, session_path: str | Path) -> dict[str, object]:
         """Re-read a sealed journal instead of trusting cached RUN_STATE fields."""
         if self._service_pid is None or self._supervisor_pid is None:
@@ -411,6 +493,7 @@ class TraceRelayClient:
         command: Sequence[str],
         *,
         upstream_port: int,
+        registration_operation_id: str | None = None,
         base_environment: Mapping[str, str] | None = None,
         **popen_options: object,
     ) -> ManagedEvidenceProcess:
@@ -429,7 +512,9 @@ class TraceRelayClient:
         self.last_registration = None
         self.last_verification = None
         self._require_idle()
-        registration = self._register(upstream_port)
+        registration = self._register(
+            upstream_port, operation_id=registration_operation_id
+        )
         self.last_registration = registration
         environment_source = (
             base_environment
@@ -483,12 +568,18 @@ class TraceRelayClient:
                 f"TraceRelay must be IDLE before registration: state={payload['state']}"
             )
 
-    def _register(self, upstream_port: int) -> TraceRelayRegistration:
+    def _register(
+        self, upstream_port: int, *, operation_id: str | None = None
+    ) -> TraceRelayRegistration:
         if isinstance(upstream_port, bool) or not isinstance(upstream_port, int):
             raise ValueError("upstream_port must be an integer")
         if not 1 <= upstream_port <= 65_535:
             raise ValueError("upstream_port must be between 1 and 65535")
-        payload = self._invoke(["register", "--upstream-port", str(upstream_port)])
+        arguments = ["register", "--upstream-port", str(upstream_port)]
+        if operation_id is not None:
+            operation_id = _validate_registration_operation_id(operation_id)
+            arguments.extend(["--operation-id", operation_id])
+        payload = self._invoke(arguments)
         self._validate_identity(payload, "register")
         if payload["state"] != "WAITING":
             raise TraceRelayError("TraceRelay register did not enter WAITING")
@@ -503,12 +594,20 @@ class TraceRelayClient:
             raise TraceRelayError("TraceRelay returned a non-loopback endpoint")
         if returned_upstream != upstream_port:
             raise TraceRelayError("TraceRelay returned a different upstream port")
+        returned_operation_id = payload.get("operation_id")
+        if operation_id is not None and returned_operation_id != operation_id:
+            raise TraceRelayError("TraceRelay returned a different registration operation")
+        if returned_operation_id is not None:
+            returned_operation_id = _validate_registration_operation_id(
+                returned_operation_id
+            )
         return TraceRelayRegistration(
             session_id=session_id,
             proxy_host=proxy_host,
             proxy_port=proxy_port,
             upstream_port=returned_upstream,
             session_path=Path(_string(payload, "session_path")).resolve(),
+            operation_id=returned_operation_id,
         )
 
     def _assert_healthy(self, registration: TraceRelayRegistration) -> bool:
@@ -619,7 +718,11 @@ class TraceRelayClient:
             raise TraceRelayError("TraceRelay process identity changed")
 
     def _invoke(
-        self, arguments: list[str], *, require_ok: bool = True
+        self,
+        arguments: list[str],
+        *,
+        require_ok: bool = True,
+        allow_nonzero: bool = False,
     ) -> dict[str, object]:
         command = [self.command, *arguments]
         try:
@@ -638,7 +741,7 @@ class TraceRelayClient:
             raise TraceRelayError("TraceRelay CLI did not return valid JSON") from error
         if not isinstance(payload, dict):
             raise TraceRelayError("TraceRelay CLI response must be a JSON object")
-        if completed.returncode != 0:
+        if completed.returncode != 0 and not allow_nonzero:
             raise TraceRelayError(
                 f"TraceRelay {arguments[0]} failed: {payload.get('error', raw)}"
             )
@@ -973,6 +1076,17 @@ def _default_alarm_directory() -> Path:
     if local_app_data:
         return Path(local_app_data).resolve() / "TraceRelay" / "alarms"
     return Path.home() / "AppData" / "Local" / "TraceRelay" / "alarms"
+
+
+def _validate_registration_operation_id(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or REGISTRATION_OPERATION_ID_PATTERN.fullmatch(value) is None
+    ):
+        raise ValueError(
+            "registration operation ID must be 32 lowercase hexadecimal characters"
+        )
+    return value
 
 
 def _string(payload: Mapping[str, object], field: str) -> str:
