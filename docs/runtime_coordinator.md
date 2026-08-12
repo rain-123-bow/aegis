@@ -302,14 +302,15 @@ Registration-checkpoint crash acceptance:
 
 ```text
 verdict: PASS
-report: C:\code\aegis_artifacts\as_registration_crash\88c3e2d60773\REGISTRATION_CRASH_REPORT.json
-report SHA-256: 19F5C5DAF65346BB3CFC48EBE37CCA7D5E3EFC0B0BFBA0C5DD6645FE276846FF
+report: C:\ar\b7r\as_registration_crash\9920714f115c\REGISTRATION_CRASH_REPORT.json
+report SHA-256: 61540FD2644DB707CF0567FE5DAFAC5E52B81B4D47750DB0CF0EFADAF089BFBD
 forced coordinator exit code: 91
 register response before Popen crash: recovered exact session
 Popen before PID/FILETIME checkpoint crash: recovered exact session
 recovery started TraceRelay or registered a new session: no
 recovered application evidence: INVALID
 persisted PID/FILETIME without a verified identity: null/null
+missing, duplicate, failed, or invalid cases publish PASS: no
 ```
 
 TraceRelay service-failure acceptance:

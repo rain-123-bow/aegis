@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import unittest
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -68,6 +69,11 @@ TRACERELAY_SOURCE_BINDINGS = (
     "submodules/TraceRelay/src/tracerelay/verify.py",
 )
 
+REQUIRED_REGISTRATION_CRASH_MODES = (
+    "after_register_before_popen",
+    "after_popen_before_identity_checkpoint",
+)
+
 
 def _source_sha256(*relative_paths: str) -> dict[str, str]:
     return {
@@ -76,6 +82,129 @@ def _source_sha256(*relative_paths: str) -> dict[str, str]:
         ).hexdigest()
         for relative_path in relative_paths
     }
+
+
+def _collect_registration_crash_cases(
+    run_case: Callable[[str], dict[str, object]],
+) -> list[dict[str, object]]:
+    """Run both required cases fail-fast; a failed case prevents publication."""
+    return [run_case(crash_mode) for crash_mode in REQUIRED_REGISTRATION_CRASH_MODES]
+
+
+def _validate_registration_crash_cases(
+    cases: list[dict[str, object]],
+) -> None:
+    if len(cases) != len(REQUIRED_REGISTRATION_CRASH_MODES):
+        raise AssertionError("registration crash report does not contain exactly two cases")
+    modes = [case.get("crash_mode") for case in cases]
+    if set(modes) != set(REQUIRED_REGISTRATION_CRASH_MODES) or len(set(modes)) != 2:
+        raise AssertionError("registration crash report has an incomplete mode set")
+
+    operation_ids: set[str] = set()
+    session_ids: set[str] = set()
+    for case in cases:
+        crash_mode = case["crash_mode"]
+        operation_id = case.get("operation_id")
+        session_id = case.get("session_id")
+        session_path = case.get("session_path")
+        if case.get("worker_exit_code") != 91:
+            raise AssertionError(f"registration crash worker did not exit 91: {crash_mode}")
+        if (
+            not isinstance(operation_id, str)
+            or len(operation_id) != 32
+            or any(character not in "0123456789abcdef" for character in operation_id)
+            or operation_id in operation_ids
+        ):
+            raise AssertionError("registration crash operation identity is invalid")
+        operation_ids.add(operation_id)
+        if (
+            not isinstance(session_id, str)
+            or not session_id
+            or session_id in session_ids
+            or not isinstance(session_path, str)
+            or not Path(session_path).is_absolute()
+            or Path(session_path).name != session_id
+        ):
+            raise AssertionError("registration crash session identity is invalid")
+        session_ids.add(session_id)
+
+        marker = case.get("marker")
+        expected_popen = crash_mode == "after_popen_before_identity_checkpoint"
+        if (
+            not isinstance(marker, dict)
+            or marker.get("crash_mode") != crash_mode
+            or marker.get("popen_started") is not expected_popen
+        ):
+            raise AssertionError("registration crash marker does not match its mode")
+        observed_process_pid = marker.get("observed_process_pid")
+        if expected_popen:
+            if (
+                isinstance(observed_process_pid, bool)
+                or not isinstance(observed_process_pid, int)
+                or observed_process_pid <= 0
+            ):
+                raise AssertionError("Popen crash marker has no observed process PID")
+        elif observed_process_pid is not None:
+            raise AssertionError("pre-Popen crash marker contains a process PID")
+
+        expected_commands = [
+            ["resolve-registration", "--operation-id", operation_id],
+            ["close"],
+            ["verify", session_path],
+        ]
+        if case.get("recovery_cli_commands") != expected_commands:
+            raise AssertionError("registration crash recovery command sequence is invalid")
+        verification = case.get("verification")
+        if not isinstance(verification, dict) or verification.get("status") != (
+            "VALID_COMPLETE"
+        ):
+            raise AssertionError("registration crash journal is not VALID_COMPLETE")
+        if case.get("application_verification_status") != "INVALID":
+            raise AssertionError("registration crash application verdict is not INVALID")
+        if (
+            case.get("persisted_process_pid") is not None
+            or case.get("persisted_process_creation_time_100ns") is not None
+        ):
+            raise AssertionError("registration crash report persisted an unverified identity")
+
+
+def _publish_registration_crash_report(
+    report_path: Path,
+    *,
+    cases: list[dict[str, object]],
+    tracerelay_command: Path,
+) -> dict[str, object]:
+    _validate_registration_crash_cases(cases)
+    command_path = tracerelay_command.resolve(strict=True)
+    if not command_path.is_file():
+        raise AssertionError("TraceRelay command is not a file")
+    report: dict[str, object] = {
+        "schema": "aegis.registration_crash_acceptance.v1",
+        "verdict": "PASS",
+        "created_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "cases": cases,
+        "tracerelay_command": str(command_path),
+        "tracerelay_command_sha256": hashlib.sha256(
+            command_path.read_bytes()
+        ).hexdigest(),
+        "source_sha256": _source_sha256(
+            "src/tracerelay_client.py",
+            "src/aegis_runtime.py",
+            "test/test_traced_app_server_real_integration.py",
+            *TRACERELAY_SOURCE_BINDINGS,
+        ),
+    }
+    report_path = report_path.resolve()
+    temporary_path = report_path.with_name(f".{report_path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary_path, report_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return report
 
 
 def _run_execution_crash_worker(config_path: Path) -> None:
@@ -898,13 +1027,8 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             run_id=bytes(range(16, 32)),
         )
         upstream_port = int(os.environ.get("TRACERELAY_UPSTREAM_PORT", "7899"))
-        cases: list[dict[str, object]] = []
-
-        for crash_mode in (
-            "after_register_before_popen",
-            "after_popen_before_identity_checkpoint",
-        ):
-            with self.subTest(crash_mode=crash_mode):
+        def run_case(crash_mode: str) -> dict[str, object]:
+            if crash_mode in REQUIRED_REGISTRATION_CRASH_MODES:
                 run_id = f"registration-{crash_mode}-{short_id}"
                 artifact_path = root / crash_mode / "artifacts"
                 artifact_path.mkdir(parents=True, exist_ok=True)
@@ -1077,47 +1201,32 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
 
                     _returncode, recovered_status = run_cli("status")
                     self.assertEqual(recovered_status["state"], "IDLE")
-                    cases.append(
-                        {
-                            "crash_mode": crash_mode,
-                            "worker_exit_code": crashed.returncode,
-                            "operation_id": intent["operation_id"],
-                            "session_id": registration.session_id,
-                            "session_path": str(registration.session_path),
-                            "marker": marker,
-                            "recovery_cli_commands": recovery_commands,
-                            "verification": verification,
-                            "application_verification_status": "INVALID",
-                            "persisted_process_pid": evidence["process_pid"],
-                            "persisted_process_creation_time_100ns": evidence[
-                                "process_creation_time_100ns"
-                            ],
-                        }
-                    )
+                    return {
+                        "crash_mode": crash_mode,
+                        "worker_exit_code": crashed.returncode,
+                        "operation_id": intent["operation_id"],
+                        "session_id": registration.session_id,
+                        "session_path": str(registration.session_path),
+                        "marker": marker,
+                        "recovery_cli_commands": recovery_commands,
+                        "verification": verification,
+                        "application_verification_status": "INVALID",
+                        "persisted_process_pid": evidence["process_pid"],
+                        "persisted_process_creation_time_100ns": evidence[
+                            "process_creation_time_100ns"
+                        ],
+                    }
                 finally:
                     run_cli("stop")
                     wait_for_not_running()
+            raise AssertionError(f"unsupported registration crash mode: {crash_mode}")
 
-        report = {
-            "schema": "aegis.registration_crash_acceptance.v1",
-            "verdict": "PASS",
-            "created_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            "cases": cases,
-            "tracerelay_command": tracerelay_command,
-            "tracerelay_command_sha256": hashlib.sha256(
-                Path(tracerelay_command).read_bytes()
-            ).hexdigest(),
-            "source_sha256": _source_sha256(
-                "src/tracerelay_client.py",
-                "src/aegis_runtime.py",
-                "test/test_traced_app_server_real_integration.py",
-                *TRACERELAY_SOURCE_BINDINGS,
-            ),
-        }
+        cases = _collect_registration_crash_cases(run_case)
         report_path = root / "REGISTRATION_CRASH_REPORT.json"
-        report_path.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
+        _publish_registration_crash_report(
+            report_path,
+            cases=cases,
+            tracerelay_command=Path(tracerelay_command),
         )
         print(f"REGISTRATION_CRASH_REPORT={report_path}")
 
