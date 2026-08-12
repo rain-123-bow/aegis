@@ -260,8 +260,8 @@ verdict: PASS
 codex-cli: 0.145.0
 model: gpt-5.6-sol
 reasoning effort: high
-report: C:\code\aegis_artifacts\as_pilot\aa35cb0ec459\ACCEPTANCE_REPORT.json
-report SHA-256: 751CE49A95820F6FE01567D07160F9DD8BB82010F424FC597E1FFE24D2730A88
+report: C:\ar\b7full\as_pilot\90ae0dd4e1d2\ACCEPTANCE_REPORT.json
+report SHA-256: 4D45D3311EC8956B86B7D7CEDC0D718E4DFFEB9D9AA4D26174CAD363B85DBD7C
 TraceRelay journal evidence: VALID_COMPLETE
 application evidence: VALID_COMPLETE
 registration operation IDs: 7, distinct
@@ -286,8 +286,8 @@ Hard-crash recovery acceptance:
 ```text
 verdict: PASS
 node: F
-report: C:\code\aegis_artifacts\as_crash_recovery\f6cdab85f4e6\CRASH_RECOVERY_REPORT.json
-report SHA-256: 5B4C4090355165A263D8B6D17CE7A1ABC7B78391058887AC087A71B265C453C4
+report: C:\ar\b7known\as_crash_recovery\b4d4b0d369b0\CRASH_RECOVERY_REPORT.json
+report SHA-256: 172BF275A69180E16F425422ECBC63125C2DA6E32C4B5A518A0DEA3A53BC1651
 forced coordinator exit code: 91
 Codex turn IDs created: 1
 TraceRelay sessions: 2, distinct
