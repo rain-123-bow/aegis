@@ -49,6 +49,57 @@ description: Use when acting as Aegis MASTER_REQUIREMENT_DESIGNER to transform a
 
 如果某个信息会影响需求边界，但没有被写入最终需求文档或 reasoning ledger，则必须显式补入文档或向用户确认。
 
+## 代码混淆与语义诱饵预草案门
+
+每个新需求任务都必须在写入 `REQUIREMENT_DESIGN_DRAFT.md` 前主动询问用户：
+
+```text
+是否启用代码混淆与语义诱饵？默认关闭。
+```
+
+未收到用户对此问题的答复前，不得写入需求草案。
+
+答复处理规则：
+
+1. 只有无歧义的明确肯定答复才能设置为 `true`。
+2. 明确否定设置为 `false`，来源记录为 `developer_explicit_decline`。
+3. 含糊答复、无关答复均设置为 `false`，来源记录为 `default_disabled`。
+4. 不得从安全目标、既往任务、实现偏好、项目配置或 reasoning ledger 推断启用。
+5. 不得继承其他任务的启用状态。
+6. 启用状态只能影响当前任务；不能修改其他任务或项目的默认值。
+
+答复后、需求草案前，必须在 `artifact_path` 写入
+`SEMANTIC_DECOY_DECISION.json`：
+
+写入前必须先按下节规则确认或创建 `artifact_path`。
+
+```json
+{
+  "schema": "aegis.semantic_decoy_decision.v1",
+  "task_id": "stable task identifier",
+  "phase": "pre_requirement_draft",
+  "enabled": false,
+  "decision_source": "developer_explicit_confirmation | developer_explicit_decline | default_disabled",
+  "response_summary": "developer answer or equivalent concise summary",
+  "asked_at_utc": "UTC timestamp",
+  "answered_at_utc": "UTC timestamp"
+}
+```
+
+`enabled=true` 时，`decision_source` 只能是
+`developer_explicit_confirmation`。其余来源不得开启机制。
+
+需求文档必须包含以下稳定章节：
+
+```text
+## 17. Code Obfuscation and Semantic Decoy Decision
+```
+
+该章节必须记录：启用值、决策文件路径、决策文件 SHA-256、答复来源和适用任务。
+
+启用时还必须在需求阶段明确：保护对象、允许混淆范围、可用现实约束、代码体积与运行开销上限、
+语义诱饵验收边界。关闭时必须把代码混淆、误导注释、误导命名和语义诱饵写入 `Out of Scope`。
+
 ## artifact_path 规则
 
 你必须确认 `artifact_path` 存在。
@@ -72,6 +123,7 @@ REQUIREMENT_REVIEW_REPORT.md
 REQUIREMENT_DESIGN_FINAL.md
 USER_CONFIRMATION.md
 REQUIREMENT_DESIGN_HISTORY.md
+SEMANTIC_DECOY_DECISION.json
 ```
 
 未到对应阶段的文件可以暂不创建。
@@ -168,6 +220,9 @@ reasoning ledger 用于提供项目级定向知识，而不是替代用户需求
 ## reviewer 审查目标
 
 reviewer 的目标是发现需求文档中的歧义、缺口、冲突、不可验证项和上下文依赖。
+
+reviewer 还必须检查语义诱饵决策是否发生在草案前、是否默认关闭、是否只有明确肯定才能启用、
+是否已写入需求文档。缺失决策文件、决策字段不完整、启用来源不合法均为阻断问题。
 
 reviewer 不负责实现设计。
 
@@ -292,8 +347,9 @@ REQUIREMENT_DESIGN_FINAL.md 将作为后续设计、实现、测试、审核的�
 ## 14. Failure Criteria
 ## 15. Constraints and Prohibitions
 ## 16. User Confirmed Decisions
-## 17. Open Questions
-## 18. Reviewer Status
+## 17. Code Obfuscation and Semantic Decoy Decision
+## 18. Open Questions
+## 19. Reviewer Status
 ```
 
 如果 `Open Questions` 不为空，不得生成最终版。
@@ -360,6 +416,7 @@ REQUIREMENT_DESIGN_FINAL.md 将作为后续设计、实现、测试、审核的�
 3. Master 已确认文档不依赖聊天上下文。
 4. 用户已明确确认最终版。
 5. reasoning ledger 冲突已解决或记录为用户确认的取舍。
+6. `SEMANTIC_DECOY_DECISION.json` 存在、格式有效，并且其决定已写入最终文档。
 
 ## 最终文档质量标准
 
@@ -390,6 +447,8 @@ REQUIREMENT_DESIGN_FINAL.md 将作为后续设计、实现、测试、审核的�
 8. 为了降低实现难度改写用户目标。
 9. 把 reviewer 反馈选择性摘录。
 10. 在需求设计阶段进入实现设计或测试设计。
+11. 先写需求草案，再补问是否启用代码混淆与语义诱饵。
+12. 在没有明确肯定答复时启用代码混淆或语义诱饵。
 
 ## 完成条件
 
@@ -403,6 +462,7 @@ REQUIREMENT_DESIGN_HISTORY.md 已写入 artifact_path。
 最近一次 REQUIREMENT_REVIEW_REPORT.md 的 verdict 为 PASS。
 最终文档不依赖聊天上下文。
 用户已确认最终文档。
+SEMANTIC_DECOY_DECISION.json 已在需求草案前写入并与最终文档一致。
 ```
 
 如果任一条件不满足，本 skill 未完成，只能继续澄清、修正、审查或等待用户确认。

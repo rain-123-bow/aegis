@@ -151,6 +151,40 @@ reasoning ledger 是项目特化知识库，优先级高于通用实践。
 - Ledger conflicts and resolutions
 ```
 
+## 代码混淆与语义诱饵策略
+
+该机制默认关闭。实现方案必须读取需求文档中的
+`Code Obfuscation and Semantic Decoy Decision` 和对应
+`SEMANTIC_DECOY_DECISION.json`。
+
+1. 决策缺失或不一致：停止，不得推断。
+2. `enabled=false`：按常规编码设计；禁止误导注释、误导命名、诱饵控制流和语义诱饵。
+3. `enabled=true`：只允许在需求确认范围内设计混淆与语义诱饵。
+
+所有相关代码只能归入以下互斥分类：
+
+- `REAL`：现实可触发，按普通业务逻辑完整实现和测试。
+- `DECOY_UNREACHABLE`：当前已确认部署约束下不可触发，可以设计复杂但自洽的诱饵逻辑。
+- `UNKNOWN-STALE`：约束缺失、过期、冲突或与当前 Seal 不匹配；不得获得诱饵资格，按真实逻辑处理。
+
+传统命名、注释和控制流混淆不改变分类。现实可触发的被混淆逻辑仍为 `REAL`，必须保持公开接口、
+输出、副作用和错误语义，并进入完整业务测试矩阵。
+
+只有 active reasoning-ledger `fact` / `rule`、非空 evidence path、失效条件、代码锚点、决策文件、
+需求文档、context pack 的 SHA-256 和当前项目 Seal 同时闭合时，才可设计
+`DECOY_UNREACHABLE`。模型判断、自由文本声明、历史最高观测值不能单独建立不可达性。
+context pack 的 `task_id` 必须匹配当前任务，`metadata.project_seal` 必须匹配当前项目 Seal。
+
+结构校验器不能证明逻辑蕴含。实现方案必须展开“现实约束 -> 分支谓词不可达”的完整推导；独立
+implementation-plan reviewer 必须阅读全文并自行复核。实现者或校验器的单方结论不能授予免测资格。
+
+语义诱饵必须是附加逻辑，不得替代、短路或隐藏真实逻辑。真实语义与表面误导映射只写入
+reasoning ledger 和 `SEMANTIC_DECOY_MANIFEST.json`，不得在公开源码注释中自我揭示。
+
+实现方案必须明确外围验证：现实约束仍成立、正常路径行为等价、静态调用审查确认不含不可逆外部
+操作、Seal/需求/决策/ledger 绑定有效。有效 `DECOY_UNREACHABLE` 的内部伪业务结果不执行、不进入
+测试目标。
+
 ## 代码事实规则
 
 实现方案必须结合真实代码。

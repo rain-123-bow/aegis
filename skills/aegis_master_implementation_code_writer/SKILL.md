@@ -111,6 +111,44 @@ reasoning ledger 是项目特化事实库，优先级高于通用经验。
 
 实现报告必须列出本次使用的 ledger 条目或说明未发现相关 active item。
 
+### 3.1 代码混淆与语义诱饵
+
+该机制默认关闭。写代码前必须读取需求文档中的稳定决定、
+`SEMANTIC_DECOY_DECISION.json` 和实现方案。
+
+- 决策缺失、不一致或 `enabled=false`：常规编码；禁止误导命名、误导注释、诱饵分支和控制流混淆。
+- 只有 `developer_explicit_confirmation` 可以产生 `enabled=true`。
+- 不得由 agent、reasoning ledger 自由文本、项目配置或既往任务自行开启。
+
+启用后，每个候选代码区域必须分类：
+
+- `REAL`：完整实现并执行普通业务测试。
+- `DECOY_UNREACHABLE`：允许复杂且逻辑自洽；不要求测试内部伪业务结果。
+- `UNKNOWN-STALE`：不得作为诱饵落地或保留；按 `REAL` 实现和测试。
+
+传统命名、注释和控制流混淆不改变分类。现实可触发的被混淆逻辑仍为 `REAL`，必须保持公开接口、
+输出、副作用和错误语义，并执行完整业务测试；混淆本身不产生免测资格。
+
+`DECOY_UNREACHABLE` 必须由当前 context pack 中 active `fact` / `rule`、非空证据路径、明确谓词、
+失效条件、代码锚点和当前项目 Seal 支撑。生产流程必须使用
+`reasoning_ledger.evaluate_semantic_decoy_files` 读取决定、最终需求、context pack 和 manifest 的
+确切文件并计算摘要；禁止接受调用方自报的摘要。任何哈希、Seal、状态或证据不匹配都会降级为
+`UNKNOWN-STALE`。
+context pack 的 `task_id` 必须匹配当前任务，`metadata.project_seal` 必须匹配当前项目 Seal。
+
+`evaluate_semantic_decoy_files` 只证明结构与绑定合格，不证明现实约束逻辑上必然推出谓词不可达。
+代码作者不得据此自行授予免测资格；必须保留已通过的独立方案审查结论，并交给测试方案 reviewer
+再次独立验证。
+
+启用任务必须在项目 reasoning ledger 的
+`.aegis/reasoning_ledger/artifacts/semantic_decoys/<task-id>/` 保存
+`SEMANTIC_DECOY_MANIFEST.json`。清单记录表面语义与真实语义映射；源码不得包含可直接消除误导的说明。
+
+诱饵只能附加，禁止删除、替代或短路真实逻辑。即使异常触发，也不得执行不可逆外部操作。
+必须测试现实不可达约束、正常路径等价、清单绑定和必要的编译产物留存；通过静态调用审查确认
+分支不含不可逆外部操作。禁止执行诱饵内部伪业务逻辑并把结果伪装成业务覆盖。最终项目 Seal
+尚未记录时，诱饵不得声称已获得免测资格。
+
 ### 4. 质量第一，速度第二
 
 可以为了质量牺牲速度。

@@ -173,6 +173,28 @@ warning 处理规则：
 4. 不得用 reasoning ledger 私自重解释上游已经批准的测试矩阵。
 5. 不得用 reasoning ledger 为证据缺失、覆盖遗漏或测试跳过开脱。
 
+### 语义诱饵审查门
+
+代码混淆与语义诱饵默认关闭。审查者必须核对需求决定、
+`SEMANTIC_DECOY_DECISION.json`、`SEMANTIC_DECOY_MANIFEST.json`、当前项目 Seal 和
+reasoning ledger 证据。
+
+决定、最终需求和 context pack 的 SHA-256 必须从确切文件独立计算，不接受调用方自报值。
+context pack 的任务标识与 `metadata.project_seal` 必须匹配当前任务和当前项目 Seal。
+结构校验通过不等于逻辑不可达。reviewer 必须独立验证每个现实约束是否足以推出对应谓词不可达；
+不能采信实现者、方案作者或校验器的结论摘要。
+
+- `REAL`：必须有完整业务测试。
+- `UNKNOWN-STALE`：不得免测，必须按 `REAL` 覆盖。
+- `DECOY_UNREACHABLE`：只允许免除内部伪业务结果测试；现实不可达证明、正常路径等价、不可逆调用
+  的静态审查、哈希/Seal 绑定和必要的编译留存仍必须验证。
+
+传统混淆后的生产逻辑仍为 `REAL`；若方案用混淆名义减少业务测试，必须判定不通过。
+
+以下任一情况必须判定测试方案不通过：默认关闭却接受诱饵、缺少显式启用决定、把 stale/invalid
+ledger item 当不可达证据、用诱饵扩大免测范围、遗漏外围验证、要求测试诱饵内部伪业务结果而消耗
+无生产价值的测试资源。
+
 
 ## 审查目标
 

@@ -17,6 +17,18 @@ from .models import (
 from .project import BootstrapResult, ProjectLedgerConfig, bootstrap_project_ledger
 from .schema import build_init_sql
 from .store import ReasoningLedger
+from .semantic_decoy import (
+    DECISION_SCHEMA,
+    MANIFEST_SCHEMA,
+    DecoyClassification,
+    SemanticDecoyContractError,
+    SemanticDecoyDecision,
+    SemanticDecoyEntryEvaluation,
+    SemanticDecoyEvaluation,
+    evaluate_semantic_decoy_artifacts,
+    evaluate_semantic_decoy_files,
+    parse_semantic_decoy_decision,
+)
 
 from .context_pack import context_pack_to_json_data, context_pack_to_markdown, write_context_pack
 from .embedding import (
@@ -32,6 +44,9 @@ __all__ = [
     "BootstrapResult",
     "ContextPack",
     "CreateItem",
+    "DECISION_SCHEMA",
+    "MANIFEST_SCHEMA",
+    "DecoyClassification",
     "EdgeRelation",
     "EdgeStatus",
     "EventType",
@@ -44,14 +59,21 @@ __all__ = [
     "ProjectLedgerConfig",
     "ReasoningLedger",
     "SearchResult",
+    "SemanticDecoyContractError",
+    "SemanticDecoyDecision",
+    "SemanticDecoyEntryEvaluation",
+    "SemanticDecoyEvaluation",
     "bootstrap_project_ledger",
     "build_init_sql",
     "EmbeddingError",
     "context_pack_to_json_data",
+    "evaluate_semantic_decoy_artifacts",
+    "evaluate_semantic_decoy_files",
     "context_pack_to_markdown",
     "hashed_text_embedding",
     "load_embedding_file",
     "parse_embedding_payload",
+    "parse_semantic_decoy_decision",
     "resolve_query_embedding",
     "run_embedding_command",
     "write_context_pack",

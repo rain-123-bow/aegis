@@ -75,6 +75,12 @@ Downstream agents must not depend on the Project Manager's private conversation 
 
 The Project Manager and Requirement Designer may interact multiple times before the workflow can continue.
 
+Before any requirement draft is written, the Project Manager asks whether code obfuscation and semantic
+decoys are enabled for this task. This is an explicit opt-in gate (default off). Only an unambiguous affirmative
+developer answer enables it. A negative, ambiguous, or unrelated answer leaves it disabled. The decision and
+its evidence artifact are part of the requirement document; configuration, ledger prose, and earlier tasks
+cannot enable it implicitly.
+
 The loop exists to produce an unambiguous requirement document that can guide later agents without hidden context. If the Requirement Designer finds missing objectives, unclear scope, unsupported technical path constraints, ambiguous success criteria, or insufficient evidence, it must return an artifact to the Project Manager. The Project Manager then asks the developer for clarification or confirmation.
 
 The workflow may continue only after:
@@ -83,6 +89,11 @@ The workflow may continue only after:
 - unsupported preferences are separated from hard constraints;
 - technical path locks have sufficient evidence or are downgraded;
 - the developer confirms the requirement document.
+
+If semantic decoys are enabled, later agents use only the three classifications `REAL`,
+`DECOY_UNREACHABLE`, and `UNKNOWN-STALE`. Current Seal-bound active ledger evidence establishes only
+structural eligibility; implementation-plan and test-plan reviewers independently verify logical
+unreachability. Every stale, unproven, or reviewer-rejected candidate loses its internal-test exemption.
 
 ### Review Thresholds
 
