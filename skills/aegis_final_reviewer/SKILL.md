@@ -188,6 +188,10 @@ context pack 的任务标识与 `metadata.project_seal` 必须匹配当前任务
 最终审核必须确认 implementation-plan reviewer 与 test-plan reviewer 均独立验证了“现实约束 ->
 谓词不可达”的完整推导；结构校验通过或实现者声明不能替代这两次审查。
 
+最终审核必须用生产入口 `evaluate_semantic_decoy_files`，传入项目根、final requirement、context、
+final implementation plan、approved test plan 和两份 reviewer 回执。该入口必须从权威 Seal store
+验证当前源码，并独立计算全部文件/evidence SHA；不得接受调用方自报当前 Seal。
+
 - `REAL` 和 `UNKNOWN-STALE` 必须按普通业务逻辑完整测试。
 - `DECOY_UNREACHABLE` 可以没有内部伪业务结果测试，但必须存在现实不可达、正常路径等价、
   不可逆调用的静态审查和哈希/Seal 绑定证据。

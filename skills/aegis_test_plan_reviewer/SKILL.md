@@ -184,6 +184,23 @@ context pack 的任务标识与 `metadata.project_seal` 必须匹配当前任务
 结构校验通过不等于逻辑不可达。reviewer 必须独立验证每个现实约束是否足以推出对应谓词不可达；
 不能采信实现者、方案作者或校验器的结论摘要。
 
+reviewer PASS 且 `APPROVED_TEST_PLAN.md` 已按原文生成后，必须写入
+`SEMANTIC_DECOY_TEST_REVIEW.json`。schema 为 `aegis.semantic_decoy_review_receipt.v1`，必须绑定：
+
+- `stage=test_plan`、`reviewer_role=test_plan_reviewer`、本 reviewer 的稳定 identity；
+- `APPROVED_TEST_PLAN.md` exact-byte SHA-256；
+- task、与 manifest 完全一致的 frozen time；
+- manifest、decision、最终需求、context pack 的 exact-byte SHA-256；
+- 由权威项目根验证得到的当前 Seal；
+- 每个 decoy ID/predicate；
+- 每个约束 item 的 ID/version/evidence path/evidence 文件 SHA-256；
+- 顶层和逐 decoy `verdict=PASS`。
+
+回执必须逐字段使用 `docs/semantic_decoy_policy.md` 的固定 JSON 结构，不得增加同义字段或自由文本替代。
+
+缺少 implementation-plan reviewer 的独立回执、两份 identity 相同、context warning、active refute、
+evidence 变化或任一绑定冲突时，不得授予内部免测；必须按 `UNKNOWN-STALE` 处理。
+
 - `REAL`：必须有完整业务测试。
 - `UNKNOWN-STALE`：不得免测，必须按 `REAL` 覆盖。
 - `DECOY_UNREACHABLE`：只允许免除内部伪业务结果测试；现实不可达证明、正常路径等价、不可逆调用
@@ -286,6 +303,7 @@ TEST_PLAN_REVIEW.md
 
 ```text
 APPROVED_TEST_PLAN.md
+SEMANTIC_DECOY_TEST_REVIEW.json（仅启用且全部语义诱饵审查通过时）
 ```
 
 `TEST_PLAN_REVIEW.md` 必须包含：

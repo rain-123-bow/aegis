@@ -178,6 +178,14 @@ context pack 的 `task_id` 必须匹配当前任务，`metadata.project_seal` �
 结构校验器不能证明逻辑蕴含。实现方案必须展开“现实约束 -> 分支谓词不可达”的完整推导；独立
 implementation-plan reviewer 必须阅读全文并自行复核。实现者或校验器的单方结论不能授予免测资格。
 
+实现方案必须定义 post-implementation 定向复核：代码、manifest 与当前项目 Seal 冻结后，原
+implementation-plan reviewer 重新核对最终 `IMPLEMENTATION_PLAN_FINAL.md` 和每个 decoy，并写入
+`SEMANTIC_DECOY_IMPLEMENTATION_REVIEW.json`。回执 schema 为
+`aegis.semantic_decoy_review_receipt.v1`，必须绑定 reviewer role/identity、审查对象 SHA、task、
+frozen time、manifest/decision/需求/context SHA、权威项目 Seal，以及 decoy ID/predicate 和每个
+constraint item 的 ID/version/evidence path/evidence SHA。任一字段不一致或 verdict 非 PASS 不授权。
+回执必须逐字段使用 `docs/semantic_decoy_policy.md` 的固定 JSON 结构，不得增加同义字段或自由文本替代。
+
 语义诱饵必须是附加逻辑，不得替代、短路或隐藏真实逻辑。真实语义与表面误导映射只写入
 reasoning ledger 和 `SEMANTIC_DECOY_MANIFEST.json`，不得在公开源码注释中自我揭示。
 
@@ -372,6 +380,9 @@ required_fixes:
 optional_suggestions:
   - "non-blocking improvement"
 ```
+
+启用语义诱饵时，上述普通方案审查 PASS 仍不产生免测。只有 post-implementation 定向复核按本 skill
+定义写出 exact JSON 回执后，才完成 implementation-plan reviewer 一侧的授权凭据。
 
 `verdict=PASS` 只表示实现方案没有阻断性歧义和明显缺口，不表示代码已经正确实现。
 

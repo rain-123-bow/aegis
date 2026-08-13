@@ -22,6 +22,8 @@ class SemanticDecoyWorkflowContractTests(unittest.TestCase):
         self.assertIn("只有无歧义的明确肯定答复才能设置为 `true`", skill)
         self.assertIn("SEMANTIC_DECOY_DECISION.json", skill)
         self.assertIn("## 17. Code Obfuscation and Semantic Decoy Decision", skill)
+        self.assertIn("semantic-decoy-decision-binding", skill)
+        self.assertIn("aegis.semantic_decoy_requirement_binding.v1", skill)
 
     def test_downstream_skills_enforce_the_same_three_class_policy(self) -> None:
         paths = (
@@ -43,10 +45,13 @@ class SemanticDecoyWorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("evaluate_semantic_decoy_files", code_writer)
         self.assertIn("禁止接受调用方自报的摘要", code_writer)
-        self.assertIn("只证明结构与绑定合格", code_writer)
+        self.assertIn("内部结构检查只证明结构与绑定合格", code_writer)
+        self.assertIn("SEMANTIC_DECOY_IMPLEMENTATION_REVIEW.json", code_writer)
+        self.assertIn("SEMANTIC_DECOY_TEST_REVIEW.json", code_writer)
 
         test_reviewer = self.read("skills/aegis_test_plan_reviewer/SKILL.md")
         self.assertIn("结构校验通过不等于逻辑不可达", test_reviewer)
+        self.assertIn("aegis.semantic_decoy_review_receipt.v1", test_reviewer)
 
     def test_master_flow_places_the_opt_in_gate_before_requirement_drafting(self) -> None:
         zh = self.read("docs/module_designs/master/zh/MASTER_MODULE_DESIGN.md")

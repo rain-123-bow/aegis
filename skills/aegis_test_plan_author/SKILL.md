@@ -197,6 +197,9 @@ context pack 的任务标识和 `metadata.project_seal` 也必须匹配当前任
 结构校验通过不能单独建立不可达性。测试方案必须给出“现实约束 -> 分支谓词不可达”的完整推导，
 供独立 test-plan reviewer 全文复核。
 
+context pack warning、与约束 item 关联的 active `refutes`、缺失 item version 或 evidence 文件均为
+失败关闭条件。测试方案必须要求从 evidence 文件 exact bytes 独立计算 SHA-256。
+
 传统混淆后的生产逻辑仍属于 `REAL`。测试必须验证公开接口、输出、副作用和错误语义未改变；混淆
 不能产生免测资格。
 

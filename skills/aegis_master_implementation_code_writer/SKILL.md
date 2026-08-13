@@ -136,13 +136,21 @@ reasoning ledger 是项目特化事实库，优先级高于通用经验。
 `UNKNOWN-STALE`。
 context pack 的 `task_id` 必须匹配当前任务，`metadata.project_seal` 必须匹配当前项目 Seal。
 
-`evaluate_semantic_decoy_files` 只证明结构与绑定合格，不证明现实约束逻辑上必然推出谓词不可达。
-代码作者不得据此自行授予免测资格；必须保留已通过的独立方案审查结论，并交给测试方案 reviewer
-再次独立验证。
+内部结构检查只证明结构与绑定合格并始终保留内部测试要求，不得作为公共授权 API。
+唯一公共生产入口 `evaluate_semantic_decoy_files` 必须接收 `project_root` 并从权威 Seal store 验证当前源码；禁止传入
+调用方自报 Seal。代码作者不得自行授予免测资格。
 
 启用任务必须在项目 reasoning ledger 的
 `.aegis/reasoning_ledger/artifacts/semantic_decoys/<task-id>/` 保存
 `SEMANTIC_DECOY_MANIFEST.json`。清单记录表面语义与真实语义映射；源码不得包含可直接消除误导的说明。
+manifest 还必须记录 `frozen_at_utc`。context pack warning、active refute、约束 item 缺少正整数
+version，均使候选失去资格。
+
+代码、manifest 和当前 Seal 冻结后，必须由原 implementation-plan reviewer 独立执行定向复核并写
+`SEMANTIC_DECOY_IMPLEMENTATION_REVIEW.json`。测试方案 reviewer 另行写
+`SEMANTIC_DECOY_TEST_REVIEW.json`。两份回执必须使用不同 reviewer identity，并逐项绑定审查对象、
+全部 exact-byte SHA、decoy predicate、item version 与 evidence 文件 SHA。缺一份、冲突或非 PASS 时，
+`internal_logic_test_required` 必须保持 `true`。
 
 诱饵只能附加，禁止删除、替代或短路真实逻辑。即使异常触发，也不得执行不可逆外部操作。
 必须测试现实不可达约束、正常路径等价、清单绑定和必要的编译产物留存；通过静态调用审查确认

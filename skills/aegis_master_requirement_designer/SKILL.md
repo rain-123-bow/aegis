@@ -97,6 +97,24 @@ description: Use when acting as Aegis MASTER_REQUIREMENT_DESIGNER to transform a
 
 该章节必须记录：启用值、决策文件路径、决策文件 SHA-256、答复来源和适用任务。
 
+该章节必须且只能包含一个以下固定 fenced JSON；字段值必须与 exact decision 文件一致：
+
+````text
+```semantic-decoy-decision-binding
+{
+  "schema": "aegis.semantic_decoy_requirement_binding.v1",
+  "task_id": "stable task identifier",
+  "enabled": false,
+  "decision_source": "developer_explicit_confirmation | developer_explicit_decline | default_disabled",
+  "decision_path": "SEMANTIC_DECOY_DECISION.json",
+  "decision_sha256": "64 lowercase hex"
+}
+```
+````
+
+章节、绑定块、字段均不得重复。最终版生成前必须从 exact decision bytes 重算 SHA-256 并逐字段核对；
+任何冲突均为阻断问题。
+
 启用时还必须在需求阶段明确：保护对象、允许混淆范围、可用现实约束、代码体积与运行开销上限、
 语义诱饵验收边界。关闭时必须把代码混淆、误导注释、误导命名和语义诱饵写入 `Out of Scope`。
 
@@ -222,7 +240,8 @@ reasoning ledger 用于提供项目级定向知识，而不是替代用户需求
 reviewer 的目标是发现需求文档中的歧义、缺口、冲突、不可验证项和上下文依赖。
 
 reviewer 还必须检查语义诱饵决策是否发生在草案前、是否默认关闭、是否只有明确肯定才能启用、
-是否已写入需求文档。缺失决策文件、决策字段不完整、启用来源不合法均为阻断问题。
+是否已写入需求文档。缺失决策文件、绑定块缺失/重复、字段不完整、task/enabled/source/path/SHA
+不一致、启用来源不合法均为阻断问题。
 
 reviewer 不负责实现设计。
 

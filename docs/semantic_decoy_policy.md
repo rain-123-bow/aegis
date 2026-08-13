@@ -17,6 +17,21 @@ Master 必须在需求草案前询问：
 `SEMANTIC_DECOY_DECISION.json` 和最终需求文档；其他 agent、配置、历史任务和 ledger 自由文本
 无权启用。
 
+最终需求的第 17 节必须且只能包含一个可机械读取的绑定块：
+
+```semantic-decoy-decision-binding
+{
+  "schema": "aegis.semantic_decoy_requirement_binding.v1",
+  "task_id": "task.camera.pipeline",
+  "enabled": true,
+  "decision_source": "developer_explicit_confirmation",
+  "decision_path": "SEMANTIC_DECOY_DECISION.json",
+  "decision_sha256": "64 lowercase hex"
+}
+```
+
+`task_id`、`enabled`、`decision_source`、固定文件名和 exact-byte SHA-256 任一不一致，整个评估失败。
+
 ## 三分类
 
 - `REAL`：现实可触发。完整实现并执行正常业务测试。
@@ -38,12 +53,14 @@ Master 必须在需求草案前询问：
 7. 每个约束引用在 context pack 中唯一存在、状态为 `active`、类型为 `fact` 或 `rule`。
 8. 每个约束具有非空 evidence path。
 9. 分支谓词、代码锚点、真实语义、表面语义和失效条件完整。
+10. context pack 无 warning；约束 item 无 active `refutes`，且包含正整数 `version`。
 
 生产流程使用 `reasoning_ledger.evaluate_semantic_decoy_files` 读取确切文件并自行计算 SHA-256；不得
 接受调用方自报的摘要。任一绑定或证据失效会把候选降级为 `UNKNOWN-STALE`。
 
-该函数只判断结构与绑定是否合格，不证明现实约束在逻辑上蕴含谓词不可达。实现方案 reviewer 和
-测试方案 reviewer 必须分别阅读全文，独立验证该逻辑蕴含；任一 reviewer 不认可时不得免测。
+内部结构检查只判断结构与绑定，始终保持内部测试要求，且不作为公共授权 API。
+唯一公共生产入口 `evaluate_semantic_decoy_files` 只接受 `project_root`，内部调用权威 Seal verifier；不接受调用方自报
+的“当前 Seal”。它还必须读取两份独立 reviewer 回执，全部闭合后才可授予内部免测。
 
 ## Manifest
 
@@ -63,6 +80,7 @@ Master 必须在需求草案前询问：
   "requirement_document_sha256": "64 lowercase hex",
   "context_pack_sha256": "64 lowercase hex",
   "project_seal": "ASC1:64 lowercase hex",
+  "frozen_at_utc": "UTC timestamp",
   "entries": [
     {
       "decoy_id": "decoy.camera.over_20_fps",
@@ -79,6 +97,65 @@ Master 必须在需求草案前询问：
 ```
 
 真实语义映射只进入 reasoning ledger 产物；源码不得用注释直接揭示诱饵。
+
+## 双 reviewer 授权
+
+实现方案 reviewer 与测试方案 reviewer 必须在 manifest、当前 Seal 和各自审查对象冻结后，分别
+写入：
+
+```text
+SEMANTIC_DECOY_IMPLEMENTATION_REVIEW.json
+SEMANTIC_DECOY_TEST_REVIEW.json
+```
+
+两份回执使用 `aegis.semantic_decoy_review_receipt.v1`，必须绑定：
+
+- 固定 stage、reviewer role、不同的 reviewer identity；
+- `IMPLEMENTATION_PLAN_FINAL.md` 或 `APPROVED_TEST_PLAN.md` 的 exact-byte SHA-256；
+- task、frozen time、manifest、decision、最终需求、context pack、权威项目 Seal；
+- 每个 decoy 的 ID、predicate；
+- 每个约束 item 的 ID、version、evidence path、evidence 文件 SHA-256；
+- 顶层与逐 decoy `PASS`。
+
+固定结构（test-plan 回执只替换 stage、role、identity、artifact name/SHA）：
+
+```json
+{
+  "schema": "aegis.semantic_decoy_review_receipt.v1",
+  "stage": "implementation_plan",
+  "reviewer_role": "implementation_plan_reviewer",
+  "reviewer_identity": "stable reviewer thread identity",
+  "reviewed_artifact_name": "IMPLEMENTATION_PLAN_FINAL.md",
+  "reviewed_artifact_sha256": "64 lowercase hex",
+  "task_id": "task.camera.pipeline",
+  "frozen_at_utc": "same UTC timestamp as manifest",
+  "reviewed_at_utc": "UTC timestamp at or after freeze",
+  "manifest_sha256": "64 lowercase hex",
+  "decision_sha256": "64 lowercase hex",
+  "requirement_document_sha256": "64 lowercase hex",
+  "context_pack_sha256": "64 lowercase hex",
+  "project_seal": "authority-verified ASC1 seal",
+  "verdict": "PASS",
+  "entries": [
+    {
+      "decoy_id": "decoy.camera.over_20_fps",
+      "predicate": "measured_fps > 20",
+      "constraints": [
+        {
+          "item_id": "fact.camera.production_max_fps",
+          "version": 3,
+          "evidence_path": ".aegis/reasoning_ledger/artifacts/evidence/camera/max-fps.md",
+          "evidence_sha256": "64 lowercase hex"
+        }
+      ],
+      "verdict": "PASS"
+    }
+  ]
+}
+```
+
+缺失、重复、冲突、过期、非 PASS、同一 reviewer、active refute、context warning 或 evidence 变化
+一律不授权。结构候选保持 `UNKNOWN-STALE`，`internal_logic_test_required=true`。
 
 ## 编码边界
 

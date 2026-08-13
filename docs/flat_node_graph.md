@@ -93,7 +93,9 @@ The workflow may continue only after:
 If semantic decoys are enabled, later agents use only the three classifications `REAL`,
 `DECOY_UNREACHABLE`, and `UNKNOWN-STALE`. Current Seal-bound active ledger evidence establishes only
 structural eligibility; implementation-plan and test-plan reviewers independently verify logical
-unreachability. Every stale, unproven, or reviewer-rejected candidate loses its internal-test exemption.
+unreachability. Their exact JSON receipts bind the frozen manifest, reviewed artifacts, evidence bytes, task,
+and authority-verified project Seal. Every stale, warned, actively refuted, unproven, or reviewer-rejected
+candidate loses its internal-test exemption.
 
 ### Review Thresholds
 
