@@ -1,9 +1,12 @@
 ---
 name: aegis-test-plan-reviewer
+version: 5
 description: Use when acting as Aegis TEST_PLAN_REVIEWER to review a proposed test plan before production test execution.
 ---
 
 # 测试方案审查者 Skill
+
+输入存在 `engineering_input_manifest` 时，必须先校验其 SHA-256，再独立读取其中全部冻结需求和实现方案。未读取完整清单不得通过测试方案。
 
 ## 角色定位
 
@@ -116,7 +119,7 @@ description: Use when acting as Aegis TEST_PLAN_REVIEWER to review a proposed te
 5. 必须能定位测试方案文档。
 6. 必须能定位需求设计文档。
 7. 必须能定位实现方案文档。
-8. 必须能读取 reasoning ledger context pack，或必须能通过项目 reasoning ledger 检索得到 context pack。
+8. 必须读取 Coordinator 绑定并冻结的 reasoning ledger context pack。
 
 文档定位规则：
 
@@ -137,13 +140,11 @@ reasoning ledger 是项目级判断记忆层。
 
 当前节点必须优先读取当前任务相关的 reasoning ledger context pack。
 
-context pack 获取顺序：
+context pack 获取规则：
 
-1. 如果输入提供 `reasoning_ledger_context_pack`，直接读取该文件。
-2. 如果 `artifact_path/README.md` 或共享目录中的稳定文件明确列出 context pack，读取该文件。
-3. 如果项目根目录存在 `.aegis/project.json`，通过项目 reasoning ledger 检索 context pack。
-4. 如果存在 ledger export snapshot 但无法在线检索，允许读取 snapshot，并在 README 中标注降级。
-5. 如果无法读取任何可用 reasoning ledger 信息，必须按本节点职责判断是否阻塞；凡涉及覆盖性、充分性、最终结论的节点，不得声称判断充分。
+1. 只读取 Coordinator 控制输入中的冻结路径和 SHA-256。
+2. A-F 期间禁止查询在线 reasoning ledger，以免引入冻结边界外的新状态。
+3. 路径缺失、哈希不匹配或 pack 范围不足时返回 `status=false`；不得自行生成、替换或降级。
 
 reasoning ledger 状态规则：
 
@@ -304,22 +305,19 @@ APPROVED_TEST_PLAN.md
 
 ## 最终回复
 
-最终回复只能是 JSON。
+最终回复只能是 Coordinator 输出 schema 要求的 JSON。除通用字段外，必须返回 `reviewed_plan_sha256`、`score`、`error_count`、`warning_count`、`verdict`、`semantic_issues` 和 `prior_issue_assessments`。
 
-成功：
+`semantic_issues`只记录阻断问题。通过时必须为空。拒绝时至少一项；每项必须包含：
 
-```json
-{
-  "artifact_path": "path/to/langgraph-shared-artifact-folder",
-  "status": true
-}
-```
+- `semantic_issue_id`：当前轮次唯一 ID；
+- `predecessor_issue_ids`：必填数组；延续历史未关闭基础逻辑单元时列出对应历史问题 ID，否则为空；
+- `premises`：被审核推理使用的前提集合；
+- `inference`：前提到结论的推理关系；
+- `conclusion`：被质疑结论；
+- `missing_evidence`：缺失证据；
+- `alternative_explanations`：尚未排除的其他解释；
+- `closure_conditions`：补证、收窄或改写后可关闭问题的条件。
 
-失败：
+`prior_issue_assessments` 必须逐一覆盖 Coordinator 给出的全部 `prior_semantic_issues`。每项给出历史 ID、`REPEATED_UNRESOLVED|RESOLVED|SUPERSEDED`、关联当前问题 ID、语义理由和证据索引。重复项必须与当前问题的 `predecessor_issue_ids` 双向一致。不得省略历史问题以规避重复判定。只有新增证据、收窄结论、修正推理或排除替代解释才构成修复。
 
-```json
-{
-  "artifact_path": "path/to/langgraph-shared-artifact-folder",
-  "status": false
-}
-```
+审核必须解析唯一 `aegis.test_execution_policy.v2` block，逐项核对描述性测试矩阵和完整有效环境。缺失 block、JSON 不合法、测试项不一致、shell/内联执行、未绑定 executable/入口/输入、环境不完整、cwd junction、命令不可执行均为阻断错误。

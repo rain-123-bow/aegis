@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -76,6 +77,10 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--artifact-path", help="LangGraph shared artifact directory; default output lives here")
     context.add_argument("--task-id", required=True)
     context.add_argument("--agent-role", required=True)
+    context.add_argument("--project-seal", required=True)
+    context.add_argument("--engineering-documents-sha256", required=True)
+    context.add_argument("--coverage-json")
+    context.add_argument("--coverage-file")
     context.add_argument("--query")
     context.add_argument("--query-file")
     context.add_argument("--scope-json", default="{}")
@@ -270,6 +275,26 @@ def _semantic_search(args: argparse.Namespace, ledger: ReasoningLedger, config: 
 def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: ProjectLedgerConfig) -> int:
     query = _read_text_arg(args.query, args.query_file, argument_name="query")
     scope = _read_json_arg(args.scope_json, args.scope_file, argument_name="scope")
+    coverage = _read_json_arg(
+        args.coverage_json,
+        args.coverage_file,
+        argument_name="coverage",
+    )
+    expected_coverage = {
+        "requirements",
+        "implementation_plan",
+        "runtime_scope",
+        "code_causality",
+        "known_refutations",
+        "environment_facts",
+        "pending_warnings",
+    }
+    if set(coverage) != expected_coverage or any(
+        coverage[field] is not True for field in expected_coverage
+    ):
+        raise ValueError(
+            "context-pack coverage must explicitly set every required domain to true"
+        )
     embedding, embedding_source = resolve_query_embedding(
         text=query,
         dimensions=config.embedding_dimensions,
@@ -285,6 +310,14 @@ def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: Pro
             "--embedding-file, --embedding-command, AEGIS_LEDGER_EMBEDDING_COMMAND, or --allow-hash-embedding"
         )
     retrieval_mode = "semantic_search" if embedding is not None else "list_items_fallback"
+    snapshot_before = ledger.export_snapshot()
+    snapshot_before_bytes = json.dumps(
+        snapshot_before,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
     pack = ledger.retrieve_context_pack(
         task_id=args.task_id,
         agent_role=args.agent_role,
@@ -294,6 +327,25 @@ def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: Pro
         limit=args.limit,
         include_causes=args.include_causes,
     )
+    snapshot_after = ledger.export_snapshot()
+    snapshot_after_bytes = json.dumps(
+        snapshot_after,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if snapshot_after_bytes != snapshot_before_bytes:
+        raise RuntimeError(
+            "reasoning ledger changed while generating the context pack"
+        )
+    event_ids = [
+        event.get("id")
+        for event in snapshot_after["events"]
+        if isinstance(event.get("id"), int)
+    ]
+    ledger_revision = max(event_ids, default=0)
+    ledger_snapshot_sha256 = hashlib.sha256(snapshot_after_bytes).hexdigest()
     artifact_path = Path(args.artifact_path) if args.artifact_path else None
     output = Path(args.output) if args.output else (artifact_path / DEFAULT_CONTEXT_PACK_NAME if artifact_path else Path(DEFAULT_CONTEXT_PACK_NAME))
     json_output = (
@@ -315,6 +367,15 @@ def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: Pro
             "limit": args.limit,
             "include_causes": args.include_causes,
         },
+        project_seal=args.project_seal,
+        engineering_documents_sha256=args.engineering_documents_sha256,
+        ledger_revision=ledger_revision,
+        ledger_snapshot_sha256=ledger_snapshot_sha256,
+        retrieval_scope=scope,
+        limit=args.limit,
+        include_causes=args.include_causes,
+        coverage=coverage,
+        project_root=config.project_root,
     )
     print(
         json.dumps(

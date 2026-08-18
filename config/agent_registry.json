@@ -1,5 +1,6 @@
 {
-  "schema_version": "aegis.agent_registry.v2",
+  "schema_version": "aegis.agent_role_templates.v3",
+  "base_skill_path": "skills/aegis_global_quality_law/SKILL.md",
   "role_enum": {
     "TEST_PLAN_AUTHOR": 1,
     "TEST_PLAN_REVIEWER": 2,
@@ -13,55 +14,55 @@
       "role_id": 1,
       "role_key": "TEST_PLAN_AUTHOR",
       "graph_node": "A",
-      "role_description": "Test plan author. Receives the requirement document and design document, then writes a complete requirement-oriented test plan.",
-      "thread_id": "019f179d-26bd-7460-836d-f83e0ce2d692",
-      "name": "Plato",
-      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+      "role_description": "Writes a requirement-oriented test plan from frozen requirements, implementation plan, reasoning facts, and project evidence.",
+      "role_skill_path": "skills/aegis_test_plan_author/SKILL.md",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high"
     },
     {
       "role_id": 2,
       "role_key": "TEST_PLAN_REVIEWER",
       "graph_node": "B",
-      "role_description": "Test plan reviewer. Reviews the test plan; passes only when score is at least 95 and no error-level issue remains. Warnings may be recorded without blocking.",
-      "thread_id": "019f179d-4e25-7c01-b175-c3014bbd6dc8",
-      "name": "Hume",
-      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+      "role_description": "Independently reviews the frozen test plan and emits semantic issues with evidence-closure requirements.",
+      "role_skill_path": "skills/aegis_test_plan_reviewer/SKILL.md",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high"
     },
     {
       "role_id": 3,
       "role_key": "TEST_EXECUTOR",
       "graph_node": "C",
-      "role_description": "Test executor. Executes the approved test plan in the real target environment and preserves complete raw test data and evidence.",
-      "thread_id": "019f179d-97e7-7b80-9eb9-031c453d3193",
-      "name": "Russell",
-      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+      "role_description": "Translates the approved test plan into a bound execution request; the Coordinator runs it and preserves receipts and raw evidence.",
+      "role_skill_path": "skills/aegis_test_executor/SKILL.md",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high"
     },
     {
       "role_id": 4,
       "role_key": "TEST_RESULT_REVIEWER",
       "graph_node": "D",
-      "role_description": "Test result reviewer. First checks whether the approved test plan was fully executed, then checks whether the evidence logically closes every claim. Sends incomplete work back to the test executor.",
-      "thread_id": "019f179d-cf94-75a2-9b5c-16517337c148",
-      "name": "Wegener",
-      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+      "role_description": "Independently audits execution completeness and whether evidence closes every test claim.",
+      "role_skill_path": "skills/aegis_test_result_reviewer/SKILL.md",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high"
     },
     {
       "role_id": 5,
       "role_key": "TEST_REPORT_WRITER",
       "graph_node": "E",
-      "role_description": "Test report writer. Writes the final test report package from the approved plan, complete raw test data, and reviewed evidence.",
-      "thread_id": "019f179d-f5ab-7f33-b858-492c88445291",
-      "name": "Parfit",
-      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+      "role_description": "Writes the final test report only from approved plans and reviewed evidence.",
+      "role_skill_path": "skills/aegis_test_report_writer/SKILL.md",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high"
     },
     {
       "role_id": 6,
       "role_key": "FINAL_REVIEWER",
       "graph_node": "F",
-      "role_description": "Final reviewer. Performs the final gate review over requirements, design, implementation plan, final code, test plan, raw test data, and test report.",
-      "thread_id": "019f179e-2c37-7570-afb6-74c40466dab4",
-      "name": "Kepler",
-      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+      "role_description": "Audits the entire engineering result, including requirements, plan, code, tests, evidence, reasoning ledger, Seal, and governance integrity.",
+      "role_skill_path": "skills/aegis_final_reviewer/SKILL.md",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "xhigh"
     }
   ]
 }

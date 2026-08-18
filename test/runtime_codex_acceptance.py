@@ -35,6 +35,10 @@ REQUIRED_SOURCE_BINDINGS = (
 )
 
 import main as aegis_main
+from aegis_test_support import (
+    initialize_test_git_repository,
+    write_test_runtime_scope_policy,
+)
 from project_seal_store import record_project_seal, verify_expected_project_seal
 from tracerelay_client import TraceRelayClient
 
@@ -209,15 +213,17 @@ def _prepare_project(path: Path) -> None:
     source.parent.mkdir(parents=True, exist_ok=True)
     if not source.exists():
         source.write_text("ACCEPTANCE_TARGET = True\n", encoding="utf-8")
+    write_test_runtime_scope_policy(path)
     seal = path / ".aegis/reasoning_ledger/artifacts/facts/project-seal.json"
     if seal.exists():
         verify_expected_project_seal(path)
     else:
+        head = initialize_test_git_repository(path, "acceptance fixture")
         record_project_seal(
             path,
-            git_head_before_record="a" * 40,
+            git_head_before_record=head,
             project_id=bytes(range(16)),
-            run_id=bytes(range(16, 32)),
+            seal_chain_id=bytes(range(16, 32)),
         )
 
 

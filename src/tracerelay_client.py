@@ -424,7 +424,10 @@ class TraceRelayClient:
             environment.pop(name, None)
         for name in PROXY_ENVIRONMENT_NAMES:
             environment[name] = proxy_url
-        managed_command = _windows_job_command(command)
+        managed_command = _windows_job_command(
+            command,
+            process_time_limit_seconds=timeout_seconds,
+        )
 
         try:
             process = self._popen_factory(
@@ -1037,9 +1040,15 @@ def _process_creation_time_from_handle(
     return (int(creation.dwHighDateTime) << 32) | int(creation.dwLowDateTime)
 
 
-def _windows_job_command(command: Sequence[str]) -> list[str]:
+def _windows_job_command(
+    command: Sequence[str],
+    *,
+    process_time_limit_seconds: float = 7_200,
+) -> list[str]:
     if os.name != "nt":
         raise TraceRelayError("Aegis managed Codex execution requires Windows")
+    if not 0 < process_time_limit_seconds <= 7_200:
+        raise ValueError("process_time_limit_seconds must be positive and at most 7200")
     runner = Path(__file__).resolve().with_name("windows_job_runner.py")
     if not runner.is_file():
         raise TraceRelayError(f"Windows Job runner is missing: {runner}")
@@ -1048,6 +1057,12 @@ def _windows_job_command(command: Sequence[str]) -> list[str]:
         "-I",
         "-S",
         str(runner),
+        "--active-process-limit",
+        "64",
+        "--job-memory-limit-bytes",
+        str(4 * 1024**3),
+        "--process-time-limit-100ns",
+        str(max(10_000_000, int(process_time_limit_seconds * 10_000_000))),
         "--",
         *map(str, command),
     ]

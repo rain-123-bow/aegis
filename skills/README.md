@@ -5,6 +5,8 @@ skills/
 ├── README.md
 ├── aegis_final_reviewer/
 │   └── SKILL.md
+├── aegis_global_quality_law/
+│   └── SKILL.md
 ├── aegis_master_implementation_code_writer/
 │   └── SKILL.md
 ├── aegis_master_implementation_plan_designer/

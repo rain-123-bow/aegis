@@ -1,9 +1,14 @@
 ---
 name: aegis-test-result-reviewer
+version: 3
 description: Use when acting as Aegis TEST_RESULT_REVIEWER to audit test coverage and evidence after production test execution.
 ---
 
 # 测试结果审核者 Skill
+
+必须读取 `execution_control`，校验冻结工程输入、规划交接、批准测试方案和全部 Test Evidence Manifest。控制产物缺失或哈希不匹配时不得通过。
+
+`test_evidence_manifest.json`及Coordinator封存的本次 C attempt manifest是测试结论的唯一机械证据索引。必须逐项核对测试 ID、需求 ID、命令、环境、退出码、测试输入哈希、stdout/stderr/raw result哈希和TraceRelay session绑定。缺失、越界、哈希不一致或未覆盖时必须拒绝。
 
 ## 角色定位
 
@@ -124,7 +129,7 @@ description: Use when acting as Aegis TEST_RESULT_REVIEWER to audit test coverag
 6. 必须能定位测试覆盖矩阵。
 7. 必须能定位测试执行报告。
 8. 必须能定位证据目录。
-9. 必须能读取 reasoning ledger context pack，或必须能通过项目 reasoning ledger 检索得到 context pack。
+9. 必须读取 Coordinator 绑定并冻结的 reasoning ledger context pack。
 
 核心输入缺失时，不得进入覆盖性判断之外的扩展推断。
 
@@ -136,13 +141,11 @@ reasoning ledger 是项目级判断记忆层。
 
 当前节点必须优先读取当前任务相关的 reasoning ledger context pack。
 
-context pack 获取顺序：
+context pack 获取规则：
 
-1. 如果输入提供 `reasoning_ledger_context_pack`，直接读取该文件。
-2. 如果 `artifact_path/README.md` 或共享目录中的稳定文件明确列出 context pack，读取该文件。
-3. 如果项目根目录存在 `.aegis/project.json`，通过项目 reasoning ledger 检索 context pack。
-4. 如果存在 ledger export snapshot 但无法在线检索，允许读取 snapshot，并在 README 中标注降级。
-5. 如果无法读取任何可用 reasoning ledger 信息，必须按本节点职责判断是否阻塞；凡涉及覆盖性、充分性、最终结论的节点，不得声称判断充分。
+1. 只读取 Coordinator 控制输入中的冻结路径和 SHA-256。
+2. A-F 期间禁止查询在线 reasoning ledger，以免引入冻结边界外的新状态。
+3. 路径缺失、哈希不匹配或 pack 范围不足时返回 `status=false`；不得自行生成、替换或降级。
 
 reasoning ledger 状态规则：
 

@@ -17,6 +17,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 import aegis_runtime
 import main
 import project_seal_store
+from aegis_test_support import (
+    initialize_test_git_repository,
+    write_test_runtime_scope_policy,
+)
 
 
 class FakeRelayProcessClient:
@@ -66,6 +70,39 @@ class PassthroughCoordinator:
 
 
 class MainRuntimeIntegrationTests(unittest.TestCase):
+    def test_default_runtime_root_is_project_scoped_and_outside_project_aegis(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "src" / "module.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("VALUE = 1\n", encoding="utf-8")
+            write_test_runtime_scope_policy(root)
+            head = initialize_test_git_repository(root)
+            project_seal_store.record_project_seal(
+                root,
+                git_head_before_record=head,
+                project_id=bytes(range(16)),
+                seal_chain_id=bytes(range(16, 32)),
+            )
+            local_app_data = root / "local-app-data"
+            with patch.dict(
+                main.os.environ,
+                {"LOCALAPPDATA": str(local_app_data)},
+                clear=False,
+            ):
+                runtime_root = main.resolve_project_runtime_root(root, None)
+
+            self.assertEqual(
+                runtime_root,
+                local_app_data
+                / "Aegis"
+                / "runtime"
+                / bytes(range(16)).hex(),
+            )
+            self.assertFalse(runtime_root.is_relative_to(root / ".aegis"))
+
     def test_planning_nodes_close_before_executor_uses_its_own_app_server_turn(
         self,
     ) -> None:
@@ -172,14 +209,17 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
         }
         configs = {
             main.TEST_PLAN_AUTHOR_ROLE: {
+                "role_key": main.TEST_PLAN_AUTHOR_ROLE,
                 "thread_id": "old-author",
                 "role_description": "author role",
             },
             main.TEST_PLAN_REVIEWER_ROLE: {
+                "role_key": main.TEST_PLAN_REVIEWER_ROLE,
                 "thread_id": "old-reviewer",
                 "role_description": "reviewer role",
             },
             main.TEST_EXECUTOR_ROLE: {
+                "role_key": main.TEST_EXECUTOR_ROLE,
                 "thread_id": "old-executor",
                 "role_description": "executor role",
             },
@@ -221,11 +261,15 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             if isinstance(event, tuple) and event[0] == "planning"
         ]
         self.assertIn("author role", planning_events[0][3])
-        self.assertIn("Do not use Aegis-specific skills", planning_events[0][3])
+        self.assertIn("Aegis Global Quality Law", planning_events[0][3])
+        self.assertIn("Aegis Test Plan Author", planning_events[0][3])
+        self.assertNotIn("Do not use Aegis-specific skills", planning_events[0][3])
         self.assertIn("planning_author_control", planning_events[0][2])
         self.assertIn("planning_review_control", planning_events[1][2])
         self.assertIn("executor role", events[-1][3])
-        self.assertIn("Do not use Aegis-specific skills", events[-1][3])
+        self.assertIn("Aegis Global Quality Law", events[-1][3])
+        self.assertIn("Aegis Test Executor", events[-1][3])
+        self.assertNotIn("Do not use Aegis-specific skills", events[-1][3])
 
     def test_c_through_f_use_app_server_turns_without_legacy_exec(self) -> None:
         execution_calls: list[tuple[str, str]] = []
@@ -305,8 +349,11 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             ],
         )
         self.assertTrue(
+            all("Aegis Global Quality Law" in value for _, value in execution_calls)
+        )
+        self.assertTrue(
             all(
-                "Do not use Aegis-specific skills" in value
+                "Do not use Aegis-specific skills" not in value
                 for _, value in execution_calls
             )
         )
@@ -432,6 +479,56 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result["current_node"], main.FINAL_REVIEWER_NODE)
         self.assertTrue(result["status"])
+
+    def test_compiled_graph_stops_at_e_when_report_writer_fails(self) -> None:
+        execution_calls: list[str] = []
+        state = {
+            "artifact_path": "C:/artifacts",
+            "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+            "status": True,
+        }
+
+        class FakeCoordinator:
+            def run_execution_agent(
+                self,
+                role_key: str,
+                prompt: str,
+                *,
+                output_schema: dict[str, Any],
+                developer_instructions: str,
+                timeout_seconds: float,
+            ) -> str:
+                del prompt, output_schema, developer_instructions, timeout_seconds
+                execution_calls.append(role_key)
+                return json.dumps(
+                    {
+                        **state,
+                        "status": role_key != main.TEST_REPORT_WRITER_ROLE,
+                    }
+                )
+
+        configs = {
+            role: {"role_key": role, "role_description": role}
+            for role in (
+                main.TEST_REPORT_WRITER_ROLE,
+                main.FINAL_REVIEWER_ROLE,
+            )
+        }
+        with (
+            patch.object(
+                main, "active_runtime_coordinator", return_value=FakeCoordinator()
+            ),
+            patch.object(
+                main, "load_agent_config", side_effect=lambda role: configs[role]
+            ),
+        ):
+            result = main.create_graph(
+                start_node=main.TEST_REPORT_WRITER_NODE
+            ).invoke(state)
+
+        self.assertEqual(execution_calls, [main.TEST_REPORT_WRITER_ROLE])
+        self.assertEqual(result["current_node"], main.TEST_REPORT_WRITER_NODE)
+        self.assertFalse(result["status"])
 
     def test_review_model_status_cannot_bypass_coordinator_threshold(self) -> None:
         closed = {"value": False}
@@ -640,11 +737,13 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             source = root / "src" / "module.py"
             source.parent.mkdir(parents=True)
             source.write_text("VALUE = 1\n", encoding="utf-8")
+            write_test_runtime_scope_policy(root)
+            head = initialize_test_git_repository(root)
             project_seal_store.record_project_seal(
                 root,
-                git_head_before_record="a" * 40,
+                git_head_before_record=head,
                 project_id=bytes(range(16)),
-                run_id=bytes(range(16, 32)),
+                seal_chain_id=bytes(range(16, 32)),
             )
             relay = FakeRelayProcessClient(root / "session")
             coordinator = aegis_runtime.RuntimeCoordinator(
@@ -657,10 +756,17 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             )
             coordinator.preflight()
 
-            with patch.object(
-                main.subprocess,
-                "run",
-                side_effect=AssertionError("direct subprocess path used"),
+            with (
+                patch.object(
+                    main.subprocess,
+                    "run",
+                    side_effect=AssertionError("direct subprocess path used"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "verify_expected_project_seal",
+                    return_value=coordinator._seal,
+                ),
             ):
                 result = coordinator.execute_node(
                     "A",
@@ -725,7 +831,8 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
     def test_main_preflights_before_checkpoint_and_invokes_synchronously(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            artifact_path = root / "artifacts"
+            runtime_root = root / "runtime"
+            artifact_path = runtime_root / "runs" / "run-new" / "artifacts"
             events: list[str] = []
             invocation: dict[str, Any] = {}
 
@@ -792,8 +899,10 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                     [
                         "--project-root",
                         str(root),
-                        "--artifact-path",
-                        str(artifact_path),
+                        "--runtime-root",
+                        str(runtime_root),
+                        "--engineering-input-manifest",
+                        str(root / "ENGINEERING_INPUT_MANIFEST.json"),
                         "--tracerelay-upstream-port",
                         "7899",
                     ]
@@ -819,7 +928,8 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
     def test_resume_uses_saved_start_node_and_no_new_input_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            artifact_path = root / "artifacts"
+            runtime_root = root / "runtime"
+            artifact_path = runtime_root / "runs" / "run-resume" / "artifacts"
             invocation: dict[str, Any] = {}
             created: dict[str, Any] = {}
 
@@ -851,10 +961,12 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 return FakeGraph()
 
             saved = {
-                "schema": "aegis.run_state.v5",
+                "schema": "aegis.run_state.v10",
                 "run_id": "run-resume",
                 "status": "failed",
                 "project_root": str(root.resolve()),
+                "runtime_root": str(runtime_root.resolve()),
+                "artifact_path": str(artifact_path.resolve()),
                 "start_node": "C",
                 "graph_state": {"status": True, "current_node": "C"},
                 "evidence_sessions": [],
@@ -882,8 +994,8 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                     [
                         "--project-root",
                         str(root),
-                        "--artifact-path",
-                        str(artifact_path),
+                        "--runtime-root",
+                        str(runtime_root),
                         "--resume-run-id",
                         "run-resume",
                         "--tracerelay-upstream-port",
@@ -902,7 +1014,13 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
     def test_resume_after_completed_planning_does_not_restart_app_server(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            artifact_path = root / "artifacts"
+            runtime_root = root / "runtime"
+            artifact_path = (
+                runtime_root
+                / "runs"
+                / "run-resume-after-planning"
+                / "artifacts"
+            )
             events: list[str] = []
 
             class FakeCoordinator:
@@ -936,10 +1054,12 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 yield object()
 
             saved = {
-                "schema": "aegis.run_state.v5",
+                "schema": "aegis.run_state.v10",
                 "run_id": "run-resume-after-planning",
                 "status": "failed",
                 "project_root": str(root.resolve()),
+                "runtime_root": str(runtime_root.resolve()),
+                "artifact_path": str(artifact_path.resolve()),
                 "start_node": "A",
                 "graph_state": {"status": True, "current_node": "C"},
                 "evidence_sessions": [
@@ -975,8 +1095,8 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                     [
                         "--project-root",
                         str(root),
-                        "--artifact-path",
-                        str(artifact_path),
+                        "--runtime-root",
+                        str(runtime_root),
                         "--resume-run-id",
                         "run-resume-after-planning",
                         "--tracerelay-upstream-port",

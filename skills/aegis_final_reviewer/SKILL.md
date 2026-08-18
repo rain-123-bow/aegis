@@ -1,9 +1,14 @@
 ---
 name: aegis-final-reviewer
+version: 3
 description: Use when acting as Aegis FINAL_REVIEWER to audit final code, requirements, design, test evidence, reports, and reasoning-ledger context.
 ---
 
 # 最终审核者 Skill
+
+必须读取 `execution_control`，独立校验冻结需求、实现方案、规划交接、批准测试方案、全部 Test Evidence Manifest及当前 reasoning ledger context pack。控制产物缺失或哈希不匹配时必须失败，并在 `FINAL_REVIEW.md` 建立明确证据索引。
+
+F必须审核全部封存 Test Evidence Manifest及其agent草稿、文件哈希、TraceRelay索引、需求覆盖和D/E引用一致性。任何脱离manifest的测试结论均构成F失败。
 
 ## 角色定位
 
@@ -132,7 +137,7 @@ description: Use when acting as Aegis FINAL_REVIEWER to audit final code, requir
 9. 必须能定位测试结果审核报告。
 10. 必须能定位测试报告。
 11. 必须能读取项目代码。
-12. 必须能读取 reasoning ledger context pack，或必须能通过项目 reasoning ledger 检索得到 context pack。
+12. 必须读取 Coordinator 绑定并冻结的 reasoning ledger context pack。
 
 ## Reasoning Ledger 强制规则
 
@@ -142,13 +147,11 @@ reasoning ledger 是项目级判断记忆层。
 
 当前节点必须优先读取当前任务相关的 reasoning ledger context pack。
 
-context pack 获取顺序：
+context pack 获取规则：
 
-1. 如果输入提供 `reasoning_ledger_context_pack`，直接读取该文件。
-2. 如果 `artifact_path/README.md` 或共享目录中的稳定文件明确列出 context pack，读取该文件。
-3. 如果项目根目录存在 `.aegis/project.json`，通过项目 reasoning ledger 检索 context pack。
-4. 如果存在 ledger export snapshot 但无法在线检索，允许读取 snapshot，并在 README 中标注降级。
-5. 如果无法读取任何可用 reasoning ledger 信息，必须按本节点职责判断是否阻塞；凡涉及覆盖性、充分性、最终结论的节点，不得声称判断充分。
+1. 只读取 Coordinator 控制输入中的冻结路径和 SHA-256。
+2. A-F 期间禁止查询在线 reasoning ledger，以免引入冻结边界外的新状态。
+3. 路径缺失、哈希不匹配或 pack 范围不足时返回 `status=false`；不得自行生成、替换或降级。
 
 reasoning ledger 状态规则：
 
@@ -267,7 +270,10 @@ warning 处理规则：
 ```text
 README.md
 FINAL_REVIEW.md
+FINAL_REVIEW_VERDICT.json
 ```
+
+`FINAL_REVIEW_VERDICT.json`必须使用 `aegis.final_review_verdict.v1`，包含当前 `workflow_run_id`、与返回 `status`一致的 `PASS|FAIL`、非空结论、非空原因列表和证据索引。证据条目字段为 `evidence_id`、绝对 `path`、`size`、`sha256`；索引必须包含 `FINAL_REVIEW.md`。Coordinator 会机械校验，缺失或不一致将使 F 失败。
 
 ## FINAL_REVIEW.md 必须包含
 

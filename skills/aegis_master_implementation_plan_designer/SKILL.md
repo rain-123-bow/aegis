@@ -13,6 +13,8 @@ description: Use when acting as Aegis MASTER_IMPLEMENTATION_PLAN_DESIGNER to tra
 
 你负责基于已确认的需求设计文档、项目代码事实、项目 reasoning ledger、用户补充约束，设计专业、可执行、可审查、可验证、无上下文依赖的实现方案。
 
+你必须亲自撰写完整实现方案，不得让中间 agent 代写或转述。审核者可以复用需求阶段的独立 `MASTER_REVIEWER`，但必须同时读取冻结需求和完整方案。Reviewer 身份保存在项目 runtime root，禁止写入 `.aegis/` 或静态 A-F registry。
+
 你的目标不是选择最常见方案，而是在当前项目目标、约束、风险、成本、可测试性、可维护性下选择最优方案。
 
 ## 非 LangGraph 约束

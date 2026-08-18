@@ -1,337 +1,94 @@
-# Windows Runtime Coordinator
+# Runtime Coordinator
 
-## Boundary
+Authoritative architecture: `docs/AEGIS_ARCHITECTURE_CONTRACT.md`.
 
-The coordinator adds four mechanisms to the existing flat A-F graph:
+## Responsibilities
 
-1. verify the latest project seal before opening runtime state;
-2. start and monitor the independent TraceRelay application;
-3. persist LangGraph node boundaries to project-local SQLite;
-4. atomically persist current node, evidence paths, and failures in `artifact_path`.
+`RuntimeCoordinator` owns workflow-run identity, project Seal verification, protected remote witness verification, dynamic role-thread allocation, skill/runtime-profile binding, TraceRelay evidence, A-F attempt state, planning rounds, test-evidence manifests, recovery, and terminal outcome.
 
-It does not restore the deleted legacy Aegis graph or let TraceRelay control Aegis.
+Master owns requirements, implementation plan, code, reasoning facts, and confirmation of F failure. A-F roles never own coordinator state.
 
-## One-time setup
+## Storage
 
-```powershell
-cd C:\code\aegis
-python -m pip install --user .\submodules\TraceRelay
-.\.venv\Scripts\python.exe -m pip install -r requirements-runtime.txt
-```
-
-`tracerelay.exe` must be on `PATH` or supplied through
-`--tracerelay-command`. TraceRelay remains installed and may outlive one Aegis
-run. Aegis never stops an instance it did not exclusively create for a test.
-
-## Record an authorized source state
-
-First commit the authorized `src/` or `include/` source snapshot locally. Generate
-the next seal from a clean checkout of that exact commit, then commit only the
-updated seal record. The seal file is outside `src/` and `include/`, so this does
-not create a self-reference cycle.
-
-```powershell
-$env:AEGIS_PROJECT_ROOT = 'C:\code\target-project'
-$env:AEGIS_GIT_HEAD = git -C $env:AEGIS_PROJECT_ROOT rev-parse HEAD
-@'
-import os
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(r"C:\code\aegis\src")))
-from project_seal_store import record_project_seal
-
-record = record_project_seal(
-    os.environ["AEGIS_PROJECT_ROOT"],
-    git_head_before_record=os.environ["AEGIS_GIT_HEAD"],
-)
-print(record.expected_seal)
-'@ | C:\code\aegis\.venv\Scripts\python.exe -B -
-```
-
-The append-only record is stored at:
+`.aegis/` contains only the project reasoning-ledger instance and its facts. Runtime state is outside the project:
 
 ```text
-<project>/.aegis/reasoning_ledger/artifacts/facts/project-seal.json
+%LOCALAPPDATA%/Aegis/runtime/<project-id>/
+  project_state/
+    checkpoints.sqlite3
+    dynamic_agent_registry.json
+    dynamic_agent_registry.sqlite3
+    instruction_receipts/
+  runs/<workflow-run-id>/
+    RUN_STATE.json
+    responses/
+    artifacts/
+      graph/A/<round-id>/
+      evidence/<attempt-id>/
+      evidence-manifests/<attempt-id>.request.json
+      evidence-manifests/<attempt-id>.json
+      instruction-receipts/
 ```
 
-Missing, malformed, broken, or mismatched records block graph startup.
-`git_head_before_record` identifies the source commit used to create the record;
-it is provenance metadata, not a second startup integrity gate.
+Run state uses `aegis.run_state.v10`. The SQLite reservation row stores the authoritative state blob, digest, status, and project accountability marker in one transaction. `RUN_STATE.json` is a rebuildable projection. Older schemas are rejected; they are not guessed or silently migrated. v10 retains the per-turn GPT instruction receipt and adds authoritative crash recovery.
 
-## Start a new test run
+Every new run requires a Master-authored `aegis.engineering_input_manifest.v1` manifest. It lists at least one requirements document and one implementation-plan document by absolute path, byte size, and SHA-256. The Coordinator copies it into the run artifacts and revalidates every document before and after every A-F node.
 
-```powershell
-.\.venv\Scripts\python.exe -B src\main.py `
-  --project-root C:\code\target-project `
-  --artifact-path C:\code\aegis_artifacts\target\current `
-  --tracerelay-command "$env:APPDATA\Python\Python313\Scripts\tracerelay.exe"
-```
+The reasoning-ledger context pack is the only ledger view exposed to agents during A-F. Coordinator directly exports the live ledger in a read-only repeatable-read transaction, checks every pack item/edge against that export, freezes the snapshot bytes, and revalidates the live snapshot at boundaries. Agent live-ledger queries are forbidden. An insufficient or changed pack/snapshot fails closed and requires a new A-start run.
 
-The TraceRelay upstream defaults to the loopback `HTTPS_PROXY`/`HTTP_PROXY`
-port. It can be fixed explicitly with `--tracerelay-upstream-port`.
+A new run may start only at A or C. Starting at C requires `--reuse-planning-from-run-id`, a current reasoning-ledger context pack, and an engineering-input manifest whose document set exactly matches the terminal parent run. The approved test plan, review report, and source run state are copied into the new run as immutable evidence. Any engineering-input difference forces a full A-F run from A.
 
-Each C-F turn receives a fresh TraceRelay application-session registration before
-its App Server process starts. Its endpoint remains stable for the process's
-sequential and concurrent proxy connections until Aegis explicitly closes the
-evidence session. The process runs in a Windows Job Object; a relay fault
-terminates the full `cmd/node/codex/tool` descendant tree. Proxy bypass variables
-are removed and all HTTP proxy selectors are pinned to the registered relay
-endpoint.
+An F failure ends the workflow with `master_review_status=PENDING`. Master then runs `confirm-f-failure` with a standalone Master review and evidence paths. The command accepts only a terminal F failure, seals `MASTER_FINAL_REVIEW.md` and `MASTER_FINAL_REVIEW_CONFIRMATION.json`, indexes `FINAL_REVIEW.md` plus the supplied evidence, and moves the state to `CONFIRMED` or `DISPUTED`. It never changes `delivery_eligible=false`.
 
-Registration is itself durable evidence. Before each `register`, Aegis atomically
-writes a unique operation ID to `RUN_STATE.json`, bound to the run, node,
-attempt/job and upstream port. TraceRelay writes the same ID into `session.json`
-before returning. Normal success links the resulting session and clears the
-intent in one state checkpoint.
+## Preflight
 
-Resume resolves any remaining intent from TraceRelay's durable metadata before
-starting the Service or creating a new session. A resolved session is sealed and
-verified without guessing a PID, then recorded application `INVALID` with null
-PID/FILETIME and the run is rejected. No match, multiple matches or unreadable
-metadata also fail closed. The same protocol covers planning and every C-F turn.
-Synchronous process-creation or FILETIME failures use the resolved registration
-directly and follow the same invalid-evidence gate.
+Preflight fails closed unless all enabled checks pass:
 
-### A/B App Server and frozen planning handoff
+1. `aegis.project_seal_chain.v2` parses and its latest record is contiguous.
+2. The user-confirmed runtime behavior scope resolves deterministically.
+3. Scope policy hash, resolved manifest hash, file contents, Seal, project ID, seal-chain ID, sequence, and previous Seal match.
+4. Production mode reads the canonical repository URL and protected ref from `config/seal_witness.json`, fetches into an isolated temporary bare repository with the pinned Git/SSH environment, and matches the witness commit to the latest locally verified Seal.
+5. The workflow-run reservation is unique.
+6. The dynamic project registry has no ambiguous allocation or cross-role thread reuse.
+7. Resume state preserves runtime root, artifact root, role skills, role runtime profiles, registration intents, attempts, responses, and evidence identities.
 
-When the graph starts at A or B, the coordinator starts one traced
-`codex app-server` before `graph.invoke` and creates two persistent top-level
-threads:
+Remote witness verification is disabled only in isolated unit construction. `src/main.py` always enables it. There is no production offline fallback.
 
-```text
-TEST_PLAN_AUTHOR -> TEST_PLAN_REVIEWER
-```
+## Role runtime contract
 
-Both roles share the App Server process and one TraceRelay session, but retain
-different Codex thread IDs. A failed review keeps the same process and role
-threads for the B -> A loop. A passing review stops the App Server and requires
-`VALID_COMPLETE` evidence with bytes in both directions before node C can start.
+`config/agent_registry.json` is a role-template registry. It contains no real thread IDs.
 
-Each A attempt receives a unique directory:
+For each role, the Coordinator binds:
 
-```text
-<artifact_path>/.aegis/planning/<run-id>/round-NNNN/
-```
+- shared and role skill name, version, and SHA-256;
+- model and reasoning effort;
+- developer-instruction SHA-256;
+- dynamic thread identity and lifecycle.
 
-A writes `TEST_PLAN.md`. The coordinator freezes its SHA-256 together with the
-verified project seal and reasoning-context SHA-256 before B starts. B reviews
-only that hash and writes the complete result to the separate
-`TEST_PLAN_REVIEW.md`. The structured response carries the reviewed hash,
-score, error count, warning count, and verdict. The coordinator requires the
-reviewed hash to equal the frozen plan hash during live review and every
-restore. The same binding is retained in `PLANNING_HANDOFF.json`.
+The configured model and reasoning effort are injected into the Codex App Server command. The returned thread handle must report the same values. `ultra` is rejected.
 
-The coordinator ignores the reviewer's routing `status`. It passes the round
-only when score is at least 95, error count is zero, verdict is `PASS`, both
-files still match their hashes, and the project seal and reasoning context are
-unchanged. Passing publishes exact-byte `APPROVED_TEST_PLAN.md` plus the
-machine-readable `PLANNING_HANDOFF.json`. A rejected round is retained and the
-next A turn receives its review-report path. Completed author or reviewer turns
-are replayed from their hashed response files after interruption; they are not
-resubmitted.
+The supported model boundary is Codex/GPT. Each role developer instruction contains a challenge derived from the project ID, role, base instruction hash, and skill-binding hash. Before every turn, GPT must freshly write the exact `aegis.gpt_instruction_receipt.v1`; the Coordinator snapshots it into the run. Missing or mismatched receipts fail closed. Compatibility with non-GPT models is outside the contract.
 
-The installed Codex CLI path and version are saved when the App Server starts.
-A resumed run rejects a different CLI version. Each `turn/start` receipt is
-created as a durable `submitting` intent before the remote call. The exact turn
-ID is then persisted as `inProgress` before waiting for completion. If a crash
-leaves `submitting` without a turn ID, the outcome is ambiguous and resume fails
-closed; it never guesses by resubmitting. Raw final responses and SHA-256 values
-are saved under `<run>/responses/`. A known pending turn is read from its saved
-persistent thread on resume, while a completed turn is replayed from its hashed
-local response.
-`planning_stage_status` remains `active` across an interrupted A/B stage. It
-changes to `completed` only when an approved handoff exists and every planning
-TraceRelay session recorded for the run has both raw journal
-`verification_status=VALID_COMPLETE` and
-`application_verification_status=VALID_COMPLETE`. The application status is
-set only when managed finalization returns after its bidirectional-byte check;
-an exception records `INVALID` even if the raw journal closed as valid. A newer
-valid session cannot hide an older incomplete session. Later C-F resume
-operations therefore cannot reopen the planning App Server.
+## Execution and evidence
 
-Round allocation and approval publication are recoverable state transitions.
-An `allocating` round is recorded before its directory is created. An accepted
-review is recorded as `publishing`; both root publication files are generated
-and verified before the round becomes `approved`. Resume completes an
-interrupted `publishing` operation idempotently. An `approved` round is never
-trusted from its status alone: score, error count, verdict, frozen files,
-published plan, and the complete handoff object are revalidated.
+Every App Server turn runs in a separately registered TraceRelay-managed process. Registration intent is persisted before process creation. A successful turn requires `VALID_COMPLETE` raw and application evidence with process identity and bidirectional traffic.
 
-### C-F per-turn App Server transactions
+Node C receives `aegis.test_execution_control.v1` and writes only `aegis.test_execution_request.v3`. The Coordinator requires exact equality with the reviewed `aegis.test_execution_policy.v2`, uses only its complete explicit environment, locks and revalidates cwd/executable/inputs, rejects shell and inline/module execution, runs argv through a resource-limited Windows Job Object, records process identity and actual outputs, and exclusively creates `aegis.test_execution_receipt.v3` plus `aegis.test_evidence_manifest.v2`. D cannot start without valid Coordinator-generated evidence.
 
-C, D, E, and F each own one persistent, non-ephemeral Codex thread for the run. The
-coordinator creates a new `codex app-server` process and a new TraceRelay
-session for every C-F turn, resumes the role thread in that process, executes or
-recovers exactly one turn, then closes and verifies both resources before the
-node may return.
+Before and after every A-F node, the Coordinator re-verifies frozen runtime inputs. A Windows recursive change journal also detects modify-then-restore events during the node. Mutation records paths, old/new hashes and sizes, file identities, node, time, Coordinator PID, and available TraceRelay sessions; then terminates with `engineering_verdict=INVALIDATED`, `termination_reason_code=FROZEN_INPUT_MUTATION`, and `master_review_status=REQUIRES_USER_REASON`.
 
-The coordinator records a monotonic execution attempt before entering C-F.
-This identity separates a crash retry from the legal `C -> D -> C` loop. Each
-turn records its attempt, role thread ID, turn ID, request hash, response path
-and hash, TraceRelay session IDs, and App Server identity: PID plus Windows
-process creation FILETIME. The role thread survives; process identity and
-evidence session do not.
+While any project run remains `REQUIRES_USER_REASON`, the SQLite project-accountability marker rejects every new run even if its JSON projection was deleted or changed. Master records the user's explanation through `record-mutation-reason`; the command seals the explanation and user-confirmation ID, then transactionally changes only the accountability status to `USER_REASON_RECORDED`. The invalidated run remains terminal and ineligible for delivery.
 
-Recovery is fail-closed:
+The project lease binds run ID, Coordinator instance UUID, PID, process creation time, and heartbeat. A second instance is rejected even when it requests the same run ID. Recovery may take over only after the recorded process identity is confirmed dead.
 
-- a completed turn is replayed only from its hash-verified response after every
-  linked journal is re-read from disk, returns `VALID_COMPLETE`, has nonzero
-  traffic in both directions, and reproduces the recorded final hash;
-- a known turn ID is read from the persistent thread in a new traced process and
-  is never resubmitted;
-- after a coordinator process crash, the saved PID is terminated only when its
-  Windows process creation FILETIME still matches; a missing or reused PID is
-  not terminated. The exact TraceRelay session is still sealed and verified
-  before the known turn is recovered in a new session;
-- `submitting` without a turn ID is ambiguous and cannot be retried;
-- a lost `thread/start` result leaves the role `allocating` and cannot be
-  replaced silently;
-- an invalid older session cannot be hidden by a newer valid session;
-- App Server close, process termination, or evidence finalization failure blocks
-  routing.
-- run completion requires the terminal graph state, last completed node, final
-  attempt, response hash, and evidence to bind to F. F may return `status=false`;
-  that remains a business verdict while the run lifecycle becomes completed.
+## Terminal semantics
 
-## Resume a failed run
+- E `status=false`: terminate at E; F is not invoked.
+- F `status=true`: `SUCCEEDED/PASS`, delivery eligible.
+- F `status=false`: `TERMINATED/FAIL`, delivery blocked, Master review pending.
+- Frozen-input mutation: terminated, engineering verdict invalidated, user reason required.
+- Infrastructure/protocol/evidence defect: failed, verdict undetermined.
 
-Read the generated run ID from `RUN_STATE.json`, then use:
+## Verification boundary
 
-```powershell
-.\.venv\Scripts\python.exe -B src\main.py `
-  --project-root C:\code\target-project `
-  --artifact-path C:\code\aegis_artifacts\target\current `
-  --resume-run-id <run-id> `
-  --tracerelay-command "$env:APPDATA\Python\Python313\Scripts\tracerelay.exe"
-```
-
-Resume uses the same LangGraph thread ID and passes no new input state. A known
-pending turn may resume only while its saved TraceRelay session remains
-recoverable (`UNVERIFIED` with no application verdict). If finalization marked a
-session `INVALID`, or the journal verifies as `VALID_INCOMPLETE`, the run remains
-failed and resume is rejected before TraceRelay or a new Codex process starts.
-Completed nodes do not run again.
-
-## Durable state
-
-```text
-<project>/.aegis/runtime/checkpoints.sqlite3
-<artifact_path>/.aegis/runs/<run-id>/RUN_STATE.json
-```
-
-`RUN_STATE.json` uses `aegis.run_state.v5` and records the current node, last
-completed node, latest graph state, TraceRelay registration intent, session
-paths, verification results, and the terminal error.
-New runs reserve the same identity in `RUN_STATE.json` and SQLite before
-TraceRelay starts. Only `--resume-run-id` may reopen that identity.
-Raw Codex responses remain under `<run>/responses/`, including malformed output.
-TraceRelay failure terminates the active Codex child; Aegis writes the failure
-state and exits without restarting TraceRelay or continuing the graph.
-The service-failure acceptance JSON sets `verdict=PASS` only after all checks and
-binds `aegis_runtime.py`, `main.py`, both control-plane clients, the TraceRelay
-registration implementation, the acceptance script, and the installed
-TraceRelay command by SHA-256. Report generation fails if any required binding
-is missing, malformed, or no longer matches the executed bytes.
-
-Version-1 through version-4 run states are rejected on resume. Versions 1-3
-cannot prove legacy E/F side effects. Version 4 has no durable TraceRelay
-registration intent, so an empty preparing receipt cannot prove that register
-never happened. Start a new run instead.
-
-The real App Server control-plane acceptance is opt-in:
-
-```powershell
-$env:TRACERELAY_COMMAND = 'C:\path\to\tracerelay.exe'
-$env:TRACERELAY_UPSTREAM_PORT = '7899'
-.\.venv\Scripts\python.exe -B test\test_traced_app_server_real_integration.py
-```
-
-It proves both boundaries on a sealed synthetic project: A/B share one traced
-process, while C/D/C/D/E/F use six new processes and sessions, reuse the C and D
-threads, keep all four execution roles independent, bind the E report into the F
-review, and write an external `ACCEPTANCE_REPORT.json`. It does not use a user
-project.
-
-Current Windows acceptance:
-
-```text
-verdict: PASS
-codex-cli: 0.145.0
-model: gpt-5.6-sol
-reasoning effort: high
-report: C:\ar\b8full\as_pilot\793b3149347e\ACCEPTANCE_REPORT.json
-report SHA-256: 2B5C7EA1F9360F43C26D333DCB57EB0ED5C37D72223BE332A435703204EA6C1F
-TraceRelay journal evidence: VALID_COMPLETE
-application evidence: VALID_COMPLETE
-registration operation IDs: 7, distinct
-planning rounds: 1 (approved)
-planning review: PASS, score 100, error count 0
-approved plan SHA-256 equals reviewed plan SHA-256
-C/D/C/D/E/F execution turns: 6
-C/D/C/D/E/F TraceRelay sessions: 6, distinct
-C/D/C/D/E/F App Server PIDs: 6, distinct
-C/D/C/D/E/F App Server creation FILETIMEs: 6, distinct
-TEST_EXECUTOR thread reused across both C turns
-TEST_RESULT_REVIEWER thread reused across both D turns
-TEST_REPORT_WRITER and FINAL_REVIEWER threads independent
-synthetic command stdout: True
-synthetic command exit code: 0
-E report SHA-256: 3599CF889EFEB9CCB36A070462CD0BB153B41E1129C40086CB59AE83F1286492
-F review binds the exact E report SHA-256: yes
-```
-
-Hard-crash recovery acceptance:
-
-```text
-verdict: PASS
-node: F
-report: C:\ar\b8known\as_crash_recovery\f6dc09238c05\CRASH_RECOVERY_REPORT.json
-report SHA-256: 42577597C9025E23DE52F7E918BFD44CCD0AA519A9586C29E4D5489AB42188DB
-forced coordinator exit code: 91
-Codex turn IDs created: 1
-TraceRelay sessions: 2, distinct
-App Server Windows Job PIDs: 2, distinct
-App Server creation FILETIMEs: 2, distinct
-both saved Windows Job PIDs terminated after recovery: yes
-old session sealed before known-turn recovery: yes
-all raw and application evidence: VALID_COMPLETE
-```
-
-Registration-checkpoint crash acceptance:
-
-```text
-verdict: PASS
-report: C:\ar\b8r\as_registration_crash\48646fc3cd62\REGISTRATION_CRASH_REPORT.json
-report SHA-256: A670565CEAFC8E33BDB5B3DCA6C942FBBBAEC8334833DC8E80942590C465649E
-forced coordinator exit code: 91
-register response before Popen crash: recovered exact session
-Popen before PID/FILETIME checkpoint crash: recovered exact session
-recovery started TraceRelay or registered a new session: no
-recovered application evidence: INVALID
-persisted PID/FILETIME without a verified identity: null/null
-missing, duplicate, failed, or invalid cases publish PASS: no
-missing case, marker, verification, or byte-direction fields publish PASS: no
-noncanonical or calendar-invalid session IDs publish PASS: no
-```
-
-TraceRelay service-failure acceptance:
-
-```text
-verdict: PASS
-report: C:\ar\v5b005\RUNTIME_CODEX_ACCEPTANCE_20260812T115817Z.json
-report SHA-256: FC4DCC88D0A4C069D24BF4B5BBDE2E9B496799176DC0AAFB770C87AEA3ED437B
-normal F evidence: VALID_COMPLETE, bidirectional bytes > 0
-fault F evidence: VALID_INCOMPLETE
-fault RUN_STATE evidence: UNVERIFIED/INVALID
-runner plus 10 observed descendants terminated: yes
-same-run resume rejected before TraceRelay restart: yes
-same-run resume started a Codex process: no
-```
-
-## Recorded follow-up work
-
-- The legacy `test/test.py` still targets hard-coded archived threads and is not
-  part of deterministic test discovery.
-- `test_reasoning_ledger.py` still expects the removed flat-reset `ledger`
-  command. This predates the runtime coordinator and remains outside this stage.
+Local unit tests may use fake App Server, TraceRelay, Git witness, and isolated runtime roots. Real Codex/App Server/TraceRelay and remote fetch/push acceptance require explicit authorization and separate evidence.

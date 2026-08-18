@@ -22,8 +22,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import aegis_runtime
+import agent_registry
 import project_seal_store
 import tracerelay_client
+from mutation_accountability import record_frozen_input_mutation_reason
+from aegis_test_support import (
+    initialize_test_git_repository,
+    write_test_execution_request,
+    write_test_execution_policy,
+    write_test_reasoning_context_pack,
+    write_test_runtime_scope_policy,
+)
 
 
 def relay_payload(command: str, state: str = "IDLE") -> dict[str, object]:
@@ -918,6 +927,7 @@ class ExecutionTurnHarness:
         self.start_turn_errors: list[BaseException] = []
         self.finalize_errors: list[BaseException] = []
         self.close_errors: list[BaseException] = []
+        self.instruction_receipts: dict[str, tuple[Path, bytes]] = {}
 
 
 class ExecutionManagedProcess:
@@ -1134,8 +1144,21 @@ class ExecutionAppServer:
 
     def start_thread(self, **kwargs: Any) -> SimpleNamespace:
         self.harness.thread_count += 1
+        thread_id = f"execution-thread-{self.harness.thread_count}"
+        instructions = str(kwargs.get("developer_instructions", ""))
+        marker = "Before every role task, atomically write the exact UTF-8 JSON below to `"
+        start = instructions.find(marker)
+        if start >= 0:
+            path_start = start + len(marker)
+            path_end = instructions.index("`", path_start)
+            json_start = instructions.index("```json\n", path_end) + len("```json\n")
+            json_end = instructions.index("\n```", json_start)
+            self.harness.instruction_receipts[thread_id] = (
+                Path(instructions[path_start:path_end]),
+                (instructions[json_start:json_end] + "\n").encode("utf-8"),
+            )
         return SimpleNamespace(
-            thread_id=f"execution-thread-{self.harness.thread_count}",
+            thread_id=thread_id,
             model="gpt-5.6-sol",
             reasoning_effort="high",
         )
@@ -1151,6 +1174,11 @@ class ExecutionAppServer:
 
     def start_turn(self, thread_id: str, prompt: str, **kwargs: Any) -> SimpleNamespace:
         del prompt, kwargs
+        receipt = self.harness.instruction_receipts.get(thread_id)
+        if receipt is not None:
+            path, encoded = receipt
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(encoded)
         self.harness.start_turn_count += 1
         if self.harness.start_turn_errors:
             raise self.harness.start_turn_errors.pop(0)
@@ -1207,16 +1235,667 @@ class FailingRelayClient(FakeRelayClient):
 
 
 class RuntimeCoordinatorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        def export_test_snapshot(
+            project_root: str | Path, *, project_id_hex: str
+        ) -> dict[str, object]:
+            del project_id_hex
+            path = (
+                Path(project_root)
+                / ".aegis"
+                / "reasoning_ledger"
+                / "test-live-snapshot.json"
+            )
+            return json.loads(path.read_text(encoding="utf-8"))
+
+        self._ledger_snapshot_patch = patch.object(
+            aegis_runtime,
+            "export_live_reasoning_ledger_snapshot",
+            side_effect=export_test_snapshot,
+        )
+        self._ledger_snapshot_patch.start()
+        self.addCleanup(self._ledger_snapshot_patch.stop)
+        self._dead_prior_owner_patch = patch.object(
+            agent_registry,
+            "_process_owner_is_alive",
+            return_value=False,
+        )
+        self._dead_prior_owner_patch.start()
+        self.addCleanup(self._dead_prior_owner_patch.stop)
+
+    def write_engineering_input_manifest(self, project: Path) -> Path:
+        requirements = project / "docs" / "REQUIREMENTS.md"
+        implementation = project / "docs" / "IMPLEMENTATION_PLAN.md"
+        requirements.parent.mkdir(parents=True, exist_ok=True)
+        if not requirements.exists():
+            requirements.write_text("requirement\n", encoding="utf-8")
+        if not implementation.exists():
+            implementation.write_text("implementation\n", encoding="utf-8")
+
+        def descriptor(kind: str, path: Path) -> dict[str, object]:
+            content = path.read_bytes()
+            return {
+                "kind": kind,
+                "path": str(path.resolve()),
+                "size": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+
+        manifest = project / "ENGINEERING_INPUT_MANIFEST.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schema": "aegis.engineering_input_manifest.v1",
+                    "project_id_hex": bytes(range(16)).hex(),
+                    "created_at_utc": "2026-08-17T00:00:00Z",
+                    "documents": [
+                        descriptor("REQUIREMENTS", requirements),
+                        descriptor("IMPLEMENTATION_PLAN", implementation),
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return manifest
+
+    def write_reasoning_context_pack(
+        self,
+        project: Path,
+        path: Path,
+        engineering_manifest: Path,
+    ) -> Path:
+        seal = project_seal_store.verify_expected_project_seal(project)
+        engineering = aegis_runtime.validate_engineering_input_manifest(
+            engineering_manifest,
+            project_root=project,
+            project_id_hex=seal.project_id.hex(),
+        )
+        return write_test_reasoning_context_pack(
+            project,
+            path,
+            project_id_hex=seal.project_id.hex(),
+            project_seal=seal.expected_seal,
+            engineering_documents_sha256=engineering.documents_sha256,
+        )
+
+    def test_planning_rejects_arbitrary_json_as_reasoning_context(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
+            runtime_root = root / "runtime"
+            artifacts = runtime_root / "runs" / "run-context-invalid" / "artifacts"
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifacts,
+                runtime_root=runtime_root,
+                run_id="run-context-invalid",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+                engineering_input_manifest_path=manifest,
+            )
+            coordinator.preflight()
+            invalid = root / "invalid-context.json"
+            invalid.write_text("{}\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "invalid reasoning context pack",
+            ):
+                coordinator.prepare_planning_author(invalid)
+
+    def test_planning_uses_run_owned_context_and_engineering_snapshots(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
+            runtime_root = root / "runtime"
+            artifacts = runtime_root / "runs" / "run-context-snapshot" / "artifacts"
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifacts,
+                runtime_root=runtime_root,
+                run_id="run-context-snapshot",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+                engineering_input_manifest_path=manifest,
+            )
+            coordinator.preflight()
+            source_context = self.write_reasoning_context_pack(
+                project,
+                root / "source-context.json",
+                manifest,
+            )
+
+            control = coordinator.prepare_planning_author(source_context)
+
+            self.assertEqual(
+                Path(str(control["context_pack_path"])),
+                artifacts / "REASONING_LEDGER_CONTEXT_PACK.json",
+            )
+            engineering_control = coordinator._engineering_input_control()
+            assert engineering_control is not None
+            frozen_documents = engineering_control["documents"]
+            self.assertEqual(len(frozen_documents), 2)
+            for document in frozen_documents:
+                snapshot_path = Path(str(document["snapshot_path"]))
+                self.assertTrue(snapshot_path.is_relative_to(artifacts))
+                self.assertTrue(snapshot_path.is_file())
+
+    def test_role_runtime_profile_is_applied_to_app_server_command(self) -> None:
+        command = aegis_runtime.configured_app_server_command(
+            ("codex.cmd", "app-server", "--listen", "stdio://"),
+            {"model": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
+        )
+
+        self.assertEqual(
+            command,
+            (
+                "codex.cmd",
+                "-c",
+                'model="gpt-5.6-sol"',
+                "-c",
+                'model_reasoning_effort="xhigh"',
+                "app-server",
+                "--listen",
+                "stdio://",
+            ),
+        )
+
+    def test_ultra_role_runtime_profile_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported reasoning effort"):
+            aegis_runtime.RuntimeCoordinator(
+                project_root=Path.cwd(),
+                artifact_path=Path.cwd() / "artifacts",
+                run_id="invalid-ultra",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+                role_runtime_profiles={
+                    "FINAL_REVIEWER": {
+                        "model": "gpt-5.6-sol",
+                        "reasoning_effort": "ultra",
+                    }
+                },
+            )
+
+    def test_runtime_state_and_checkpoints_stay_outside_project_aegis(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            runtime_root = root / "local-runtime" / "project-1"
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "run-storage" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="run-storage",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+
+            coordinator.preflight()
+            with aegis_runtime.open_graph_checkpointer(runtime_root):
+                pass
+
+            self.assertEqual(
+                coordinator.run_state_path,
+                runtime_root / "runs" / "run-storage" / "RUN_STATE.json",
+            )
+            self.assertTrue(coordinator.run_state_path.is_file())
+            self.assertTrue(
+                (runtime_root / "project_state" / "checkpoints.sqlite3").is_file()
+            )
+            self.assertFalse((project / ".aegis" / "runtime").exists())
+
+    def test_c_start_reuses_plan_only_when_engineering_inputs_match(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
+            runtime_root = root / "runtime"
+            first_artifacts = runtime_root / "runs" / "parent" / "artifacts"
+            first = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=first_artifacts,
+                runtime_root=runtime_root,
+                run_id="parent",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+                engineering_input_manifest_path=manifest,
+            )
+            first.preflight()
+            self.attach_planning_evidence_process(
+                first, root, session_id="planning-reuse-source"
+            )
+            self.approve_planning_round(first, first_artifacts)
+            first.complete_planning_stage()
+            first._write_state("terminated")
+            source_state = aegis_runtime.load_run_state(runtime_root, "parent")
+
+            current_context = self.write_reasoning_context_pack(
+                project,
+                root / "current-context.json",
+                manifest,
+            )
+            second_artifacts = runtime_root / "runs" / "child" / "artifacts"
+            second = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=second_artifacts,
+                runtime_root=runtime_root,
+                run_id="child",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="C",
+                engineering_input_manifest_path=manifest,
+                planning_reuse_run_id="parent",
+                planning_reuse_state=source_state,
+                planning_reuse_context_pack_path=current_context,
+            )
+            second.preflight()
+
+            self.assertEqual(second.planning_stage_status, "completed")
+            self.assertIn(
+                "AEGIS_TEST_EXECUTION_POLICY_BEGIN",
+                (second_artifacts / "APPROVED_TEST_PLAN.md").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            saved = aegis_runtime.load_run_state(runtime_root, "child")
+            self.assertEqual(saved["planning_reuse"]["parent_run_id"], "parent")
+
+            (project / "docs" / "REQUIREMENTS.md").write_text(
+                "mutated\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                aegis_runtime.FrozenInputMutationError,
+                "frozen engineering inputs changed",
+            ):
+                second.execute_node("C", lambda state: state, {"status": True})
+
+    def test_c_start_rejects_changed_engineering_input_set(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
+            runtime_root = root / "runtime"
+            first_artifacts = runtime_root / "runs" / "parent" / "artifacts"
+            first = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=first_artifacts,
+                runtime_root=runtime_root,
+                run_id="parent",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+                engineering_input_manifest_path=manifest,
+            )
+            first.preflight()
+            self.attach_planning_evidence_process(
+                first, root, session_id="planning-reuse-mismatch"
+            )
+            self.approve_planning_round(first, first_artifacts)
+            first.complete_planning_stage()
+            first._write_state("terminated")
+            source_state = aegis_runtime.load_run_state(runtime_root, "parent")
+
+            (project / "docs" / "REQUIREMENTS.md").write_text(
+                "new requirement\n", encoding="utf-8"
+            )
+            manifest = self.write_engineering_input_manifest(project)
+            current_context = self.write_reasoning_context_pack(
+                project,
+                root / "current-context.json",
+                manifest,
+            )
+            second = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "child" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="child",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="C",
+                engineering_input_manifest_path=manifest,
+                planning_reuse_run_id="parent",
+                planning_reuse_state=source_state,
+                planning_reuse_context_pack_path=current_context,
+            )
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "rerun A-F from A",
+            ):
+                second.preflight()
+
+    def test_c_start_rejects_parent_state_not_bound_to_reservation_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
+            runtime_root = root / "runtime"
+            parent_artifacts = runtime_root / "runs" / "parent" / "artifacts"
+            parent = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=parent_artifacts,
+                runtime_root=runtime_root,
+                run_id="parent",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+                engineering_input_manifest_path=manifest,
+            )
+            parent.preflight()
+            context = self.write_reasoning_context_pack(
+                project,
+                root / "parent-context.json",
+                manifest,
+            )
+            self.attach_planning_evidence_process(
+                parent, root, session_id="planning-reuse-forgery"
+            )
+            self.approve_planning_round(parent, parent_artifacts, context_path=context)
+            parent.complete_planning_stage()
+            parent._write_state("terminated")
+            forged_state = aegis_runtime.load_run_state(runtime_root, "parent")
+            forged_state["project_root"] = str(root / "different-project")
+            child_context = self.write_reasoning_context_pack(
+                project,
+                root / "child-context.json",
+                manifest,
+            )
+            child = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "child" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="child",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="C",
+                engineering_input_manifest_path=manifest,
+                planning_reuse_run_id="parent",
+                planning_reuse_state=forged_state,
+                planning_reuse_context_pack_path=child_context,
+            )
+
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "authoritative state|reservation digest|source project",
+            ):
+                child.preflight()
+
+    def test_execution_role_reuses_project_thread_across_workflow_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            runtime_root = root / "local-runtime" / "project-1"
+            role_skill_bindings = {
+                "TEST_EXECUTOR": [
+                    {
+                        "name": "aegis-test-executor",
+                        "version": "1",
+                        "sha256": "b" * 64,
+                    }
+                ]
+            }
+
+            class ThreadClient:
+                def __init__(self) -> None:
+                    self.started: list[str] = []
+                    self.resumed: list[str] = []
+
+                def start_thread(self, **kwargs: object) -> SimpleNamespace:
+                    self.started.append(str(kwargs["developer_instructions"]))
+                    return SimpleNamespace(
+                        thread_id="thread-project-executor",
+                        model="gpt-5.6-sol",
+                        reasoning_effort="high",
+                    )
+
+                def resume_thread(
+                    self, thread_id: str, **kwargs: object
+                ) -> SimpleNamespace:
+                    del kwargs
+                    self.resumed.append(thread_id)
+                    return SimpleNamespace(
+                        thread_id=thread_id,
+                        model="gpt-5.6-sol",
+                        reasoning_effort="high",
+                    )
+
+            first = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "run-one" / "artifacts",
+                runtime_root=runtime_root,
+                role_skill_bindings=role_skill_bindings,
+                run_id="run-one",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="C",
+            )
+            first.preflight()
+            first_client = ThreadClient()
+            first_thread = first._ensure_execution_thread(
+                first_client,
+                {},
+                role_key="TEST_EXECUTOR",
+                developer_instructions="executor instructions",
+                instructions_sha256="a" * 64,
+            )
+            first._write_state("completed")
+
+            second = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "run-two" / "artifacts",
+                runtime_root=runtime_root,
+                role_skill_bindings=role_skill_bindings,
+                run_id="run-two",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="C",
+            )
+            second.preflight()
+            second_client = ThreadClient()
+            second_thread = second._ensure_execution_thread(
+                second_client,
+                {},
+                role_key="TEST_EXECUTOR",
+                developer_instructions="executor instructions",
+                instructions_sha256="a" * 64,
+            )
+
+            self.assertEqual(first_thread, "thread-project-executor")
+            self.assertEqual(second_thread, first_thread)
+            self.assertEqual(len(first_client.started), 1)
+            self.assertEqual(second_client.started, [])
+            self.assertEqual(second_client.resumed, [first_thread])
+            registry_payload = json.loads(
+                (
+                    runtime_root
+                    / "project_state"
+                    / "dynamic_agent_registry.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                registry_payload["roles"]["TEST_EXECUTOR"]["current"][
+                    "skill_bindings"
+                ],
+                role_skill_bindings["TEST_EXECUTOR"],
+            )
+
+    def test_runtime_profile_change_retires_cross_run_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            runtime_root = root / "runtime"
+
+            class ThreadClient:
+                def __init__(self, thread_id: str, effort: str) -> None:
+                    self.thread_id = thread_id
+                    self.effort = effort
+                    self.resume_calls: list[str] = []
+
+                def start_thread(self, **kwargs: object) -> SimpleNamespace:
+                    return SimpleNamespace(
+                        thread_id=self.thread_id,
+                        model="gpt-5.6-sol",
+                        reasoning_effort=self.effort,
+                    )
+
+                def resume_thread(
+                    self, thread_id: str, **kwargs: object
+                ) -> SimpleNamespace:
+                    self.resume_calls.append(thread_id)
+                    return SimpleNamespace(
+                        thread_id=thread_id,
+                        model="gpt-5.6-sol",
+                        reasoning_effort=self.effort,
+                    )
+
+            first = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "profile-one" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="profile-one",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="C",
+                role_runtime_profiles={
+                    "TEST_EXECUTOR": {
+                        "model": "gpt-5.6-sol",
+                        "reasoning_effort": "high",
+                    }
+                },
+            )
+            first.preflight()
+            first_thread = first._ensure_execution_thread(
+                ThreadClient("thread-high", "high"),
+                {},
+                role_key="TEST_EXECUTOR",
+                developer_instructions="executor",
+                instructions_sha256="a" * 64,
+            )
+            first._write_state("completed")
+
+            second = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "profile-two" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="profile-two",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="C",
+                role_runtime_profiles={
+                    "TEST_EXECUTOR": {
+                        "model": "gpt-5.6-sol",
+                        "reasoning_effort": "xhigh",
+                    }
+                },
+            )
+            second.preflight()
+            second_client = ThreadClient("thread-xhigh", "xhigh")
+            second_thread = second._ensure_execution_thread(
+                second_client,
+                {},
+                role_key="TEST_EXECUTOR",
+                developer_instructions="executor",
+                instructions_sha256="a" * 64,
+            )
+
+            self.assertEqual(first_thread, "thread-high")
+            self.assertEqual(second_thread, "thread-xhigh")
+            self.assertEqual(second_client.resume_calls, [])
+            registry = second._require_agent_registry()
+            self.assertEqual(
+                registry.retired("TEST_EXECUTOR")[-1]["retired_reason"],
+                "role contract changed",
+            )
+
+    def test_planning_role_reuses_project_thread_across_workflow_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            runtime_root = root / "local-runtime" / "project-1"
+
+            class ThreadClient:
+                def __init__(self) -> None:
+                    self.started: list[str] = []
+                    self.resumed: list[str] = []
+
+                def start_thread(self, **kwargs: object) -> SimpleNamespace:
+                    self.started.append(str(kwargs["developer_instructions"]))
+                    return SimpleNamespace(
+                        thread_id="thread-project-author",
+                        model="gpt-5.6-sol",
+                        reasoning_effort="high",
+                    )
+
+                def resume_thread(
+                    self, thread_id: str, **kwargs: object
+                ) -> SimpleNamespace:
+                    del kwargs
+                    self.resumed.append(thread_id)
+                    return SimpleNamespace(
+                        thread_id=thread_id,
+                        model="gpt-5.6-sol",
+                        reasoning_effort="high",
+                    )
+
+            first = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "plan-one" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="plan-one",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            first.preflight()
+            first_client = ThreadClient()
+            first._planning_app_server = first_client
+            first_thread = first._ensure_planning_thread(
+                "TEST_PLAN_AUTHOR",
+                developer_instructions="author instructions",
+            )
+            first._write_state("completed")
+
+            second = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "plan-two" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="plan-two",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            second.preflight()
+            second_client = ThreadClient()
+            second._planning_app_server = second_client
+            second_thread = second._ensure_planning_thread(
+                "TEST_PLAN_AUTHOR",
+                developer_instructions="author instructions",
+            )
+
+            self.assertEqual(first_thread, "thread-project-author")
+            self.assertEqual(second_thread, first_thread)
+            self.assertEqual(len(first_client.started), 1)
+            self.assertEqual(second_client.started, [])
+            self.assertEqual(second_client.resumed, [first_thread])
+
     def make_sealed_project(self, root: Path) -> Path:
         project = root / "project"
         source = project / "src" / "module.py"
         source.parent.mkdir(parents=True)
         source.write_text("VALUE = 1\n", encoding="utf-8")
+        write_test_runtime_scope_policy(project)
+        head = initialize_test_git_repository(project)
         project_seal_store.record_project_seal(
             project,
-            git_head_before_record="a" * 40,
+            git_head_before_record=head,
             project_id=bytes(range(16)),
-            run_id=bytes(range(16, 32)),
+            seal_chain_id=bytes(range(16, 32)),
         )
         return project
 
@@ -1224,12 +1903,26 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         self,
         coordinator: aegis_runtime.RuntimeCoordinator,
         artifact_path: Path,
+        *,
+        context_path: Path | None = None,
     ) -> dict[str, object]:
         artifact_path.mkdir(parents=True, exist_ok=True)
-        context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
-        context_path.write_text("{}\n", encoding="utf-8")
+        if context_path is None:
+            assert coordinator._seal is not None
+            assert coordinator._engineering_input_manifest is not None
+            context_path = write_test_reasoning_context_pack(
+                coordinator.project_root,
+                artifact_path / "context-source.json",
+                project_id_hex=coordinator._seal.project_id.hex(),
+                project_seal=coordinator._seal.expected_seal,
+                engineering_documents_sha256=str(
+                    coordinator._engineering_input_manifest["documents_sha256"]
+                ),
+            )
         author = coordinator.prepare_planning_author(context_path)
-        Path(str(author["plan_path"])).write_text("# Approved plan\n", encoding="utf-8")
+        write_test_execution_policy(coordinator.project_root, artifact_path)
+        authored_plan = artifact_path / "APPROVED_TEST_PLAN.md"
+        Path(str(author["plan_path"])).write_bytes(authored_plan.read_bytes())
         frozen = coordinator.freeze_planning_plan(str(author["round_id"]))
         review = coordinator.prepare_planning_review()
         Path(str(review["review_report_path"])).write_text(
@@ -1246,6 +1939,43 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             },
         )
         self.assertTrue(accepted)
+        if not coordinator._planning_turns:
+            responses = artifact_path / "responses" / "planning"
+            responses.mkdir(parents=True, exist_ok=True)
+            for role, suffix in (
+                ("TEST_PLAN_AUTHOR", "author"),
+                ("TEST_PLAN_REVIEWER", "review"),
+            ):
+                job_id = f"{coordinator.run_id}:planning:{author['round_id']}:{suffix}"
+                response = responses / f"{suffix}.json"
+                response.write_text('{"status":true}\n', encoding="utf-8")
+                response_bytes = response.read_bytes()
+                turn = {
+                    "job_id": job_id,
+                    "node": "A" if suffix == "author" else "B",
+                    "role": role,
+                    "client_message_id": f"{job_id}:{role}:submission",
+                    "request_sha256": hashlib.sha256(job_id.encode()).hexdigest(),
+                    "codex_thread_id": f"thread-{suffix}",
+                    "codex_turn_id": f"turn-{suffix}",
+                    "status": "completed",
+                    "raw_response_path": str(response.resolve()),
+                    "raw_response_sha256": hashlib.sha256(
+                        response_bytes
+                    ).hexdigest(),
+                }
+                coordinator._planning_turns.append(turn)
+                coordinator._compose_instruction_receipt_protocol(
+                    role, f"synthetic {role}"
+                )
+                receipt_spec = coordinator._instruction_receipt_specs[role]
+                receipt_path = Path(str(receipt_spec["path"]))
+                receipt_path.parent.mkdir(parents=True, exist_ok=True)
+                receipt_path.write_bytes(
+                    aegis_runtime._canonical_json_bytes(receipt_spec["payload"])
+                )
+                coordinator._seal_instruction_receipt(role, job_id, turn)
+            coordinator._write_state("running")
         return frozen
 
     def attach_planning_evidence_process(
@@ -1285,6 +2015,30 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         *,
         prompt: str | None = None,
     ) -> dict[str, object]:
+        if node == "C":
+            latest_attempt = (
+                coordinator._execution_attempts[-1]
+                if coordinator._execution_attempts
+                else None
+            )
+            if (
+                isinstance(latest_attempt, dict)
+                and latest_attempt.get("node") == "C"
+                and latest_attempt.get("status") != "completed"
+            ):
+                request_attempt_id = str(latest_attempt["attempt_id"])
+            else:
+                request_attempt_id = (
+                    f"attempt-{len(coordinator._execution_attempts) + 1:04d}"
+                )
+            write_test_execution_request(
+                coordinator.project_root,
+                coordinator.artifact_path,
+                project_id_hex=coordinator._seal.project_id.hex(),
+                workflow_run_id=coordinator.run_id,
+                attempt_id=request_attempt_id,
+            )
+
         def operation(node_state: dict[str, object]) -> dict[str, object]:
             response = coordinator.run_execution_agent(
                 role,
@@ -1293,6 +2047,31 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 developer_instructions=f"persistent {role}",
                 timeout_seconds=5,
             )
+            if node == "F":
+                coordinator.artifact_path.mkdir(parents=True, exist_ok=True)
+                review_path = coordinator.artifact_path / "FINAL_REVIEW.md"
+                review_path.write_text("# Final review\n", encoding="utf-8")
+                review_bytes = review_path.read_bytes()
+                (coordinator.artifact_path / "FINAL_REVIEW_VERDICT.json").write_text(
+                    json.dumps(
+                        {
+                            "schema": "aegis.final_review_verdict.v1",
+                            "workflow_run_id": coordinator.run_id,
+                            "verdict": "PASS" if node_state["status"] is True else "FAIL",
+                            "conclusion": "Synthetic final-review conclusion.",
+                            "reasons": ["Synthetic evidence closes the test contract."],
+                            "evidence_index": [
+                                {
+                                    "evidence_id": "final-review",
+                                    "path": str(review_path.resolve()),
+                                    "size": len(review_bytes),
+                                    "sha256": hashlib.sha256(review_bytes).hexdigest(),
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
             return {**node_state, "response": response, "current_node": node}
 
         return coordinator.execute_node(node, operation, state)
@@ -1389,9 +2168,10 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             root = Path(directory)
             project = self.make_sealed_project(root)
             relay = FakeRelayClient()
+            artifact_path = root / "artifacts"
             coordinator = aegis_runtime.RuntimeCoordinator(
                 project_root=project,
-                artifact_path=root / "artifacts",
+                artifact_path=artifact_path,
                 run_id="20260805T000000.000000Z_" + "a" * 32,
                 upstream_port=7899,
                 relay_client=relay,
@@ -1804,6 +2584,23 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 [turn["status"] for turn in saved["execution_turns"]],
                 ["completed"] * 5,
             )
+            c_attempts = [
+                attempt
+                for attempt in saved["execution_attempts"]
+                if attempt["node"] == "C"
+            ]
+            self.assertEqual(len(c_attempts), 2)
+            self.assertEqual(
+                {Path(item["test_evidence_manifest_path"]).name for item in c_attempts},
+                {"attempt-0001.json", "attempt-0003.json"},
+            )
+            self.assertTrue(
+                all(
+                    Path(item["test_evidence_manifest_path"]).is_file()
+                    and len(item["test_ids"]) == 1
+                    for item in c_attempts
+                )
+            )
             self.assertEqual(
                 [turn["evidence_session_ids"] for turn in saved["execution_turns"]],
                 [
@@ -1832,6 +2629,17 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 },
                 {10_000_001, 10_000_002, 10_000_003, 10_000_004, 10_000_005},
             )
+            instruction_receipts = [
+                Path(str(turn["instruction_receipt_path"]))
+                for turn in saved["execution_turns"]
+            ]
+            self.assertTrue(all(path.is_file() for path in instruction_receipts))
+            instruction_receipts[0].write_text("{}\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "instruction receipt snapshot SHA-256 mismatch",
+            ):
+                coordinator._validate_persisted_instruction_receipts()
 
     def test_completed_final_review_can_finish_after_terminal_checkpoint_gap(
         self,
@@ -1897,7 +2705,316 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertEqual(completed["status"], "completed")
             self.assertEqual(harness.open_count, 1)
 
-    def test_complete_requires_terminal_f_attempt_and_accepts_false_verdict(
+    def test_c_cannot_complete_without_a_valid_test_evidence_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-missing-test-evidence",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="C",
+            )
+            coordinator.preflight()
+            artifacts = root / "artifacts"
+            artifacts.mkdir(parents=True, exist_ok=True)
+            (artifacts / "APPROVED_TEST_PLAN.md").write_text(
+                "# Approved test plan\n", encoding="utf-8"
+            )
+            (artifacts / "TEST_EXECUTION_REQUEST.json").write_text(
+                "{}\n", encoding="utf-8"
+            )
+
+            def operation(state: dict[str, object]) -> dict[str, object]:
+                coordinator.run_execution_agent(
+                    "TEST_EXECUTOR",
+                    "C prompt",
+                    output_schema={"type": "object"},
+                    developer_instructions="persistent TEST_EXECUTOR",
+                    timeout_seconds=5,
+                )
+                return {**state, "status": True, "current_node": "C"}
+
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+                self.assertRaisesRegex(
+                    aegis_runtime.RuntimeStateError,
+                    "invalid test execution request",
+                ),
+            ):
+                coordinator.execute_node("C", operation, {"status": True})
+
+            saved = aegis_runtime.load_run_state(
+                root / "artifacts", "execution-missing-test-evidence"
+            )
+            self.assertEqual(saved["status"], "failed")
+
+    def test_runtime_input_mutation_terminates_and_requires_user_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="frozen-input-mutation",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+
+            def mutate(state: dict[str, object]) -> dict[str, object]:
+                (project / "src" / "module.py").write_text(
+                    "VALUE = 2\n", encoding="utf-8"
+                )
+                return {**state, "status": True, "current_node": "A"}
+
+            with self.assertRaisesRegex(
+                aegis_runtime.FrozenInputMutationError,
+                "requires the user to provide a reason",
+            ):
+                coordinator.execute_node("A", mutate, {"status": True})
+
+            saved = aegis_runtime.load_run_state(
+                root / "artifacts", "frozen-input-mutation"
+            )
+            self.assertEqual(saved["status"], "terminated")
+            self.assertEqual(
+                saved["termination_reason_code"], "FROZEN_INPUT_MUTATION"
+            )
+            self.assertEqual(
+                saved["master_review_status"], "REQUIRES_USER_REASON"
+            )
+            self.assertEqual(saved["engineering_verdict"], "INVALIDATED")
+            event = saved["mutation_event"]
+            self.assertEqual(event["attribution_status"], "UNATTRIBUTED")
+            self.assertTrue(
+                any(
+                    change["path"].endswith("src\\module.py")
+                    for change in event["changes"]
+                )
+            )
+
+    @unittest.skipUnless(sys.platform == "win32", "requires Windows change journal")
+    def test_coordinator_prevents_test_from_mutating_locked_runtime_input(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            artifacts = root / "artifacts"
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifacts,
+                run_id="execution-test-mutates-runtime",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="C",
+            )
+            coordinator.preflight()
+            request_path = write_test_execution_request(
+                project,
+                artifacts,
+                project_id_hex=bytes(range(16)).hex(),
+                workflow_run_id=coordinator.run_id,
+                attempt_id="attempt-0001",
+            )
+            request = json.loads(request_path.read_text(encoding="utf-8"))
+            source = project / "src" / "module.py"
+            mutation_script = artifacts / "test_demos" / "mutate_runtime.py"
+            mutation_script.write_text(
+                "from pathlib import Path\n"
+                "import time\n"
+                f"Path({str(source)!r}).write_text('VALUE = 2\\n', encoding='utf-8')\n"
+                "time.sleep(10)\n",
+                encoding="utf-8",
+            )
+            mutation_bytes = mutation_script.read_bytes()
+            request["tests"][0]["command"] = [
+                str(Path(sys._base_executable).resolve()),
+                str(mutation_script.resolve()),
+            ]
+            request["tests"][0]["test_inputs"].append(
+                {
+                    "path": str(mutation_script.resolve()),
+                    "size": len(mutation_bytes),
+                    "sha256": hashlib.sha256(mutation_bytes).hexdigest(),
+                }
+            )
+            manifest_path = artifacts / "evidence-manifests" / "attempt-0001.json"
+            manifest_path.parent.mkdir(parents=True)
+            started = time.monotonic()
+            coordinator._execute_test_request(
+                request,
+                request_sha256=hashlib.sha256(
+                    request_path.read_bytes()
+                ).hexdigest(),
+                execution_policy_sha256="a" * 64,
+                session_ids=["execution-session-mutation"],
+                manifest_path=manifest_path,
+            )
+            self.assertLess(time.monotonic() - started, 5)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertNotEqual(manifest["records"][0]["exit_code"], 0)
+            self.assertEqual(source.read_text(encoding="utf-8"), "VALUE = 1\n")
+
+    def test_modify_then_restore_during_node_is_still_a_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            source = project / "src" / "module.py"
+            original = source.read_bytes()
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="frozen-input-restored",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            coordinator.preflight()
+
+            def mutate_and_restore(state: dict[str, object]) -> dict[str, object]:
+                source.write_bytes(b"VALUE = 999\r\n")
+                source.write_bytes(original)
+                return {**state, "status": True, "current_node": "A"}
+
+            with self.assertRaises(aegis_runtime.FrozenInputMutationError):
+                coordinator.execute_node(
+                    "A", mutate_and_restore, {"status": True}
+                )
+
+            self.assertEqual(source.read_bytes(), original)
+            saved = aegis_runtime.load_run_state(
+                root / "artifacts", "frozen-input-restored"
+            )
+            changes = saved["mutation_event"]["changes"]
+            change = next(
+                item for item in changes if item["path"].endswith("src\\module.py")
+            )
+            self.assertIn("modified", change["observed_actions"])
+
+    def test_new_run_is_blocked_until_mutation_reason_is_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            runtime_root = root / "runtime"
+            mutated = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "mutated" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="mutated",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            mutated.preflight()
+            source = project / "src" / "module.py"
+            original = source.read_bytes()
+
+            def mutate_and_restore(state: dict[str, object]) -> dict[str, object]:
+                source.write_text("VALUE = 2\n", encoding="utf-8")
+                source.write_bytes(original)
+                return {**state, "status": True}
+
+            with self.assertRaises(aegis_runtime.FrozenInputMutationError):
+                mutated.execute_node("A", mutate_and_restore, {"status": True})
+            mutated.run_state_path.unlink()
+            blocked = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "new-one" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="new-one",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "requires a recorded user reason",
+            ):
+                blocked.preflight()
+            rebuilt = aegis_runtime.load_run_state(runtime_root, "mutated")
+            self.assertEqual(
+                rebuilt["master_review_status"], "REQUIRES_USER_REASON"
+            )
+            self.assertTrue(mutated.run_state_path.is_file())
+
+            reason = root / "reason.md"
+            reason.write_text("The user changed the implementation plan.\n", encoding="utf-8")
+            record_frozen_input_mutation_reason(
+                runtime_root,
+                "mutated",
+                reason_path=reason,
+                user_confirmation_id="confirmation-1",
+            )
+            allowed = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "new-two" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="new-two",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            allowed.preflight()
+            self.assertTrue(allowed.run_state_path.is_file())
+
+    def test_deleting_authoritative_database_cannot_reset_project_history(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            runtime_root = root / "runtime"
+            first = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "first" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="first",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            first.preflight()
+            first.fail(RuntimeError("synthetic terminal state"))
+            database = runtime_root / aegis_runtime.CHECKPOINT_RELATIVE_PATH
+            anchor = runtime_root / aegis_runtime.RUNTIME_AUTHORITY_RELATIVE_PATH
+            self.assertTrue(database.is_file())
+            self.assertTrue(anchor.is_file())
+            database.unlink()
+
+            second = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=runtime_root / "runs" / "second" / "artifacts",
+                runtime_root=runtime_root,
+                run_id="second",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+            )
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "anchor/database pair is incomplete",
+            ):
+                second.preflight()
+
+    def test_complete_requires_terminal_f_attempt_and_terminates_false_verdict(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1947,8 +3064,84 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             completed = aegis_runtime.load_run_state(
                 root / "artifacts", "execution-terminal-binding"
             )
-            self.assertEqual(completed["status"], "completed")
+            self.assertEqual(completed["status"], "terminated")
             self.assertIs(completed["graph_state"]["status"], False)
+            self.assertEqual(completed["workflow_state"], "TERMINATED")
+            self.assertEqual(completed["engineering_verdict"], "FAIL")
+            self.assertFalse(completed["delivery_eligible"])
+            self.assertEqual(completed["master_review_status"], "PENDING")
+
+    def test_f_cannot_complete_without_structured_verdict(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="missing-final-verdict",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="F",
+            )
+            coordinator.preflight()
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "F produced an invalid verdict",
+            ):
+                coordinator.execute_node(
+                    "F",
+                    lambda state: {**state, "status": False, "current_node": "F"},
+                    {"status": True},
+                )
+
+    def test_complete_terminates_at_failed_report_without_running_f(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            harness = ExecutionTurnHarness(root)
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=root / "artifacts",
+                run_id="execution-report-failed",
+                upstream_port=7899,
+                relay_client=ExecutionRelayClient(harness),
+                start_node="E",
+            )
+            coordinator.preflight()
+
+            with (
+                patch.object(
+                    aegis_runtime,
+                    "AppServerClient",
+                    side_effect=lambda **kwargs: ExecutionAppServer(harness, **kwargs),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "default_app_server_command",
+                    return_value=("codex.cmd", "app-server", "--listen", "stdio://"),
+                ),
+                patch.object(
+                    aegis_runtime,
+                    "read_codex_cli_version",
+                    return_value="codex-cli 0.145.0",
+                ),
+            ):
+                report = self.run_execution_node(
+                    coordinator,
+                    "E",
+                    "TEST_REPORT_WRITER",
+                    {"status": False},
+                )
+
+            coordinator.complete(report)
+            terminated = aegis_runtime.load_run_state(
+                root / "artifacts", "execution-report-failed"
+            )
+            self.assertEqual(terminated["status"], "terminated")
+            self.assertEqual(terminated["last_completed_node"], "E")
+            self.assertEqual(terminated["workflow_state"], "TERMINATED")
+            self.assertEqual(terminated["engineering_verdict"], "INCOMPLETE")
+            self.assertEqual(terminated["master_review_status"], "NOT_REQUIRED")
 
     def test_completed_execution_turn_replays_after_node_checkpoint_gap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2359,6 +3552,15 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     json.dumps(saved, ensure_ascii=False, indent=2) + "\n",
                     encoding="utf-8",
                 )
+                encoded_saved = coordinator.run_state_path.read_bytes()
+                aegis_runtime._update_run_reservation_state(
+                    coordinator.runtime_root,
+                    coordinator.artifact_path,
+                    coordinator.run_id,
+                    str(saved["reservation_token"]),
+                    status=str(saved["status"]),
+                    encoded_state=encoded_saved,
+                )
                 resumed_relay = ExecutionRelayClient(harness)
                 resumed = aegis_runtime.RuntimeCoordinator(
                     project_root=project,
@@ -2607,6 +3809,11 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
+            artifact_path = root / "artifacts"
+            context_path = self.write_reasoning_context_pack(
+                project, root / "planning-context-source.json", manifest
+            )
             pending_observed: list[str] = []
 
             class ManagedProcess:
@@ -2681,6 +3888,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     self.process: ManagedProcess | None = None
                     self.thread_index = 0
                     self.turn_index = 0
+                    self.instruction_receipts: dict[
+                        str, tuple[Path, bytes]
+                    ] = {}
 
                 def start(self) -> None:
                     self.process = self.process_factory(["codex", "app-server"])
@@ -2691,10 +3901,29 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     self.process.wait(timeout=1)
 
                 def start_thread(self, **kwargs: Any) -> SimpleNamespace:
-                    del kwargs
                     self.thread_index += 1
+                    thread_id = f"planning-thread-{self.thread_index}"
+                    instructions = str(kwargs.get("developer_instructions", ""))
+                    marker = (
+                        "Before every role task, atomically write the exact UTF-8 "
+                        "JSON below to `"
+                    )
+                    start = instructions.find(marker)
+                    if start >= 0:
+                        path_start = start + len(marker)
+                        path_end = instructions.index("`", path_start)
+                        json_start = instructions.index(
+                            "```json\n", path_end
+                        ) + len("```json\n")
+                        json_end = instructions.index("\n```", json_start)
+                        self.instruction_receipts[thread_id] = (
+                            Path(instructions[path_start:path_end]),
+                            (instructions[json_start:json_end] + "\n").encode(
+                                "utf-8"
+                            ),
+                        )
                     return SimpleNamespace(
-                        thread_id=f"planning-thread-{self.thread_index}",
+                        thread_id=thread_id,
                         model="gpt-5.6-sol",
                         reasoning_effort="high",
                     )
@@ -2710,6 +3939,11 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     self, thread_id: str, prompt: str, **kwargs: Any
                 ) -> SimpleNamespace:
                     del prompt, kwargs
+                    receipt = self.instruction_receipts.get(thread_id)
+                    if receipt is not None:
+                        path, encoded = receipt
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(encoded)
                     self.turn_index += 1
                     return SimpleNamespace(
                         thread_id=thread_id,
@@ -2748,16 +3982,14 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
             coordinator = aegis_runtime.RuntimeCoordinator(
                 project_root=project,
-                artifact_path=root / "artifacts",
+                artifact_path=artifact_path,
                 run_id="planning-run",
                 upstream_port=7899,
                 relay_client=relay,
                 start_node="A",
+                engineering_input_manifest_path=manifest,
             )
             coordinator.preflight()
-            artifact_path = root / "artifacts"
-            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
-            context_path.write_text("{}\n", encoding="utf-8")
             with (
                 patch.object(
                     aegis_runtime, "AppServerClient", side_effect=make_app_server
@@ -2871,10 +4103,12 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
             artifact_path = root / "artifacts"
             artifact_path.mkdir()
-            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
-            context_path.write_text('{"accepted":true}\n', encoding="utf-8")
+            context_path = self.write_reasoning_context_pack(
+                project, root / "planning-context-source.json", manifest
+            )
             coordinator = aegis_runtime.RuntimeCoordinator(
                 project_root=project,
                 artifact_path=artifact_path,
@@ -2882,6 +4116,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 upstream_port=7899,
                 relay_client=FakeRelayClient(),
                 start_node="A",
+                engineering_input_manifest_path=manifest,
             )
             coordinator.preflight()
 
@@ -2911,6 +4146,19 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     "error_count": 1,
                     "warning_count": 0,
                     "verdict": "PASS",
+                    "semantic_issues": [
+                        {
+                            "semantic_issue_id": "issue-a-to-b-evidence",
+                            "premises": ["A is asserted."],
+                            "inference": "A is claimed to imply B.",
+                            "conclusion": "B is required.",
+                            "missing_evidence": ["Evidence connecting A to B."],
+                            "alternative_explanations": ["C may also explain B."],
+                            "closure_conditions": [
+                                "Add evidence or narrow the conclusion."
+                            ],
+                        }
+                    ],
                 },
             )
             self.assertFalse(accepted)
@@ -2935,6 +4183,15 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     "error_count": 0,
                     "warning_count": 2,
                     "verdict": "PASS",
+                    "prior_issue_assessments": [
+                        {
+                            "prior_semantic_issue_id": "issue-a-to-b-evidence",
+                            "disposition": "RESOLVED",
+                            "current_semantic_issue_ids": [],
+                            "rationale": "The revised plan adds the missing bridge.",
+                            "evidence": ["TEST_PLAN.md section for A-to-B evidence"],
+                        }
+                    ],
                 },
             )
 
@@ -2963,10 +4220,12 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
             artifact_path = root / "artifacts"
             artifact_path.mkdir()
-            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
-            context_path.write_text("{}\n", encoding="utf-8")
+            context_path = self.write_reasoning_context_pack(
+                project, root / "planning-context-source.json", manifest
+            )
             coordinator = aegis_runtime.RuntimeCoordinator(
                 project_root=project,
                 artifact_path=artifact_path,
@@ -2974,6 +4233,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 upstream_port=7899,
                 relay_client=FakeRelayClient(),
                 start_node="A",
+                engineering_input_manifest_path=manifest,
             )
             coordinator.preflight()
 
@@ -2996,10 +4256,12 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             ):
                 root = Path(directory)
                 project = self.make_sealed_project(root)
+                manifest = self.write_engineering_input_manifest(project)
                 artifact_path = root / "artifacts"
                 artifact_path.mkdir()
-                context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
-                context_path.write_text("{}\n", encoding="utf-8")
+                context_path = self.write_reasoning_context_pack(
+                    project, root / "planning-context-source.json", manifest
+                )
                 coordinator = aegis_runtime.RuntimeCoordinator(
                     project_root=project,
                     artifact_path=artifact_path,
@@ -3007,6 +4269,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     upstream_port=7899,
                     relay_client=FakeRelayClient(),
                     start_node="A",
+                    engineering_input_manifest_path=manifest,
                 )
                 coordinator.preflight()
                 author = coordinator.prepare_planning_author(context_path)
@@ -3022,7 +4285,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     (project / "src" / "module.py").write_text(
                         "VALUE = 2\n", encoding="utf-8"
                     )
-                    expected = "project source does not match the recorded seal"
+                    expected = "does not match the recorded seal"
                     expected_error = project_seal_store.ProjectSealMismatchError
 
                 with self.assertRaisesRegex(expected_error, expected):
@@ -3032,10 +4295,12 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
             artifact_path = root / "artifacts"
             artifact_path.mkdir()
-            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
-            context_path.write_text("{}\n", encoding="utf-8")
+            context_path = self.write_reasoning_context_pack(
+                project, root / "planning-context-source.json", manifest
+            )
             coordinator = aegis_runtime.RuntimeCoordinator(
                 project_root=project,
                 artifact_path=artifact_path,
@@ -3043,6 +4308,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 upstream_port=7899,
                 relay_client=FakeRelayClient(),
                 start_node="A",
+                engineering_input_manifest_path=manifest,
             )
             coordinator.preflight()
             author = coordinator.prepare_planning_author(context_path)
@@ -3060,6 +4326,19 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                         "error_count": 1,
                         "warning_count": 0,
                         "verdict": "FAIL",
+                        "semantic_issues": [
+                            {
+                                "semantic_issue_id": "issue-a-to-b-evidence",
+                                "premises": ["A is asserted."],
+                                "inference": "A is claimed to imply B.",
+                                "conclusion": "B is required.",
+                                "missing_evidence": ["Evidence connecting A to B."],
+                                "alternative_explanations": ["C may also explain B."],
+                                "closure_conditions": [
+                                    "Add evidence or narrow the conclusion."
+                                ],
+                            }
+                        ],
                     },
                 )
             )
@@ -3071,16 +4350,108 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             ):
                 coordinator.prepare_planning_author(context_path)
 
+    def test_repeated_semantic_issue_is_persisted_as_unresolved_refusal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            context = self.write_reasoning_context_pack(
+                project, root / "planning-context-source.json", manifest
+            )
+            coordinator = aegis_runtime.RuntimeCoordinator(
+                project_root=project,
+                artifact_path=artifacts,
+                run_id="repeated-semantic-refusal",
+                upstream_port=7899,
+                relay_client=FakeRelayClient(),
+                start_node="A",
+                engineering_input_manifest_path=manifest,
+            )
+            coordinator.preflight()
+            issue = {
+                "semantic_issue_id": "issue-a-to-b-evidence",
+                "premises": ["A is asserted."],
+                "inference": "A is claimed to imply B.",
+                "conclusion": "B is required.",
+                "missing_evidence": ["Evidence connecting A to B."],
+                "alternative_explanations": ["C may also explain B."],
+                "closure_conditions": ["Add evidence or narrow the conclusion."],
+            }
+
+            for index in (1, 2):
+                author = coordinator.prepare_planning_author(context)
+                Path(str(author["plan_path"])).write_text(
+                    "# Unchanged claim\n", encoding="utf-8"
+                )
+                frozen = coordinator.freeze_planning_plan(str(author["round_id"]))
+                review = coordinator.prepare_planning_review()
+                Path(str(review["review_report_path"])).write_text(
+                    "# Same unresolved issue\n", encoding="utf-8"
+                )
+                reviewed_issue = dict(issue)
+                if index == 2:
+                    reviewed_issue.update(
+                        semantic_issue_id="issue-renamed-with-same-logic",
+                        inference="B is still inferred from A without a bridge.",
+                        predecessor_issue_ids=["issue-a-to-b-evidence"],
+                    )
+                assessments = []
+                if index == 2:
+                    assessments = [
+                        {
+                            "prior_semantic_issue_id": "issue-a-to-b-evidence",
+                            "disposition": "REPEATED_UNRESOLVED",
+                            "current_semantic_issue_ids": [
+                                "issue-renamed-with-same-logic"
+                            ],
+                            "rationale": "The logical A-to-B gap remains unchanged.",
+                            "evidence": ["TEST_PLAN.md repeats the unsupported inference"],
+                        }
+                    ]
+                self.assertFalse(
+                    coordinator.record_planning_review(
+                        str(review["round_id"]),
+                        {
+                            "reviewed_plan_sha256": frozen["plan_sha256"],
+                            "score": 80,
+                            "error_count": 1,
+                            "warning_count": 0,
+                            "verdict": "FAIL",
+                            "semantic_issues": [reviewed_issue],
+                            "prior_issue_assessments": assessments,
+                        },
+                    )
+                )
+                if index == 2:
+                    self.assertEqual(
+                        coordinator._planning_rounds[-1][
+                            "repeated_unresolved_issue_ids"
+                        ],
+                        ["issue-renamed-with-same-logic"],
+                    )
+
+            saved = aegis_runtime.load_run_state(
+                artifacts, "repeated-semantic-refusal"
+            )
+            self.assertEqual(
+                saved["repeated_semantic_refusal_issue_ids"],
+                ["issue-renamed-with-same-logic"],
+            )
+
     def test_round_allocation_recovers_after_directory_creation_before_state_commit(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
             artifact_path = root / "artifacts"
             artifact_path.mkdir()
-            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
-            context_path.write_text("{}\n", encoding="utf-8")
+            context_path = self.write_reasoning_context_pack(
+                project, root / "planning-context-source.json", manifest
+            )
             first = aegis_runtime.RuntimeCoordinator(
                 project_root=project,
                 artifact_path=artifact_path,
@@ -3088,6 +4459,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 upstream_port=7899,
                 relay_client=FakeRelayClient(),
                 start_node="A",
+                engineering_input_manifest_path=manifest,
             )
             first.preflight()
             original_write = first._write_state
@@ -3134,10 +4506,12 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
             artifact_path = root / "artifacts"
             artifact_path.mkdir()
-            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
-            context_path.write_text("{}\n", encoding="utf-8")
+            context_path = self.write_reasoning_context_pack(
+                project, root / "planning-context-source.json", manifest
+            )
             coordinator = aegis_runtime.RuntimeCoordinator(
                 project_root=project,
                 artifact_path=artifact_path,
@@ -3145,6 +4519,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 upstream_port=7899,
                 relay_client=FakeRelayClient(),
                 start_node="A",
+                engineering_input_manifest_path=manifest,
             )
             coordinator.preflight()
             author = coordinator.prepare_planning_author(context_path)
@@ -3210,6 +4585,15 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
             client = RecoveringClient()
             coordinator._planning_app_server = client  # type: ignore[assignment]
+            coordinator._compose_instruction_receipt_protocol(
+                "TEST_PLAN_AUTHOR", "author"
+            )
+            receipt_spec = coordinator._instruction_receipt_specs["TEST_PLAN_AUTHOR"]
+            receipt_path = Path(str(receipt_spec["path"]))
+            receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            receipt_path.write_bytes(
+                aegis_runtime._canonical_json_bytes(receipt_spec["payload"])
+            )
             response = coordinator.run_planning_agent(
                 "TEST_PLAN_AUTHOR",
                 "must not be sent",
@@ -3268,6 +4652,20 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     ).hexdigest(),
                 }
             ]
+            coordinator._compose_instruction_receipt_protocol(
+                "TEST_PLAN_AUTHOR", "author"
+            )
+            receipt_spec = coordinator._instruction_receipt_specs["TEST_PLAN_AUTHOR"]
+            receipt_path = Path(str(receipt_spec["path"]))
+            receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            receipt_path.write_bytes(
+                aegis_runtime._canonical_json_bytes(receipt_spec["payload"])
+            )
+            coordinator._seal_instruction_receipt(
+                "TEST_PLAN_AUTHOR",
+                "planning-completed-replay:round-0001:author",
+                coordinator._planning_turns[0],
+            )
             coordinator._planning_ready_roles = {"TEST_PLAN_AUTHOR"}
 
             class ReplayOnlyClient:
@@ -3375,10 +4773,12 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
             artifact_path = root / "artifacts"
             artifact_path.mkdir()
-            context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
-            context_path.write_text("{}\n", encoding="utf-8")
+            context_path = self.write_reasoning_context_pack(
+                project, root / "planning-context-source.json", manifest
+            )
             first = aegis_runtime.RuntimeCoordinator(
                 project_root=project,
                 artifact_path=artifact_path,
@@ -3386,6 +4786,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 upstream_port=7899,
                 relay_client=FakeRelayClient(),
                 start_node="A",
+                engineering_input_manifest_path=manifest,
             )
             first.preflight()
             author = first.prepare_planning_author(context_path)
@@ -3469,6 +4870,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
             artifact_path = root / "artifacts"
             first = aegis_runtime.RuntimeCoordinator(
                 project_root=project,
@@ -3477,6 +4879,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 upstream_port=7899,
                 relay_client=FakeRelayClient(),
                 start_node="A",
+                engineering_input_manifest_path=manifest,
             )
             first.preflight()
             self.approve_planning_round(first, artifact_path)
@@ -3518,6 +4921,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             ):
                 root = Path(directory)
                 project = self.make_sealed_project(root)
+                manifest = self.write_engineering_input_manifest(project)
                 artifact_path = root / "artifacts"
                 run_id = f"planning-evidence-{incomplete_status.lower()}"
                 coordinator = aegis_runtime.RuntimeCoordinator(
@@ -3527,6 +4931,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     upstream_port=7899,
                     relay_client=FakeRelayClient(),
                     start_node="A",
+                    engineering_input_manifest_path=manifest,
                 )
                 coordinator.preflight()
                 self.approve_planning_round(coordinator, artifact_path)
@@ -3624,6 +5029,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             ):
                 root = Path(directory)
                 project = self.make_sealed_project(root)
+                manifest = self.write_engineering_input_manifest(project)
                 artifact_path = root / "artifacts"
                 run_id = f"planning-zero-{zero_direction}"
                 first_bytes = {
@@ -3639,6 +5045,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     upstream_port=7899,
                     relay_client=first_relay,  # type: ignore[arg-type]
                     start_node="A",
+                    engineering_input_manifest_path=manifest,
                 )
                 first.preflight()
                 self.approve_planning_round(first, artifact_path)
@@ -3696,6 +5103,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = self.make_sealed_project(root)
+            manifest = self.write_engineering_input_manifest(project)
             artifact_path = root / "artifacts"
             run_id = "planning-all-evidence-valid"
             coordinator = aegis_runtime.RuntimeCoordinator(
@@ -3705,6 +5113,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 upstream_port=7899,
                 relay_client=FakeRelayClient(),
                 start_node="A",
+                engineering_input_manifest_path=manifest,
             )
             coordinator.preflight()
             self.approve_planning_round(coordinator, artifact_path)
@@ -3792,7 +5201,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             project = self.make_sealed_project(root)
             artifact_path = root / "artifacts"
             run_id = "run-collision"
-            state_path = artifact_path / ".aegis" / "runs" / run_id / "RUN_STATE.json"
+            state_path = artifact_path / "runs" / run_id / "RUN_STATE.json"
             state_path.parent.mkdir(parents=True)
             original = b'{"owner":"older-run"}\n'
             state_path.write_bytes(original)
@@ -3819,8 +5228,13 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             root = Path(directory)
             project = self.make_sealed_project(root)
             run_id = "run-sqlite-collision"
-            database = project / ".aegis" / "runtime" / "checkpoints.sqlite3"
-            database.parent.mkdir(parents=True)
+            runtime_root = root / "artifacts"
+            aegis_runtime.initialize_runtime_authority(
+                runtime_root,
+                project_id_hex=bytes(range(16)).hex(),
+                runtime_authority_id="ab" * 16,
+            )
+            database = runtime_root / "project_state" / "checkpoints.sqlite3"
             connection = sqlite3.connect(database)
             try:
                 connection.execute("CREATE TABLE checkpoints(thread_id TEXT NOT NULL)")
@@ -3833,7 +5247,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             relay = FakeRelayClient()
             coordinator = aegis_runtime.RuntimeCoordinator(
                 project_root=project,
-                artifact_path=root / "artifacts",
+                artifact_path=runtime_root,
                 run_id=run_id,
                 upstream_port=7899,
                 relay_client=relay,
@@ -3879,7 +5293,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertCountEqual(results, ["reserved", "rejected"])
             saved = json.loads(
                 (
-                    artifact_path / ".aegis" / "runs" / run_id / "RUN_STATE.json"
+                    artifact_path / "runs" / run_id / "RUN_STATE.json"
                 ).read_text(encoding="utf-8")
             )
             self.assertRegex(saved["reservation_token"], r"^[0-9a-f]{32}$")
@@ -3942,18 +5356,26 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 "aegis.run_state.v2",
                 "aegis.run_state.v3",
                 "aegis.run_state.v4",
+                "aegis.run_state.v8",
+                "aegis.run_state.v9",
             ):
                 with self.subTest(schema=schema):
-                    saved["schema"] = schema
-                    first.run_state_path.write_text(
-                        json.dumps(saved) + "\n", encoding="utf-8"
-                    )
+                    legacy = dict(saved)
+                    legacy["schema"] = schema
 
                     with self.assertRaisesRegex(
                         aegis_runtime.RuntimeStateError,
-                        "predates durable TraceRelay registration intents",
+                        "predates the v10 authoritative-state contract",
                     ):
-                        aegis_runtime.load_run_state(artifact_path, run_id)
+                        aegis_runtime.RuntimeCoordinator(
+                            project_root=project,
+                            artifact_path=artifact_path,
+                            run_id=run_id,
+                            upstream_port=7899,
+                            relay_client=FakeRelayClient(),
+                            start_node="A",
+                            prior_state=legacy,
+                        )
 
 
 if __name__ == "__main__":

@@ -1,9 +1,12 @@
 ---
 name: aegis-test-plan-author
+version: 4
 description: Use when acting as Aegis TEST_PLAN_AUTHOR to create a production-grade test plan from requirement, implementation, and reasoning-ledger artifacts.
 ---
 
 # 测试方案制定者 Skill
+
+输入存在 `engineering_input_manifest` 时，必须先校验其 SHA-256，再读取其中全部 `REQUIREMENTS` 与 `IMPLEMENTATION_PLAN` 文档。测试方案必须逐项引用这些冻结输入；不得从聊天上下文猜测需求或方案。
 
 ## 角色定位
 
@@ -105,7 +108,7 @@ description: Use when acting as Aegis TEST_PLAN_AUTHOR to create a production-gr
 4. 如果输入包含 `status=false`，不得继续制定测试方案。
 5. 必须能定位需求设计文档。
 6. 必须能定位实现方案文档。
-7. 必须能读取 reasoning ledger context pack，或必须能通过项目 reasoning ledger 检索得到 context pack。
+7. 必须读取 Coordinator 绑定并冻结的 reasoning ledger context pack。
 
 文档定位规则：
 
@@ -146,13 +149,11 @@ reasoning ledger 是项目级判断记忆层。
 
 当前节点必须优先读取当前任务相关的 reasoning ledger context pack。
 
-context pack 获取顺序：
+context pack 获取规则：
 
-1. 如果输入提供 `reasoning_ledger_context_pack`，直接读取该文件。
-2. 如果 `artifact_path/README.md` 或共享目录中的稳定文件明确列出 context pack，读取该文件。
-3. 如果项目根目录存在 `.aegis/project.json`，通过项目 reasoning ledger 检索 context pack。
-4. 如果存在 ledger export snapshot 但无法在线检索，允许读取 snapshot，并在 README 中标注降级。
-5. 如果无法读取任何可用 reasoning ledger 信息，必须按本节点职责判断是否阻塞；凡涉及覆盖性、充分性、最终结论的节点，不得声称判断充分。
+1. 只读取 Coordinator 控制输入中的冻结路径和 SHA-256。
+2. A-F 期间禁止查询在线 reasoning ledger，以免引入冻结边界外的新状态。
+3. 路径缺失、哈希不匹配或 pack 范围不足时返回 `status=false`；不得自行生成、替换或降级。
 
 reasoning ledger 状态规则：
 
@@ -331,6 +332,17 @@ Bug 数量不直接加分；只有通过生产有效性校验的缺陷才计入�
 10. 阻塞条件。
 11. 通过 / 失败 / 跳过判定标准。
 12. 风险与待确认问题。
+13. 唯一结构化执行策略 block。
+
+执行策略必须位于以下固定标记之间，内容是合法 JSON：
+
+```text
+<!-- AEGIS_TEST_EXECUTION_POLICY_BEGIN -->
+{"schema":"aegis.test_execution_policy.v2","tests":[...]}
+<!-- AEGIS_TEST_EXECUTION_POLICY_END -->
+```
+
+每个测试项必须给出稳定 test/requirement ID、完整 argv、项目内无 junction 的绝对 cwd、完整有效 `environment`、超时、全部输入描述符和实际 executable 描述符。环境不会继承宿主值，必须显式包含 `PYTHONDONTWRITEBYTECODE=1` 及测试真正需要的每一项。禁止 shell、内联代码、Python `-m/-c`、Node eval/print 模式、未哈希入口。需要辅助脚本时，在当前 round 目录内创建并在策略中绑定路径、大小、SHA-256。描述性矩阵与结构化策略必须一一对应。
 
 测试矩阵每一行至少包含：
 

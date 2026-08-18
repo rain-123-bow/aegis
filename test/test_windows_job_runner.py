@@ -18,6 +18,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 import aegis_runtime
 import project_seal_store
 import tracerelay_client
+from aegis_test_support import (
+    initialize_test_git_repository,
+    write_test_runtime_scope_policy,
+)
 
 
 def relay_payload(command: str, state: str = "IDLE") -> dict[str, object]:
@@ -71,7 +75,18 @@ class WindowsJobRunnerTests(unittest.TestCase):
 
         self.assertEqual(wrapped[0], base_executable)
         self.assertEqual(wrapped[1:3], ["-I", "-S"])
-        self.assertEqual(wrapped[-3:], ["codex.exe", "exec", "resume"])
+        self.assertEqual(
+            wrapped[4:10],
+            [
+                "--active-process-limit",
+                "64",
+                "--job-memory-limit-bytes",
+                str(4 * 1024**3),
+                "--process-time-limit-100ns",
+                str(7_200 * 10_000_000),
+            ],
+        )
+        self.assertEqual(wrapped[-4:], ["--", "codex.exe", "exec", "resume"])
 
     def test_relay_fault_kills_real_descendant_tree_and_preserves_cause(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -80,11 +95,13 @@ class WindowsJobRunnerTests(unittest.TestCase):
             source = project / "src" / "module.py"
             source.parent.mkdir(parents=True)
             source.write_text("VALUE = 1\n", encoding="utf-8")
+            write_test_runtime_scope_policy(project)
+            head = initialize_test_git_repository(project)
             project_seal_store.record_project_seal(
                 project,
-                git_head_before_record="a" * 40,
+                git_head_before_record=head,
                 project_id=bytes(range(16)),
-                run_id=bytes(range(16, 32)),
+                seal_chain_id=bytes(range(16, 32)),
             )
             scripts = root / "scripts"
             scripts.mkdir()
@@ -177,19 +194,25 @@ class WindowsJobRunnerTests(unittest.TestCase):
                 relay_client=client,
                 start_node="A",
             )
-            coordinator.preflight()
-
-            def invoke(_state: dict[str, object]) -> dict[str, object]:
-                coordinator.run_codex_process(
-                    [sys.executable, str(parent), str(root)], timeout_seconds=30
-                )
-                return {"status": True}
-
             try:
-                with self.assertRaisesRegex(
-                    aegis_runtime.TraceRelayError, "injected journal failure"
+                with patch.object(
+                    coordinator,
+                    "_capture_external_runtime_identity",
+                    return_value=None,
                 ):
-                    coordinator.execute_node("A", invoke, {"status": True})
+                    coordinator.preflight()
+
+                    def invoke(_state: dict[str, object]) -> dict[str, object]:
+                        coordinator.run_codex_process(
+                            [sys.executable, str(parent), str(root)],
+                            timeout_seconds=30,
+                        )
+                        return {"status": True}
+
+                    with self.assertRaisesRegex(
+                        aegis_runtime.TraceRelayError, "injected journal failure"
+                    ):
+                        coordinator.execute_node("A", invoke, {"status": True})
             finally:
                 pid_files = [root / "parent.pid", root / "child.pid", root / "grandchild.pid"]
                 pids = [int(path.read_text(encoding="ascii")) for path in pid_files if path.exists()]

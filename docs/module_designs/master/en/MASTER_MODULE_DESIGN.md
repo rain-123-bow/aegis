@@ -1,27 +1,30 @@
 # Master Module Design
 
+This file follows the current Master model. The authoritative contract is
+[`docs/AEGIS_ARCHITECTURE_CONTRACT.md`](../../../AEGIS_ARCHITECTURE_CONTRACT.md).
+
 ```mermaid
 flowchart TD
-  A["continuity_preflight"] --> B{"project can proceed?"}
-  B -- "no remote / blocked" --> Z["final_commit_gate + closeout"]
-  B -- "clean or recovered" --> C["pm_intake"]
-  C --> D["requirement_doc_draft"]
-  D --> E["requirement_user_approval interrupt"]
-  E --> F{"approved?"}
-  F -- "no" --> Z
-  F -- "yes" --> G["requirement_review"]
-  G --> H["review_debate_dispatch"]
-  H --> I["review_user_approval interrupt"]
-  I --> J{"approved?"}
-  J -- "no" --> Z
-  J -- "yes" --> K["execution_handoff"]
-  K --> L["downstream Execution/Test/Final Review graph"]
+  A["Project Gate"] --> B["Master writes requirements"]
+  B --> C["Independent reviewer audits requirements"]
+  C --> D{"User approves and freezes requirements?"}
+  D -- "no" --> B
+  D -- "yes" --> E["Master writes implementation plan"]
+  E --> F["Same independent reviewer audits requirements and plan"]
+  F --> G{"User approves and freezes plan?"}
+  G -- "no" --> E
+  G -- "yes" --> H["Master writes code and causal facts"]
+  H --> I["Master self-tests"]
+  I --> J["Provision + Preflight"]
+  J --> K{"Durable user start authorization?"}
+  K -- "no" --> Z["Wait for authorization"]
+  K -- "yes" --> L["A-F engineering review graph"]
 ```
 
 ## Boundary
 
-Master owns requirement admission, review routing, approval gates, continuity preflight, and
-Execution handoff. Master does not execute code, run tests, or merge global causal truth.
+Master is the single semantic author of requirements, implementation plan, code, and corresponding
+causal facts. It must not delegate final semantic authorship to a subagent. An independent reviewer
+performs adversarial review. The user freezes requirements, plan, scope, and start authorization.
 
-User-stated implementation choices are preferences until admitted by project facts, written
-customer evidence, hard external constraints, or first-principles necessity.
+Master is outside the A-F LangGraph. Frozen inputs must not change during an A-F run.

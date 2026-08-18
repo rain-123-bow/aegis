@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -17,7 +18,7 @@ BUNDLED_EXECUTABLE = (
     / "windows-x64"
     / "aegis-seal.exe"
 )
-BUNDLED_SHA256 = "256b71015465a7a57b648753834583e095383d77d88d2140e5e970a174375023"
+BUNDLED_SHA256 = "eb2d5ce90c8cfa08b30bb37287486a42521ef18ce80ac1ac765461994fd59301"
 
 _MANIFEST_MAGIC = b"ASC1MF\r\n"
 _SEAL_PATTERN = re.compile(r"ASC1:[0-9a-f]{64}")
@@ -35,13 +36,13 @@ class AegisSealError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class SealContext:
     project_id: bytes
-    run_id: bytes
+    seal_chain_id: bytes
     sequence: int = 0
     previous_seal: bytes = bytes(32)
 
     def __post_init__(self) -> None:
         _require_bytes("project_id", self.project_id, 16)
-        _require_bytes("run_id", self.run_id, 16)
+        _require_bytes("seal_chain_id", self.seal_chain_id, 16)
         _require_bytes("previous_seal", self.previous_seal, 32)
         if isinstance(self.sequence, bool) or not isinstance(self.sequence, int):
             raise ValueError("sequence must be an unsigned 64-bit integer")
@@ -81,43 +82,6 @@ def verify_bundled_executable(
     return executable
 
 
-def _collect_core_files(project_root: Path) -> list[tuple[str, bytes]]:
-    project_root = Path(project_root).resolve()
-    if not project_root.is_dir():
-        raise AegisSealError(f"project root is not a directory: {project_root}")
-
-    entries: list[tuple[str, bytes]] = []
-    for scope_name in ("src", "include"):
-        scope = project_root / scope_name
-        if not scope.exists():
-            continue
-        if not scope.is_dir():
-            raise AegisSealError(f"core scope is not a directory: {scope}")
-        for path in scope.rglob("*"):
-            relative = path.relative_to(project_root)
-            if "__pycache__" in relative.parts or path.suffix in {".pyc", ".pyo"}:
-                continue
-            if path.is_symlink():
-                raise AegisSealError(f"core source must not be a symlink: {relative}")
-            if path.is_dir():
-                continue
-            if not path.is_file():
-                raise AegisSealError(f"unsupported core source type: {relative}")
-            logical_path = relative.as_posix()
-            try:
-                logical_path.encode("utf-8", errors="strict")
-            except UnicodeEncodeError as error:
-                raise AegisSealError(
-                    f"core source path is not valid UTF-8: {relative}"
-                ) from error
-            entries.append((logical_path, path.read_bytes()))
-
-    if not entries:
-        raise AegisSealError("project contains no src/ or include/ core files")
-    entries.sort(key=lambda entry: entry[0].encode("utf-8"))
-    return entries
-
-
 def _write_manifest(
     manifest_path: Path,
     context: SealContext,
@@ -130,7 +94,7 @@ def _write_manifest(
     with manifest_path.open("xb") as output:
         output.write(_MANIFEST_MAGIC)
         output.write(context.project_id)
-        output.write(context.run_id)
+        output.write(context.seal_chain_id)
         output.write(struct.pack("<Q", context.sequence))
         output.write(context.previous_seal)
         output.write(struct.pack("<I", len(entries)))
@@ -165,11 +129,14 @@ def _run_seal_core(arguments: list[str]) -> subprocess.CompletedProcess[str]:
         raise AegisSealError(f"AegisSealCore process failed: {error}") from error
 
 
-def compute_project_seal(project_root: Path, context: SealContext) -> str:
-    entries = _collect_core_files(project_root)
+def compute_project_seal(
+    context: SealContext,
+    entries: Sequence[tuple[str, bytes]],
+) -> str:
+    materialized_entries = list(entries)
     with tempfile.TemporaryDirectory(prefix="aegis-seal-") as temporary_directory:
         manifest_path = Path(temporary_directory) / "project.asc1mf"
-        _write_manifest(manifest_path, context, entries)
+        _write_manifest(manifest_path, context, materialized_entries)
         completed = _run_seal_core(["compute", str(manifest_path)])
 
     seal = completed.stdout.rstrip("\r\n")
@@ -187,17 +154,17 @@ def compute_project_seal(project_root: Path, context: SealContext) -> str:
 
 
 def verify_project_seal(
-    project_root: Path,
     context: SealContext,
+    entries: Sequence[tuple[str, bytes]],
     expected_seal: str,
 ) -> bool:
     if _SEAL_PATTERN.fullmatch(expected_seal) is None:
         raise ValueError("expected_seal must use canonical ASC1 lowercase form")
 
-    entries = _collect_core_files(project_root)
+    materialized_entries = list(entries)
     with tempfile.TemporaryDirectory(prefix="aegis-seal-") as temporary_directory:
         manifest_path = Path(temporary_directory) / "project.asc1mf"
-        _write_manifest(manifest_path, context, entries)
+        _write_manifest(manifest_path, context, materialized_entries)
         completed = _run_seal_core(
             ["verify", str(manifest_path), expected_seal]
         )

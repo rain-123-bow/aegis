@@ -592,24 +592,28 @@ class ReasoningLedger:
 
     def export_snapshot(self, output_path: str | Path | None = None) -> dict[str, list[dict[str, Any]]]:
         with self.connect() as conn:
-            item_rows = conn.execute(
-                sql.SQL("SELECT * FROM {item_table} WHERE project_id = %s ORDER BY id").format(
-                    item_table=self._table("reasoning_item")
-                ),
-                (self.project_id,),
-            ).fetchall()
-            edge_rows = conn.execute(
-                sql.SQL("SELECT * FROM {edge_table} WHERE project_id = %s ORDER BY id").format(
-                    edge_table=self._table("reasoning_edge")
-                ),
-                (self.project_id,),
-            ).fetchall()
-            event_rows = conn.execute(
-                sql.SQL("SELECT * FROM {event_table} WHERE project_id = %s ORDER BY id").format(
-                    event_table=self._table("reasoning_event")
-                ),
-                (self.project_id,),
-            ).fetchall()
+            with conn.transaction():
+                conn.execute(
+                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                )
+                item_rows = conn.execute(
+                    sql.SQL("SELECT * FROM {item_table} WHERE project_id = %s ORDER BY id").format(
+                        item_table=self._table("reasoning_item")
+                    ),
+                    (self.project_id,),
+                ).fetchall()
+                edge_rows = conn.execute(
+                    sql.SQL("SELECT * FROM {edge_table} WHERE project_id = %s ORDER BY id").format(
+                        edge_table=self._table("reasoning_edge")
+                    ),
+                    (self.project_id,),
+                ).fetchall()
+                event_rows = conn.execute(
+                    sql.SQL("SELECT * FROM {event_table} WHERE project_id = %s ORDER BY id").format(
+                        event_table=self._table("reasoning_event")
+                    ),
+                    (self.project_id,),
+                ).fetchall()
         snapshot = {
             "items": [LedgerItem.from_row(row).to_dict() for row in item_rows],
             "edges": [LedgerEdge.from_row(row).to_dict() for row in edge_rows],

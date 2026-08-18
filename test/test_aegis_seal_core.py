@@ -27,38 +27,31 @@ class AegisSealCoreIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(
             aegis_seal_core.BUNDLED_SHA256,
-            "256b71015465a7a57b648753834583e095383d77d88d2140e5e970a174375023",
+            "eb2d5ce90c8cfa08b30bb37287486a42521ef18ce80ac1ac765461994fd59301",
         )
 
     def test_aegis_can_compute_and_verify_project_sources(self) -> None:
         context = aegis_seal_core.SealContext(
             project_id=bytes(range(0x10, 0x20)),
-            run_id=bytes(range(0x40, 0x50)),
+            seal_chain_id=bytes(range(0x40, 0x50)),
         )
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            project_root = Path(temporary_directory)
-            (project_root / "src" / "__pycache__").mkdir(parents=True)
-            (project_root / "include").mkdir()
-            (project_root / "src" / "main.cpp").write_bytes(b"int main")
-            (project_root / "include" / "main.hpp").write_bytes(b"#pragma")
-            (project_root / "src" / "__pycache__" / "ignored.pyc").write_bytes(
-                b"generated"
-            )
+        entries = [
+            ("CMakeLists.txt", b"cmake"),
+            ("config/runtime.json", b"{}"),
+            ("src/main.cpp", b"int main"),
+        ]
 
-            seal = aegis_seal_core.compute_project_seal(project_root, context)
+        seal = aegis_seal_core.compute_project_seal(context, entries)
 
-            self.assertEqual(
-                seal,
-                "ASC1:0cb65a29352e00e8370541f18b04c4f88d881eb93e193a0be9cdcf40763cf00e",
+        self.assertRegex(seal, r"^ASC1:[0-9a-f]{64}$")
+        self.assertTrue(
+            aegis_seal_core.verify_project_seal(context, entries, seal)
+        )
+        self.assertFalse(
+            aegis_seal_core.verify_project_seal(
+                context, entries, "ASC1:" + "0" * 64
             )
-            self.assertTrue(
-                aegis_seal_core.verify_project_seal(project_root, context, seal)
-            )
-            self.assertFalse(
-                aegis_seal_core.verify_project_seal(
-                    project_root, context, "ASC1:" + "0" * 64
-                )
-            )
+        )
 
     def test_invalid_chain_context_is_rejected_before_process_start(self) -> None:
         with self.assertRaisesRegex(
@@ -66,7 +59,7 @@ class AegisSealCoreIntegrationTests(unittest.TestCase):
         ):
             aegis_seal_core.SealContext(
                 project_id=bytes(16),
-                run_id=bytes(16),
+                seal_chain_id=bytes(16),
                 sequence=1,
             )
 

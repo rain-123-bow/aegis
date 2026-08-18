@@ -1,0 +1,9 @@
+{
+  "schema": "aegis.remote_seal_witness_config.v3",
+  "repository_url": "ssh://git@github.com/rain-123-bow/aegis.git",
+  "protected_ref": "refs/heads/aegis-seal-witness",
+  "ssh_identity": {
+    "path": "C:/Users/playm/.ssh/id_ed25519",
+    "sha256": "37f410e907d1e2d972bd61224049bf0bde2035d904e73c57df13480ee50c1fd7"
+  }
+}

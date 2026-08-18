@@ -18,6 +18,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from aegis_runtime import RuntimeCoordinator, TraceRelayClient  # noqa: E402
+from aegis_test_support import (  # noqa: E402
+    initialize_test_git_repository,
+    write_test_runtime_scope_policy,
+)
 from project_seal_store import record_project_seal  # noqa: E402
 
 
@@ -459,11 +463,13 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
         source = project / "src" / "acceptance_target.py"
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_text("ACCEPTANCE_TARGET = True\n", encoding="utf-8")
+        write_test_runtime_scope_policy(project)
+        head = initialize_test_git_repository(project, "pilot fixture")
         record_project_seal(
             project,
-            git_head_before_record="a" * 40,
+            git_head_before_record=head,
             project_id=bytes(range(16)),
-            run_id=bytes(range(16, 32)),
+            seal_chain_id=bytes(range(16, 32)),
         )
         context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
         artifact_path.mkdir(parents=True, exist_ok=True)
@@ -882,11 +888,13 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
         source = project / "src" / "acceptance_target.py"
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_text("ACCEPTANCE_TARGET = True\n", encoding="utf-8")
+        write_test_runtime_scope_policy(project)
+        head = initialize_test_git_repository(project, "crash fixture")
         record_project_seal(
             project,
-            git_head_before_record="b" * 40,
+            git_head_before_record=head,
             project_id=bytes(range(16)),
-            run_id=bytes(range(16, 32)),
+            seal_chain_id=bytes(range(16, 32)),
         )
         context_path = artifact_path / "REASONING_LEDGER_CONTEXT_PACK.json"
         artifact_path.mkdir(parents=True, exist_ok=True)
@@ -1107,11 +1115,13 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
         source = project / "src" / "acceptance_target.py"
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_text("ACCEPTANCE_TARGET = True\n", encoding="utf-8")
+        write_test_runtime_scope_policy(project)
+        head = initialize_test_git_repository(project, "registration fixture")
         record_project_seal(
             project,
-            git_head_before_record="c" * 40,
+            git_head_before_record=head,
             project_id=bytes(range(16)),
-            run_id=bytes(range(16, 32)),
+            seal_chain_id=bytes(range(16, 32)),
         )
         upstream_port = int(os.environ.get("TRACERELAY_UPSTREAM_PORT", "7899"))
         def run_case(crash_mode: str) -> dict[str, object]:

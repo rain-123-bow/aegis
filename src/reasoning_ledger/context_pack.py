@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -66,15 +67,79 @@ def context_pack_to_json_data(
     retrieval_mode: str = "unknown",
     embedding_source: str = "unknown",
     generated_at: datetime | None = None,
-    metadata: Mapping[str, Any] | None = None,
+    project_seal: str,
+    engineering_documents_sha256: str,
+    ledger_revision: int,
+    ledger_snapshot_sha256: str,
+    retrieval_scope: Mapping[str, Any],
+    limit: int,
+    include_causes: bool,
+    coverage: Mapping[str, bool],
+    project_root: str | Path,
 ) -> dict[str, Any]:
-    generated = (generated_at or datetime.now(timezone.utc)).isoformat()
-    data = pack.to_agent_payload()
-    data["generated_at"] = generated
-    data["retrieval_mode"] = retrieval_mode
-    data["embedding_source"] = embedding_source
-    data["metadata"] = json_ready(dict(metadata or {}))
-    return data
+    generated = (generated_at or datetime.now(timezone.utc)).isoformat().replace(
+        "+00:00", "Z"
+    )
+    root = Path(project_root).resolve()
+    required_paths = list(
+        dict.fromkeys(
+            path
+            for item in (*pack.items, *pack.cause_items)
+            for path in (item.artifact_path, item.evidence_path)
+            if path
+        )
+    )
+    evidence_index: list[dict[str, object]] = []
+    for relative_path in required_paths:
+        path = (root / relative_path).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as error:
+            raise ValueError(
+                f"context-pack artifact escapes the project root: {relative_path}"
+            ) from error
+        if not path.is_file():
+            raise ValueError(
+                f"context-pack artifact is missing: {relative_path}"
+            )
+        content = path.read_bytes()
+        evidence_index.append(
+            {
+                "path": str(path),
+                "size": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        )
+    return {
+        "schema": "aegis.reasoning_context_pack.v1",
+        "project_id_hex": pack.project_id,
+        "task_id": pack.task_id,
+        "agent_role": pack.agent_role,
+        "query": pack.query,
+        "generated_at_utc": generated,
+        "bindings": {
+            "project_seal": project_seal,
+            "engineering_documents_sha256": engineering_documents_sha256,
+        },
+        "ledger": {
+            "revision": ledger_revision,
+            "snapshot_sha256": ledger_snapshot_sha256,
+        },
+        "retrieval": {
+            "mode": retrieval_mode,
+            "embedding_source": embedding_source,
+            "scope": json_ready(dict(retrieval_scope)),
+            "limit": limit,
+            "include_causes": include_causes,
+        },
+        "coverage": json_ready(dict(coverage)),
+        "items": [item.to_dict() for item in pack.items],
+        "cause_items": [item.to_dict() for item in pack.cause_items],
+        "edges": [edge.to_dict() for edge in pack.edges],
+        "warnings": list(pack.warnings),
+        "required_artifact_paths": required_paths,
+        "evidence_index": evidence_index,
+    }
 
 
 def write_context_pack(
@@ -85,6 +150,15 @@ def write_context_pack(
     retrieval_mode: str = "unknown",
     embedding_source: str = "unknown",
     metadata: Mapping[str, Any] | None = None,
+    project_seal: str,
+    engineering_documents_sha256: str,
+    ledger_revision: int,
+    ledger_snapshot_sha256: str,
+    retrieval_scope: Mapping[str, Any],
+    limit: int,
+    include_causes: bool,
+    coverage: Mapping[str, bool],
+    project_root: str | Path,
 ) -> dict[str, Any]:
     generated_at = datetime.now(timezone.utc)
     output = Path(output_path)
@@ -104,7 +178,15 @@ def write_context_pack(
         retrieval_mode=retrieval_mode,
         embedding_source=embedding_source,
         generated_at=generated_at,
-        metadata=metadata,
+        project_seal=project_seal,
+        engineering_documents_sha256=engineering_documents_sha256,
+        ledger_revision=ledger_revision,
+        ledger_snapshot_sha256=ledger_snapshot_sha256,
+        retrieval_scope=retrieval_scope,
+        limit=limit,
+        include_causes=include_causes,
+        coverage=coverage,
+        project_root=project_root,
     )
     if json_output_path is not None:
         json_output = Path(json_output_path)

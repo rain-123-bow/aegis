@@ -1,11 +1,14 @@
 {
   "component": "AegisSealCore",
   "source_repository": "git@github.com:rain-123-bow/AegisSealCore.git",
-  "source_commit": "90281bce2fe48f2c30ab9158e28f43f96aaded8c",
+  "source_base_commit": "90281bce2fe48f2c30ab9158e28f43f96aaded8c",
+  "source_tree_state": "modified-uncommitted",
+  "source_diff_sha256": "4444c2ae941deba3028e797e9c439d61251efa1e70b945c219affc470d7695d3",
   "build_configuration": "Release",
   "target": "Windows 11 x64",
   "binary_path": "windows-x64/aegis-seal.exe",
   "binary_size_bytes": 322560,
-  "binary_sha256": "256b71015465a7a57b648753834583e095383d77d88d2140e5e970a174375023",
-  "interface_version": "ASC-1"
+  "binary_sha256": "eb2d5ce90c8cfa08b30bb37287486a42521ef18ce80ac1ac765461994fd59301",
+  "interface_version": "ASC-1",
+  "caller_scope_contract_version": 2
 }

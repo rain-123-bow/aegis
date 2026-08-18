@@ -33,9 +33,20 @@ TEST_DSN = os.environ.get(
 TEST_SCHEMA = "aegis_test_ledger"
 
 
+def require_test_database() -> None:
+    try:
+        with psycopg.connect(TEST_DSN, autocommit=True):
+            pass
+    except psycopg.OperationalError as error:
+        raise unittest.SkipTest(
+            f"PostgreSQL/pgvector integration database is unavailable: {error}"
+        ) from error
+
+
 class ReasoningLedgerIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        require_test_database()
         with psycopg.connect(TEST_DSN, autocommit=True) as conn:
             conn.execute(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE")
 
@@ -245,6 +256,7 @@ class ReasoningLedgerProjectFileTests(unittest.TestCase):
 
 class MainCliSmokeTests(unittest.TestCase):
     def test_main_ledger_probe_uses_project_config(self) -> None:
+        require_test_database()
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             schema = f"aegis_cli_{uuid4().hex}"
