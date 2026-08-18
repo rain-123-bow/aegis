@@ -17,46 +17,28 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import project_seal_store
 import runtime_behavior_scope
-from aegis_test_support import write_test_runtime_scope_policy
+from aegis_test_support import (
+    refresh_test_runtime_scope_approvals,
+    write_test_runtime_scope_policy,
+)
 
 
 class ProjectSealStoreTests(unittest.TestCase):
-    def refresh_scope_decision(self, project: Path) -> None:
-        policy_path = project / runtime_behavior_scope.SCOPE_POLICY_RELATIVE_PATH
-        policy = json.loads(policy_path.read_text(encoding="utf-8"))
-        review_path = project / runtime_behavior_scope.SCOPE_REVIEW_RELATIVE_PATH
-        statement_path = project / runtime_behavior_scope.SCOPE_USER_STATEMENT_RELATIVE_PATH
-        review = review_path.read_bytes()
-        statement = statement_path.read_bytes()
-        policy_sha = hashlib.sha256(
+    @staticmethod
+    def write_canonical_json(path: Path, value: object) -> None:
+        path.write_text(
             json.dumps(
-                policy,
+                value,
                 ensure_ascii=False,
                 allow_nan=False,
                 sort_keys=True,
                 separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        decision = {
-            "schema": "aegis.runtime_behavior_scope_decision.v2",
-            "project_id_hex": policy["project_id_hex"],
-            "decision": "APPROVED",
-            "policy_sha256": policy_sha,
-            "review": {
-                "path": runtime_behavior_scope.SCOPE_REVIEW_RELATIVE_PATH.as_posix(),
-                "size": len(review),
-                "sha256": hashlib.sha256(review).hexdigest(),
-            },
-            "user_confirmation": {
-                "confirmation_id": policy["user_confirmation"]["confirmation_id"],
-                "path": runtime_behavior_scope.SCOPE_USER_STATEMENT_RELATIVE_PATH.as_posix(),
-                "size": len(statement),
-                "sha256": hashlib.sha256(statement).hexdigest(),
-            },
-        }
-        (project / runtime_behavior_scope.SCOPE_DECISION_RELATIVE_PATH).write_text(
-            json.dumps(decision), encoding="utf-8"
+            ),
+            encoding="utf-8",
         )
+
+    def refresh_scope_decision(self, project: Path) -> None:
+        refresh_test_runtime_scope_approvals(project)
 
     def git(self, project: Path, *arguments: str) -> str:
         completed = subprocess.run(
@@ -148,7 +130,7 @@ class ProjectSealStoreTests(unittest.TestCase):
             policy_path = project / runtime_behavior_scope.SCOPE_POLICY_RELATIVE_PATH
             policy = json.loads(policy_path.read_text(encoding="utf-8"))
             policy["external_tools"]["git_sha256"] = "00" * 32
-            policy_path.write_text(json.dumps(policy), encoding="utf-8")
+            self.write_canonical_json(policy_path, policy)
             self.refresh_scope_decision(project)
             head = self.commit_all(project, "wrong git pin")
 
@@ -213,6 +195,30 @@ class ProjectSealStoreTests(unittest.TestCase):
             ):
                 project_seal_store.verify_expected_project_seal(project)
 
+    def test_replacing_complete_scope_approval_chain_invalidates_old_seal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(Path(directory))
+            head = self.git(project, "rev-parse", "HEAD")
+            original = project_seal_store.record_project_seal(
+                project,
+                git_head_before_record=head,
+                project_id=bytes(range(16)),
+                seal_chain_id=bytes(range(16, 32)),
+            )
+            review_path = project / runtime_behavior_scope.SCOPE_REVIEW_RELATIVE_PATH
+            review_path.write_text(
+                "# Runtime scope review\n\nPASS\n\nReplacement review.\n",
+                encoding="utf-8",
+            )
+            self.refresh_scope_decision(project)
+
+            with self.assertRaisesRegex(
+                project_seal_store.ProjectSealMismatchError,
+                "approval decision",
+            ):
+                project_seal_store.verify_expected_project_seal(project)
+            self.assertTrue(original.expected_seal.startswith("ASC1:"))
+
     def test_broken_chain_is_rejected_before_seal_verification(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = self.make_project(Path(directory))
@@ -255,7 +261,7 @@ class ProjectSealStoreTests(unittest.TestCase):
             policy_path = project / runtime_behavior_scope.SCOPE_POLICY_RELATIVE_PATH
             policy = json.loads(policy_path.read_text(encoding="utf-8"))
             policy["force_include_files"] = ["src/module.py"]
-            policy_path.write_text(json.dumps(policy), encoding="utf-8")
+            self.write_canonical_json(policy_path, policy)
             self.refresh_scope_decision(project)
             unchanged_version_head = self.commit_all(project, "change policy")
 
@@ -269,7 +275,7 @@ class ProjectSealStoreTests(unittest.TestCase):
                 )
 
             policy["version"] = 2
-            policy_path.write_text(json.dumps(policy), encoding="utf-8")
+            self.write_canonical_json(policy_path, policy)
             self.refresh_scope_decision(project)
             second_head = self.commit_all(project, "raise policy version")
             second = project_seal_store.record_project_seal(

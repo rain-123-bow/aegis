@@ -1,5 +1,5 @@
 # Complete Windows-local A-F Python dependency closure.
-# TraceRelay is installed separately and byte-compared with its sealed submodule.
+# TraceRelay is installed into this exact Python and byte-compared with its sealed SDK snapshot.
 PyYAML==6.0.3
 aiosqlite==0.22.1
 annotated-types==0.8.0

@@ -21,20 +21,34 @@ _TEST_GIT_RUNTIME_SHA256 = git_runtime_manifest(_TEST_GIT)[1]
 
 
 class RuntimeBehaviorScopeTests(unittest.TestCase):
-    def write_policy(self, project: Path, **changes: object) -> Path:
+    def write_policy(
+        self,
+        project: Path,
+        *,
+        review_verdict: str = "PASS",
+        review_scope_sha256: str | None = None,
+        confirmation_scope_sha256: str | None = None,
+        confirmation_review_sha256: str | None = None,
+        confirmation_decision: str = "CONFIRMED",
+        **changes: object,
+    ) -> Path:
         review_path = project / runtime_behavior_scope.SCOPE_REVIEW_RELATIVE_PATH
-        statement_path = project / runtime_behavior_scope.SCOPE_USER_STATEMENT_RELATIVE_PATH
+        review_result_path = (
+            project / runtime_behavior_scope.SCOPE_REVIEW_RESULT_RELATIVE_PATH
+        )
+        confirmation_path = (
+            project / runtime_behavior_scope.SCOPE_USER_CONFIRMATION_RELATIVE_PATH
+        )
         review_path.parent.mkdir(parents=True, exist_ok=True)
-        statement_path.parent.mkdir(parents=True, exist_ok=True)
-        review_path.write_text("# Review\n\nPASS\n", encoding="utf-8")
-        statement_path.write_text("User confirmed scope.\n", encoding="utf-8")
+        confirmation_path.parent.mkdir(parents=True, exist_ok=True)
+        review_path.write_text(
+            f"# Review\n\nVerdict: {review_verdict}\n", encoding="utf-8"
+        )
         review = review_path.read_bytes()
-        statement = statement_path.read_bytes()
         payload: dict[str, object] = {
-            "schema": "aegis.runtime_behavior_scope.v2",
+            "schema": "aegis.runtime_behavior_scope_definition.v1",
             "project_id_hex": "12" * 16,
             "version": 1,
-            "status": "user_confirmed",
             "include_roots": ["src", "config"],
             "include_files": ["pyproject.toml"],
             "exclude_roots": ["test", "demo"],
@@ -47,52 +61,86 @@ class RuntimeBehaviorScopeTests(unittest.TestCase):
                 "git_runtime_sha256": _TEST_GIT_RUNTIME_SHA256,
             },
             "runtime_authority_id": "ab" * 16,
-            "review": {
-                "verdict": "PASS",
-                "report_sha256": hashlib.sha256(review).hexdigest(),
-            },
-            "user_confirmation": {
-                "confirmation_id": "decision-runtime-scope-1",
-                "statement_sha256": hashlib.sha256(statement).hexdigest(),
-            },
         }
         payload.update(changes)
         path = project / runtime_behavior_scope.SCOPE_POLICY_RELATIVE_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload), encoding="utf-8")
-        policy_sha = hashlib.sha256(
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
+        policy_bytes = self.canonical_json(payload)
+        path.write_bytes(policy_bytes)
+        policy_sha = hashlib.sha256(policy_bytes).hexdigest()
+        review_result = {
+            "schema": "aegis.runtime_behavior_scope_review.v1",
+            "review_id": "unit-review-1",
+            "project_id_hex": payload["project_id_hex"],
+            "scope_definition_sha256": review_scope_sha256 or policy_sha,
+            "verdict": review_verdict,
+            "report": self.descriptor(
+                runtime_behavior_scope.SCOPE_REVIEW_RELATIVE_PATH, review
+            ),
+        }
+        review_result_bytes = self.canonical_json(review_result)
+        review_result_path.write_bytes(review_result_bytes)
+        review_result_descriptor = self.descriptor(
+            runtime_behavior_scope.SCOPE_REVIEW_RESULT_RELATIVE_PATH,
+            review_result_bytes,
+        )
+        if confirmation_review_sha256 is not None:
+            review_result_descriptor["sha256"] = confirmation_review_sha256
+        confirmation = {
+            "schema": "aegis.runtime_behavior_scope_user_confirmation.v1",
+            "confirmation_id": "decision-runtime-scope-1",
+            "project_id_hex": payload["project_id_hex"],
+            "scope_definition_sha256": confirmation_scope_sha256 or policy_sha,
+            "review_result": review_result_descriptor,
+            "decision": confirmation_decision,
+            "statement": "User confirmed this exact scope and PASS review.",
+        }
+        confirmation_bytes = self.canonical_json(confirmation)
+        confirmation_path.write_bytes(confirmation_bytes)
         decision_path = project / runtime_behavior_scope.SCOPE_DECISION_RELATIVE_PATH
-        decision_path.write_text(
-            json.dumps(
+        decision_path.write_bytes(
+            self.canonical_json(
                 {
-                    "schema": "aegis.runtime_behavior_scope_decision.v2",
+                    "schema": "aegis.runtime_behavior_scope_decision.v3",
                     "project_id_hex": payload["project_id_hex"],
                     "decision": "APPROVED",
-                    "policy_sha256": policy_sha,
-                    "review": {
-                        "path": runtime_behavior_scope.SCOPE_REVIEW_RELATIVE_PATH.as_posix(),
-                        "size": len(review),
-                        "sha256": hashlib.sha256(review).hexdigest(),
-                    },
+                    "scope_definition": self.descriptor(
+                        runtime_behavior_scope.SCOPE_POLICY_RELATIVE_PATH,
+                        policy_bytes,
+                    ),
+                    "review_result": self.descriptor(
+                        runtime_behavior_scope.SCOPE_REVIEW_RESULT_RELATIVE_PATH,
+                        review_result_bytes,
+                    ),
                     "user_confirmation": {
-                        "confirmation_id": payload["user_confirmation"]["confirmation_id"],
-                        "path": runtime_behavior_scope.SCOPE_USER_STATEMENT_RELATIVE_PATH.as_posix(),
-                        "size": len(statement),
-                        "sha256": hashlib.sha256(statement).hexdigest(),
+                        **self.descriptor(
+                            runtime_behavior_scope.SCOPE_USER_CONFIRMATION_RELATIVE_PATH,
+                            confirmation_bytes,
+                        ),
+                        "confirmation_id": "decision-runtime-scope-1",
                     },
                 }
-            ),
-            encoding="utf-8",
+            )
         )
         return path
+
+    @staticmethod
+    def canonical_json(value: object) -> bytes:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+    @staticmethod
+    def descriptor(path: Path, content: bytes) -> dict[str, object]:
+        return {
+            "path": path.as_posix(),
+            "size": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+        }
 
     def make_project(self, root: Path) -> Path:
         project = root / "project"
@@ -130,14 +178,87 @@ class RuntimeBehaviorScopeTests(unittest.TestCase):
                 ],
             )
             self.assertRegex(resolved.policy_sha256, r"^[0-9a-f]{64}$")
+            self.assertRegex(resolved.decision_sha256, r"^[0-9a-f]{64}$")
             self.assertRegex(resolved.manifest_sha256, r"^[0-9a-f]{64}$")
             self.assertEqual(
-                [path for path, _content in resolved.seal_entries()][-2:],
+                [path for path, _content in resolved.seal_entries()][-3:],
                 [
                     "aegis-meta/runtime-behavior-scope-policy.sha256",
+                    "aegis-meta/runtime-behavior-scope-decision.sha256",
                     "aegis-meta/runtime-behavior-scope-manifest.sha256",
                 ],
             )
+
+    def test_definition_can_be_reviewed_before_approval_artifacts_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(Path(directory))
+            for relative in (
+                runtime_behavior_scope.SCOPE_REVIEW_RELATIVE_PATH,
+                runtime_behavior_scope.SCOPE_REVIEW_RESULT_RELATIVE_PATH,
+                runtime_behavior_scope.SCOPE_USER_CONFIRMATION_RELATIVE_PATH,
+                runtime_behavior_scope.SCOPE_DECISION_RELATIVE_PATH,
+            ):
+                (project / relative).unlink()
+
+            resolved = (
+                runtime_behavior_scope.resolve_runtime_behavior_scope_definition(
+                    project, bytes.fromhex("12" * 16)
+                )
+            )
+
+            self.assertEqual(resolved.project_id_hex, "12" * 16)
+            with self.assertRaisesRegex(
+                runtime_behavior_scope.RuntimeBehaviorScopeError,
+                "approval decision",
+            ):
+                resolved.seal_entries()
+            with self.assertRaises(runtime_behavior_scope.RuntimeBehaviorScopeError):
+                runtime_behavior_scope.resolve_runtime_behavior_scope(
+                    project, bytes.fromhex("12" * 16)
+                )
+
+    def test_include_files_rejects_a_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(Path(directory))
+            self.write_policy(project, include_files=["src"])
+
+            with self.assertRaisesRegex(
+                runtime_behavior_scope.RuntimeBehaviorScopeError,
+                "explicit file.*directory",
+            ):
+                runtime_behavior_scope.resolve_runtime_behavior_scope(
+                    project, bytes.fromhex("12" * 16)
+                )
+
+    def test_excluded_include_files_still_rejects_a_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(Path(directory))
+            self.write_policy(
+                project,
+                include_files=["src"],
+                exclude_roots=["src", "test", "demo"],
+            )
+
+            with self.assertRaisesRegex(
+                runtime_behavior_scope.RuntimeBehaviorScopeError,
+                "explicit file.*directory",
+            ):
+                runtime_behavior_scope.resolve_runtime_behavior_scope(
+                    project, bytes.fromhex("12" * 16)
+                )
+
+    def test_force_include_files_rejects_a_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(Path(directory))
+            self.write_policy(project, force_include_files=["test"])
+
+            with self.assertRaisesRegex(
+                runtime_behavior_scope.RuntimeBehaviorScopeError,
+                "explicit file.*directory",
+            ):
+                runtime_behavior_scope.resolve_runtime_behavior_scope(
+                    project, bytes.fromhex("12" * 16)
+                )
 
     def test_content_change_changes_resolved_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -156,10 +277,13 @@ class RuntimeBehaviorScopeTests(unittest.TestCase):
     def test_unapproved_or_wrong_project_policy_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = self.make_project(Path(directory))
-            self.write_policy(project, status="proposed")
+            (
+                project
+                / runtime_behavior_scope.SCOPE_USER_CONFIRMATION_RELATIVE_PATH
+            ).unlink()
             with self.assertRaisesRegex(
                 runtime_behavior_scope.RuntimeBehaviorScopeError,
-                "user-confirmed",
+                "user confirmation",
             ):
                 runtime_behavior_scope.resolve_runtime_behavior_scope(
                     project, bytes.fromhex("12" * 16)
@@ -169,6 +293,61 @@ class RuntimeBehaviorScopeTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 runtime_behavior_scope.RuntimeBehaviorScopeError,
                 "project identity",
+            ):
+                runtime_behavior_scope.resolve_runtime_behavior_scope(
+                    project, bytes.fromhex("12" * 16)
+                )
+
+    def test_policy_cannot_self_report_pass_over_a_fail_review(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(Path(directory))
+            self.write_policy(project, review_verdict="FAIL")
+
+            with self.assertRaisesRegex(
+                runtime_behavior_scope.RuntimeBehaviorScopeError,
+                "review.*did not pass",
+            ):
+                runtime_behavior_scope.resolve_runtime_behavior_scope(
+                    project, bytes.fromhex("12" * 16)
+                )
+
+    def test_review_and_confirmation_must_bind_the_exact_definition(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(Path(directory))
+            self.write_policy(project, review_scope_sha256="00" * 32)
+            with self.assertRaisesRegex(
+                runtime_behavior_scope.RuntimeBehaviorScopeError,
+                "review result does not bind the definition",
+            ):
+                runtime_behavior_scope.resolve_runtime_behavior_scope(
+                    project, bytes.fromhex("12" * 16)
+                )
+
+            self.write_policy(project, confirmation_scope_sha256="00" * 32)
+            with self.assertRaisesRegex(
+                runtime_behavior_scope.RuntimeBehaviorScopeError,
+                "user confirmation does not bind",
+            ):
+                runtime_behavior_scope.resolve_runtime_behavior_scope(
+                    project, bytes.fromhex("12" * 16)
+                )
+
+    def test_confirmation_must_bind_review_and_be_confirmed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(Path(directory))
+            self.write_policy(project, confirmation_review_sha256="00" * 32)
+            with self.assertRaisesRegex(
+                runtime_behavior_scope.RuntimeBehaviorScopeError,
+                "user confirmation does not bind",
+            ):
+                runtime_behavior_scope.resolve_runtime_behavior_scope(
+                    project, bytes.fromhex("12" * 16)
+                )
+
+            self.write_policy(project, confirmation_decision="REJECTED")
+            with self.assertRaisesRegex(
+                runtime_behavior_scope.RuntimeBehaviorScopeError,
+                "not CONFIRMED",
             ):
                 runtime_behavior_scope.resolve_runtime_behavior_scope(
                     project, bytes.fromhex("12" * 16)

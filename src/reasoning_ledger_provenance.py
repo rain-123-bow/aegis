@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from path_security import PathSecurityError, read_regular_file
+from reasoning_ledger.project import PROJECT_LEDGER_CONFIG_RELATIVE_PATH
 from reasoning_ledger.store import ReasoningLedger
 
 
@@ -28,7 +29,7 @@ def export_live_reasoning_ledger_snapshot(
     project_id_hex: str,
 ) -> dict[str, Any]:
     root = Path(project_root).resolve()
-    config_path = root / ".aegis" / "project.json"
+    config_path = root / PROJECT_LEDGER_CONFIG_RELATIVE_PATH
     try:
         raw, _identity = read_regular_file(
             config_path,

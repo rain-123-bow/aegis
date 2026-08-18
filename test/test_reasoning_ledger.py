@@ -236,7 +236,12 @@ class ReasoningLedgerProjectFileTests(unittest.TestCase):
             config = ProjectLedgerConfig.load(project_root)
 
             self.assertEqual(config.project_id, "demo_project")
-            self.assertTrue((project_root / ".aegis" / "project.json").exists())
+            self.assertEqual(
+                config.config_path,
+                project_root / "config" / "reasoning_ledger.json",
+            )
+            self.assertTrue(config.config_path.exists())
+            self.assertFalse((project_root / ".aegis" / "project.json").exists())
             self.assertTrue(config.migration_path.exists())
             self.assertIn("embedding vector(3)", result.migration_sql)
             self.assertTrue(

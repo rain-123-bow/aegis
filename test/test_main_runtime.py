@@ -776,11 +776,12 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                     },
                     {"status": True},
                 )
+            coordinator._close_run_wide_freeze()
 
             self.assertEqual(result["response"], "proxied response")
             self.assertEqual(len(relay.commands), 1)
             response_files = list(
-                coordinator.run_state_path.parent.glob("responses/A-*.txt")
+                coordinator.artifact_path.glob("responses/A-*.txt")
             )
             self.assertEqual(len(response_files), 1)
             self.assertEqual(
@@ -961,7 +962,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 return FakeGraph()
 
             saved = {
-                "schema": "aegis.run_state.v10",
+                "schema": "aegis.run_state.v13",
                 "run_id": "run-resume",
                 "status": "failed",
                 "project_root": str(root.resolve()),
@@ -1054,7 +1055,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 yield object()
 
             saved = {
-                "schema": "aegis.run_state.v10",
+                "schema": "aegis.run_state.v13",
                 "run_id": "run-resume-after-planning",
                 "status": "failed",
                 "project_root": str(root.resolve()),

@@ -59,6 +59,82 @@ class FinalReviewVerdictTests(unittest.TestCase):
             )
             self.assertEqual(result.verdict, "FAIL")
 
+    def test_rejects_missing_required_coordinator_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self._write(root)
+            required_path = root / "artifacts" / "TEST_REPORT.md"
+            required_path.write_text("# Test report\n", encoding="utf-8")
+            required_bytes = required_path.read_bytes()
+            with self.assertRaisesRegex(
+                FinalReviewVerdictError, "missing required evidence"
+            ):
+                validate_final_review_verdict(
+                    path,
+                    project_root=root / "project",
+                    artifact_root=root / "artifacts",
+                    workflow_run_id="run-1",
+                    expected_status=False,
+                    required_evidence=(
+                        {
+                            "evidence_id": "test-report",
+                            "path": str(required_path.resolve()),
+                            "size": len(required_bytes),
+                            "sha256": hashlib.sha256(required_bytes).hexdigest(),
+                        },
+                    ),
+                )
+
+    def test_rejects_blank_final_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self._write(root)
+            review = root / "artifacts" / "FINAL_REVIEW.md"
+            review.write_text(" \n", encoding="utf-8")
+            review_bytes = review.read_bytes()
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["evidence_index"][0].update(
+                size=len(review_bytes),
+                sha256=hashlib.sha256(review_bytes).hexdigest(),
+            )
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(FinalReviewVerdictError, "blank"):
+                validate_final_review_verdict(
+                    path,
+                    project_root=root / "project",
+                    artifact_root=root / "artifacts",
+                    workflow_run_id="run-1",
+                    expected_status=False,
+                )
+
+    def test_rejects_blank_required_test_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self._write(root)
+            report = root / "artifacts" / "TEST_REPORT.md"
+            report.write_text("\n", encoding="utf-8")
+            report_bytes = report.read_bytes()
+            descriptor = {
+                "evidence_id": "test-report",
+                "path": str(report.resolve()),
+                "size": len(report_bytes),
+                "sha256": hashlib.sha256(report_bytes).hexdigest(),
+            }
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["evidence_index"].append(descriptor)
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(FinalReviewVerdictError, "blank"):
+                validate_final_review_verdict(
+                    path,
+                    project_root=root / "project",
+                    artifact_root=root / "artifacts",
+                    workflow_run_id="run-1",
+                    expected_status=False,
+                    required_evidence=(descriptor,),
+                )
+
     def test_rejects_status_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

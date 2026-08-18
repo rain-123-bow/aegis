@@ -137,6 +137,15 @@ def load_node_message_schema(
     return json.loads(config_path.read_text(encoding="utf-8"))
 
 
+def execution_output_schema() -> dict[str, Any]:
+    schema = json.loads(json.dumps(load_node_message_schema()))
+    required = list(schema.setdefault("required", []))
+    if "output_artifacts" not in required:
+        required.append("output_artifacts")
+    schema["required"] = required
+    return schema
+
+
 def initialize_state(
     schema_path: Path = NODE_MESSAGE_SCHEMA_PATH,
     *,
@@ -437,7 +446,7 @@ def send_execution_prompt(role_key: str, prompt: str) -> str:
     return coordinator.run_execution_agent(
         role_key,
         prompt,
-        output_schema=load_node_message_schema(),
+        output_schema=execution_output_schema(),
         developer_instructions=build_execution_role_instructions(agent_config),
         timeout_seconds=NODE_TIMEOUT_SECONDS,
     )
@@ -816,8 +825,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Resume the existing LangGraph checkpoint for this run ID.",
     )
     parser.add_argument(
-        "--tracerelay-command",
-        help="Absolute path to the installed tracerelay.exe.",
+        "--tracerelay-python",
+        help=(
+            "Optional assertion of the active Aegis Python path. External "
+            "TraceRelay launchers and alternate Python environments are rejected."
+        ),
     )
     parser.add_argument(
         "--tracerelay-upstream-port",
@@ -922,7 +934,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
             )
         upstream_port = parse_loopback_proxy_port(proxy_url)
 
-    relay_command = resolve_tracerelay_command(args.tracerelay_command)
+    relay_command = resolve_tracerelay_command(args.tracerelay_python)
     relay_client = TraceRelayClient(command=relay_command)
     role_configs = {
         role_key: load_agent_config(role_key)

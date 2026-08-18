@@ -8,6 +8,7 @@ from .schema import build_init_sql, validate_identifier
 
 
 DEFAULT_ARTIFACT_ROOT = ".aegis/reasoning_ledger/artifacts"
+PROJECT_LEDGER_CONFIG_RELATIVE_PATH = Path("config/reasoning_ledger.json")
 
 
 @dataclass(frozen=True)
@@ -22,7 +23,7 @@ class ProjectLedgerConfig:
 
     @property
     def config_path(self) -> Path:
-        return self.project_root / ".aegis" / "project.json"
+        return self.project_root / PROJECT_LEDGER_CONFIG_RELATIVE_PATH
 
     @property
     def migration_path(self) -> Path:
@@ -31,7 +32,6 @@ class ProjectLedgerConfig:
     def to_json_data(self) -> dict[str, object]:
         return {
             "project_id": self.project_id,
-            "project_root": self.project_root.as_posix(),
             "ledger": {
                 "backend": self.backend,
                 "dsn_env": self.dsn_env,
@@ -51,7 +51,9 @@ class ProjectLedgerConfig:
     @classmethod
     def load(cls, project_root: str | Path) -> "ProjectLedgerConfig":
         root = Path(project_root).resolve()
-        data = json.loads((root / ".aegis" / "project.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (root / PROJECT_LEDGER_CONFIG_RELATIVE_PATH).read_text(encoding="utf-8")
+        )
         ledger = data["ledger"]
         return cls(
             project_id=str(data["project_id"]),

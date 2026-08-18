@@ -22,7 +22,7 @@ from runtime_identity import RuntimeIdentityError, trusted_git_environment
 
 WITNESS_CONFIG_RELATIVE_PATH = Path("config/seal_witness.json")
 WITNESS_CONFIG_SCHEMA = "aegis.remote_seal_witness_config.v3"
-WITNESS_SCHEMA = "aegis.remote_seal_witness.v2"
+WITNESS_SCHEMA = "aegis.remote_seal_witness.v3"
 WITNESS_FILE_NAME = "aegis-seal-witness.json"
 SSH_KNOWN_HOSTS_RELATIVE_PATH = Path("config/git_ssh_known_hosts")
 
@@ -35,6 +35,7 @@ _WITNESS_FIELDS = {
     "sequence",
     "expected_seal",
     "scope_policy_sha256",
+    "scope_decision_sha256",
     "resolved_manifest_sha256",
     "git_commit",
     "runtime_authority_id",
@@ -247,6 +248,7 @@ def verify_remote_project_seal_witness(
         "sequence": seal.sequence,
         "expected_seal": seal.expected_seal,
         "scope_policy_sha256": seal.scope_policy_sha256,
+        "scope_decision_sha256": seal.scope_decision_sha256,
         "resolved_manifest_sha256": seal.resolved_manifest_sha256,
         "runtime_authority_id": seal.runtime_authority_id,
     }
@@ -275,6 +277,7 @@ def _parse_witness(value: Any) -> dict[str, object]:
         "seal_chain_id_hex": _HEX_16_PATTERN,
         "expected_seal": _SEAL_PATTERN,
         "scope_policy_sha256": _HEX_32_PATTERN,
+        "scope_decision_sha256": _HEX_32_PATTERN,
         "resolved_manifest_sha256": _HEX_32_PATTERN,
         "git_commit": _GIT_HEAD_PATTERN,
         "runtime_authority_id": _HEX_16_PATTERN,

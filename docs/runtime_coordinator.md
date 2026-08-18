@@ -30,7 +30,7 @@ Master owns requirements, implementation plan, code, reasoning facts, and confir
       instruction-receipts/
 ```
 
-Run state uses `aegis.run_state.v10`. The SQLite reservation row stores the authoritative state blob, digest, status, and project accountability marker in one transaction. `RUN_STATE.json` is a rebuildable projection. Older schemas are rejected; they are not guessed or silently migrated. v10 retains the per-turn GPT instruction receipt and adds authoritative crash recovery.
+Run state uses `aegis.run_state.v13`. The SQLite reservation row stores the authoritative state blob, digest, status, and project accountability marker in one transaction. `RUN_STATE.json` is a rebuildable projection. Older schemas are rejected; they are not guessed or silently migrated. v13 adds a sealed run-authority snapshot covering the Project Seal, remote witness requirement/result, and observed TraceRelay runtime identity. Before F starts, the Coordinator writes `aegis.final_review_input_manifest.v2` and freezes the exact project-runtime files, Scope controls, engineering inputs, reasoning context, approved plan, planning handoff, non-blank test report, every completed A/B response and instruction receipt (including C-start reuse snapshots), every C evidence manifest and recursive raw evidence file, and every completed C-E response and instruction receipt. F cannot reach a terminal verdict unless every required descriptor, authority, input manifest, and non-blank `FINAL_REVIEW.md` has exact bytes.
 
 Every new run requires a Master-authored `aegis.engineering_input_manifest.v1` manifest. It lists at least one requirements document and one implementation-plan document by absolute path, byte size, and SHA-256. The Coordinator copies it into the run artifacts and revalidates every document before and after every A-F node.
 
@@ -38,13 +38,13 @@ The reasoning-ledger context pack is the only ledger view exposed to agents duri
 
 A new run may start only at A or C. Starting at C requires `--reuse-planning-from-run-id`, a current reasoning-ledger context pack, and an engineering-input manifest whose document set exactly matches the terminal parent run. The approved test plan, review report, and source run state are copied into the new run as immutable evidence. Any engineering-input difference forces a full A-F run from A.
 
-An F failure ends the workflow with `master_review_status=PENDING`. Master then runs `confirm-f-failure` with a standalone Master review and evidence paths. The command accepts only a terminal F failure, seals `MASTER_FINAL_REVIEW.md` and `MASTER_FINAL_REVIEW_CONFIRMATION.json`, indexes `FINAL_REVIEW.md` plus the supplied evidence, and moves the state to `CONFIRMED` or `DISPUTED`. It never changes `delivery_eligible=false`.
+An F failure ends the workflow with `master_review_status=PENDING`. Master then runs `confirm-f-failure` with a standalone Master review and evidence paths. The command unconditionally loads the SQLite reservation's authoritative state blob, accepts only a terminal F failure, seals `MASTER_FINAL_REVIEW.md` and `MASTER_FINAL_REVIEW_CONFIRMATION.json`, indexes `FINAL_REVIEW.md` plus the supplied evidence, and moves the state to `CONFIRMED` or `DISPUTED`. Artifact writes and the authoritative state transition run under one `BEGIN IMMEDIATE` reservation lock with an old-state digest compare-and-swap. Editing the `RUN_STATE.json` projection cannot authorize confirmation. The command never changes `delivery_eligible=false`; later state loads and project audits revalidate the confirmation, Master review, and indexed evidence.
 
 ## Preflight
 
 Preflight fails closed unless all enabled checks pass:
 
-1. `aegis.project_seal_chain.v2` parses and its latest record is contiguous.
+1. `aegis.project_seal_chain.v3` parses, binds the approved scope-decision SHA-256, and its latest record is contiguous.
 2. The user-confirmed runtime behavior scope resolves deterministically.
 3. Scope policy hash, resolved manifest hash, file contents, Seal, project ID, seal-chain ID, sequence, and previous Seal match.
 4. Production mode reads the canonical repository URL and protected ref from `config/seal_witness.json`, fetches into an isolated temporary bare repository with the pinned Git/SSH environment, and matches the witness commit to the latest locally verified Seal.
@@ -75,19 +75,44 @@ Every App Server turn runs in a separately registered TraceRelay-managed process
 
 Node C receives `aegis.test_execution_control.v1` and writes only `aegis.test_execution_request.v3`. The Coordinator requires exact equality with the reviewed `aegis.test_execution_policy.v2`, uses only its complete explicit environment, locks and revalidates cwd/executable/inputs, rejects shell and inline/module execution, runs argv through a resource-limited Windows Job Object, records process identity and actual outputs, and exclusively creates `aegis.test_execution_receipt.v3` plus `aegis.test_evidence_manifest.v2`. D cannot start without valid Coordinator-generated evidence.
 
-Before and after every A-F node, the Coordinator re-verifies frozen runtime inputs. A Windows recursive change journal also detects modify-then-restore events during the node. Mutation records paths, old/new hashes and sizes, file identities, node, time, Coordinator PID, and available TraceRelay sessions; then terminates with `engineering_verdict=INVALIDATED`, `termination_reason_code=FROZEN_INPUT_MUTATION`, and `master_review_status=REQUIRES_USER_REASON`.
+Before and after every A-F node, the Coordinator re-verifies frozen runtime inputs. A Windows recursive change journal also detects modify-then-restore events during the node. A watcher reports ready only after its first asynchronous directory request is armed; all required roots must exist, and every descriptor plus the complete Project Seal is revalidated while all listeners are active before the node operation can run. Every `.git` event is protected. The descriptor map is frozen before the node; exact files and structural changes to any ancestor directory are protected. A completed buffer is parsed even when stop is signalled concurrently, every root is drained independently, captured mutation outranks watcher errors, and a zero-byte overflow result fails closed. Mutation records paths, old/new hashes and sizes, file identities, node, time, Coordinator PID, and available TraceRelay sessions; then terminates with `engineering_verdict=INVALIDATED`, `termination_reason_code=FROZEN_INPUT_MUTATION`, and `master_review_status=REQUIRES_USER_REASON`.
 
-While any project run remains `REQUIRES_USER_REASON`, the SQLite project-accountability marker rejects every new run even if its JSON projection was deleted or changed. Master records the user's explanation through `record-mutation-reason`; the command seals the explanation and user-confirmation ID, then transactionally changes only the accountability status to `USER_REASON_RECORDED`. The invalidated run remains terminal and ineligible for delivery.
+Recording the user's mutation reason also loads the SQLite reservation's authoritative state blob unconditionally. A modified or token-stripped `RUN_STATE.json` projection cannot fabricate an accountability event or clear the project-level mutation marker.
+
+Every Coordinator-owned Codex/AppServer process tree runs inside a uniquely named, kill-on-close Windows Job Object. Registration operations derive the name from the operation ID, and the runner rejects an existing name before binding the exact Coordinator PID and process-creation time. Crash acceptance opens that named Job, queries its authoritative member set, fixes the active-process limit at the current count, suspends every stable member except the runner, and re-queries the complete membership before crashing the Coordinator. The frozen set records creation times, executable paths, command lines, and an `app-server` plus `stdio://` binding; every frozen identity must terminate. `WAIT_FAILED`, handle errors, and unresolved creation-time probes fail the report instead of counting as termination. Recovery never adopts an uncheckpointed replacement runtime.
+
+While any project run remains `REQUIRES_USER_REASON`, the SQLite project-accountability marker rejects every new run even if its JSON projection was deleted or changed. Master records the user's explanation through `record-mutation-reason`; the command seals the explanation and user-confirmation ID, then changes only the accountability status to `USER_REASON_RECORDED` under the same reservation lock and old-state digest compare-and-swap. Resolved accountability descriptors remain in the durable marker. Every future preflight, resume, node boundary, and node watcher revalidates the reason record and reason body; deleting, replacing, or modify-restoring them terminates the active run. The invalidated run remains terminal and ineligible for delivery.
 
 The project lease binds run ID, Coordinator instance UUID, PID, process creation time, and heartbeat. A second instance is rejected even when it requests the same run ID. Recovery may take over only after the recorded process identity is confirmed dead.
 
+In-process watcher events and file handles cannot survive Coordinator process
+death. A takeover from `ready`, `running`, `starting_tracerelay`, or
+`tracerelay_attached` therefore terminates the old run with
+`FREEZE_CONTINUITY_LOST`; it never continues that run toward PASS. A new run may
+reuse a completed planning stage and start at C when its engineering inputs,
+reasoning context, approved plan, review, and authority evidence still match.
+Orderly `failed` states remain resumable because their prior freeze boundary was
+durably closed before the inactive interval.
+
 ## Terminal semantics
+
+Terminal publication is two-phase. `terminal_finalizing` records the intended
+outcome. The Coordinator synchronously drains every listener while retaining
+all file and ancestor handles. `terminal_committed` then commits the resulting
+non-deliverable A-F freeze boundary before those handles are released. Only
+after guard release does it publish `completed`, `terminated`, or `failed`.
+Confirmation and delivery reject both intermediate statuses. A crash before
+publication fails closed to `failed`, except a durably committed frozen-input
+mutation remains `terminated/REQUIRES_USER_REASON`; no intermediate state can
+return to `ready` or `running`.
 
 - E `status=false`: terminate at E; F is not invoked.
 - F `status=true`: `SUCCEEDED/PASS`, delivery eligible.
 - F `status=false`: `TERMINATED/FAIL`, delivery blocked, Master review pending.
 - Frozen-input mutation: terminated, engineering verdict invalidated, user reason required.
 - Infrastructure/protocol/evidence defect: failed, verdict undetermined.
+- Active Coordinator process loss: terminated with `FREEZE_CONTINUITY_LOST`;
+  start a new run, optionally reusing completed planning evidence.
 
 ## Verification boundary
 

@@ -60,11 +60,19 @@ Coordinator 在 GPT turn 完成后验证请求，只使用 `aegis.test_execution
 
 `status=true` 只表示：批准测试矩阵已完整转换为可执行请求，所有输入描述符可验证，没有测试项遗漏、跳过或阻塞。它不表示测试已经通过；测试结论由 Coordinator 执行证据和 D 审核决定。
 
+写完 `TEST_EXECUTION_REQUEST.json` 后，按 UTF-8 原始字节计算 `size` 和小写 SHA-256。最终 JSON 必须包含一个 `output_artifacts` 条目：`artifact_id=test-execution-request`，`path=test_execution_control.request_path` 的绝对路径，并填入精确 `size`、`sha256`。禁止按字符数计算 `size`。
+
 最终回复只能是：
 
 ```json
 {
   "artifact_path": "absolute artifact path",
+  "output_artifacts": [{
+    "artifact_id": "test-execution-request",
+    "path": "absolute artifact path/TEST_EXECUTION_REQUEST.json",
+    "size": 123,
+    "sha256": "64位小写十六进制"
+  }],
   "status": true
 }
 ```

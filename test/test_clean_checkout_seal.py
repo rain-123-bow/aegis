@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import subprocess
 import sys
@@ -14,7 +13,7 @@ SEAL_PATH = Path(".aegis/reasoning_ledger/artifacts/facts/project-seal.json")
 
 
 class CleanCheckoutSealTests(unittest.TestCase):
-    def test_committed_seal_verifies_in_clean_windows_checkout(self) -> None:
+    def test_clean_checkout_requires_local_seal_provisioning(self) -> None:
         head = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=PROJECT_ROOT,
@@ -56,7 +55,6 @@ class CleanCheckoutSealTests(unittest.TestCase):
                 check=True,
             )
             seal_path = checkout / SEAL_PATH
-            before = hashlib.sha256(seal_path.read_bytes()).hexdigest()
             environment = dict(os.environ)
             environment["PYTHONPATH"] = str(checkout / "src")
             verification = subprocess.run(
@@ -85,14 +83,23 @@ class CleanCheckoutSealTests(unittest.TestCase):
                 encoding="utf-8",
                 check=True,
             ).stdout
+            ignored = subprocess.run(
+                ["git", "check-ignore", "--no-index", str(SEAL_PATH)],
+                cwd=checkout,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
 
-            self.assertEqual(
+            self.assertFalse(seal_path.exists())
+            self.assertNotEqual(
                 verification.returncode,
                 0,
-                msg=f"stdout={verification.stdout!r} stderr={verification.stderr!r}",
+                msg="a clean checkout must not contain a locally issued project Seal",
             )
-            self.assertRegex(verification.stdout.strip(), r"^ASC1:[0-9a-f]{64}$")
-            self.assertEqual(hashlib.sha256(seal_path.read_bytes()).hexdigest(), before)
+            self.assertIn("project-seal.json", verification.stderr)
+            self.assertEqual(ignored.returncode, 0)
             self.assertEqual(status, "")
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ _TOP_LEVEL_FIELDS = {
     "evidence_index",
 }
 _EVIDENCE_FIELDS = {"evidence_id", "path", "size", "sha256"}
+_NONBLANK_EVIDENCE_IDS = {"test-report", "final-review"}
 
 
 class FinalReviewVerdictError(RuntimeError):
@@ -51,6 +53,7 @@ def validate_final_review_verdict(
     artifact_root: str | Path,
     workflow_run_id: str,
     expected_status: bool,
+    required_evidence: Sequence[Mapping[str, object]] = (),
 ) -> ValidatedFinalReviewVerdict:
     project = lexical_absolute(project_root)
     artifacts = lexical_absolute(artifact_root)
@@ -102,13 +105,16 @@ def validate_final_review_verdict(
                 f"final review evidence {index} has an invalid ID"
             )
         evidence_ids.append(evidence_id)
-        evidence_paths.append(
-            _validate_descriptor(
-                item,
-                index=index,
-                allowed_roots=(project, artifacts),
-            )
+        evidence_path, evidence_content = _validate_descriptor(
+            item,
+            index=index,
+            allowed_roots=(project, artifacts),
         )
+        if evidence_id in _NONBLANK_EVIDENCE_IDS and not evidence_content.strip():
+            raise FinalReviewVerdictError(
+                f"final review evidence is blank: {evidence_id}"
+            )
+        evidence_paths.append(evidence_path)
     if len(set(evidence_ids)) != len(evidence_ids):
         raise FinalReviewVerdictError("final review evidence IDs are not unique")
     if len(set(evidence_paths)) != len(evidence_paths):
@@ -117,6 +123,46 @@ def validate_final_review_verdict(
         raise FinalReviewVerdictError(
             "final review evidence index does not include FINAL_REVIEW.md"
         )
+    evidence_by_id = {
+        str(item["evidence_id"]): item
+        for item in evidence
+        if isinstance(item, dict)
+    }
+    required_ids: set[str] = set()
+    for index, required in enumerate(required_evidence):
+        required_item = dict(required)
+        if set(required_item) != _EVIDENCE_FIELDS:
+            raise FinalReviewVerdictError(
+                f"required final review evidence {index} has invalid fields"
+            )
+        required_id = required_item.get("evidence_id")
+        if not isinstance(required_id, str) or not required_id:
+            raise FinalReviewVerdictError(
+                f"required final review evidence {index} has an invalid ID"
+            )
+        if required_id in required_ids:
+            raise FinalReviewVerdictError(
+                "required final review evidence IDs are not unique"
+            )
+        required_ids.add(required_id)
+        _required_path, required_content = _validate_descriptor(
+            required_item,
+            index=index,
+            allowed_roots=(project, artifacts),
+        )
+        if required_id in _NONBLANK_EVIDENCE_IDS and not required_content.strip():
+            raise FinalReviewVerdictError(
+                f"required final review evidence is blank: {required_id}"
+            )
+        actual_item = evidence_by_id.get(required_id)
+        if actual_item is None:
+            raise FinalReviewVerdictError(
+                f"final review verdict is missing required evidence: {required_id}"
+            )
+        if actual_item != required_item:
+            raise FinalReviewVerdictError(
+                f"final review required evidence descriptor changed: {required_id}"
+            )
     return ValidatedFinalReviewVerdict(
         path=path,
         sha256=hashlib.sha256(raw).hexdigest(),
@@ -130,7 +176,7 @@ def _validate_descriptor(
     *,
     index: int,
     allowed_roots: tuple[Path, ...],
-) -> Path:
+) -> tuple[Path, bytes]:
     raw_path = item["path"]
     if not isinstance(raw_path, str) or not raw_path:
         raise FinalReviewVerdictError(
@@ -169,7 +215,7 @@ def _validate_descriptor(
         raise FinalReviewVerdictError(
             f"final review evidence {index} does not match its descriptor"
         )
-    return path
+    return path, content
 
 
 def _read_json(path: Path) -> tuple[bytes, Any]:

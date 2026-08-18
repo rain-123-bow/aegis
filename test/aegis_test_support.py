@@ -12,6 +12,18 @@ from pathlib import Path
 SCOPE_POLICY_RELATIVE_PATH = Path(
     ".aegis/reasoning_ledger/artifacts/facts/runtime-behavior-scope.json"
 )
+SCOPE_REVIEW_RELATIVE_PATH = Path(
+    ".aegis/reasoning_ledger/artifacts/reviews/runtime-behavior-scope-review.md"
+)
+SCOPE_REVIEW_RESULT_RELATIVE_PATH = Path(
+    ".aegis/reasoning_ledger/artifacts/reviews/runtime-behavior-scope-review.json"
+)
+SCOPE_USER_CONFIRMATION_RELATIVE_PATH = Path(
+    ".aegis/reasoning_ledger/artifacts/facts/runtime-behavior-scope-user-confirmation.json"
+)
+SCOPE_DECISION_RELATIVE_PATH = Path(
+    ".aegis/reasoning_ledger/artifacts/facts/runtime-behavior-scope-decision.json"
+)
 
 
 @lru_cache(maxsize=1)
@@ -67,91 +79,211 @@ def write_test_runtime_scope_policy(
     *,
     project_id: bytes = bytes(range(16)),
 ) -> Path:
-    review_path = project / ".aegis/reasoning_ledger/artifacts/reviews/runtime-behavior-scope-review.md"
-    statement_path = project / ".aegis/reasoning_ledger/artifacts/facts/runtime-behavior-scope-user-confirmation.md"
+    review_path = project / SCOPE_REVIEW_RELATIVE_PATH
+    review_result_path = project / SCOPE_REVIEW_RESULT_RELATIVE_PATH
+    confirmation_path = project / SCOPE_USER_CONFIRMATION_RELATIVE_PATH
     review_path.parent.mkdir(parents=True, exist_ok=True)
-    statement_path.parent.mkdir(parents=True, exist_ok=True)
+    confirmation_path.parent.mkdir(parents=True, exist_ok=True)
     review_path.write_text("# Runtime scope review\n\nPASS\n", encoding="utf-8")
-    statement_path.write_text(
-        "I confirm this runtime behavior scope.\n", encoding="utf-8"
-    )
     review_bytes = review_path.read_bytes()
-    statement_bytes = statement_path.read_bytes()
     include_roots = [
-        name for name in ("src", "config") if (project / name).is_dir()
+        name
+        for name in (
+            "src",
+            "config",
+            "third_party/TraceRelay/src/tracerelay",
+            "third_party/AegisSealCore/windows-x64",
+        )
+        if (project / name).is_dir()
     ]
     include_files = [
         name
-        for name in ("pyproject.toml", "CMakeLists.txt")
+        for name in (
+            "pyproject.toml",
+            "CMakeLists.txt",
+            "requirements-runtime.txt",
+            "third_party/TraceRelay/PROVENANCE.json",
+        )
         if (project / name).is_file()
     ]
     path = project / SCOPE_POLICY_RELATIVE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {
-                "schema": "aegis.runtime_behavior_scope.v2",
-                "project_id_hex": project_id.hex(),
-                "version": 1,
-                "status": "user_confirmed",
-                "include_roots": include_roots,
-                "include_files": include_files,
-                "exclude_roots": ["test", "tests", "demo", "demos"],
-                "exclude_files": [],
-                "force_include_files": [],
-                "external_tools": {
-                    "git_sha256": _test_git_pins()[0],
-                    "git_runtime_sha256": _test_git_pins()[1],
-                },
-                "runtime_authority_id": "ab" * 16,
-                "review": {
-                    "verdict": "PASS",
-                    "report_sha256": hashlib.sha256(review_bytes).hexdigest(),
-                },
-                "user_confirmation": {
-                    "confirmation_id": "unit-test-fixture",
-                    "statement_sha256": hashlib.sha256(statement_bytes).hexdigest(),
-                },
-            },
-            sort_keys=True,
+    payload = {
+        "schema": "aegis.runtime_behavior_scope_definition.v1",
+        "project_id_hex": project_id.hex(),
+        "version": 1,
+        "include_roots": include_roots,
+        "include_files": include_files,
+        "exclude_roots": ["test", "tests", "demo", "demos"],
+        "exclude_files": [],
+        "force_include_files": [],
+        "external_tools": {
+            "git_sha256": _test_git_pins()[0],
+            "git_runtime_sha256": _test_git_pins()[1],
+        },
+        "runtime_authority_id": "ab" * 16,
+    }
+    policy_bytes = _canonical_json_bytes(payload)
+    path.write_bytes(policy_bytes)
+    policy_sha256 = hashlib.sha256(policy_bytes).hexdigest()
+    review_result = {
+        "schema": "aegis.runtime_behavior_scope_review.v1",
+        "review_id": "unit-test-review",
+        "project_id_hex": project_id.hex(),
+        "scope_definition_sha256": policy_sha256,
+        "verdict": "PASS",
+        "report": _descriptor(SCOPE_REVIEW_RELATIVE_PATH, review_bytes),
+    }
+    review_result_bytes = _canonical_json_bytes(review_result)
+    review_result_path.write_bytes(review_result_bytes)
+    confirmation = {
+        "schema": "aegis.runtime_behavior_scope_user_confirmation.v1",
+        "confirmation_id": "unit-test-fixture",
+        "project_id_hex": project_id.hex(),
+        "scope_definition_sha256": policy_sha256,
+        "review_result": _descriptor(
+            SCOPE_REVIEW_RESULT_RELATIVE_PATH, review_result_bytes
         ),
-        encoding="utf-8",
-    )
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    policy_sha256 = hashlib.sha256(
-        json.dumps(
-            payload,
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-    decision_path = project / ".aegis/reasoning_ledger/artifacts/facts/runtime-behavior-scope-decision.json"
-    decision_path.write_text(
-        json.dumps(
+        "decision": "CONFIRMED",
+        "statement": "I confirm this exact runtime behavior scope and PASS review.",
+    }
+    confirmation_bytes = _canonical_json_bytes(confirmation)
+    confirmation_path.write_bytes(confirmation_bytes)
+    decision_path = project / SCOPE_DECISION_RELATIVE_PATH
+    decision_path.write_bytes(
+        _canonical_json_bytes(
             {
-                "schema": "aegis.runtime_behavior_scope_decision.v2",
+                "schema": "aegis.runtime_behavior_scope_decision.v3",
                 "project_id_hex": project_id.hex(),
                 "decision": "APPROVED",
-                "policy_sha256": policy_sha256,
-                "review": {
-                    "path": ".aegis/reasoning_ledger/artifacts/reviews/runtime-behavior-scope-review.md",
-                    "size": len(review_bytes),
-                    "sha256": hashlib.sha256(review_bytes).hexdigest(),
-                },
+                "scope_definition": _descriptor(
+                    SCOPE_POLICY_RELATIVE_PATH, policy_bytes
+                ),
+                "review_result": _descriptor(
+                    SCOPE_REVIEW_RESULT_RELATIVE_PATH, review_result_bytes
+                ),
                 "user_confirmation": {
+                    **_descriptor(
+                        SCOPE_USER_CONFIRMATION_RELATIVE_PATH,
+                        confirmation_bytes,
+                    ),
                     "confirmation_id": "unit-test-fixture",
-                    "path": ".aegis/reasoning_ledger/artifacts/facts/runtime-behavior-scope-user-confirmation.md",
-                    "size": len(statement_bytes),
-                    "sha256": hashlib.sha256(statement_bytes).hexdigest(),
                 },
-            },
-            sort_keys=True,
+            }
+        )
+    )
+    return path
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _descriptor(path: Path, content: bytes) -> dict[str, object]:
+    return {
+        "path": path.as_posix(),
+        "size": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+
+
+def refresh_test_runtime_scope_approvals(project: Path) -> None:
+    policy_path = project / SCOPE_POLICY_RELATIVE_PATH
+    policy_bytes = policy_path.read_bytes()
+    policy = json.loads(policy_bytes.decode("utf-8"))
+    project_id_hex = str(policy["project_id_hex"])
+    policy_sha256 = hashlib.sha256(policy_bytes).hexdigest()
+    review_path = project / SCOPE_REVIEW_RELATIVE_PATH
+    review_bytes = review_path.read_bytes()
+    review_result = {
+        "schema": "aegis.runtime_behavior_scope_review.v1",
+        "review_id": "unit-test-review",
+        "project_id_hex": project_id_hex,
+        "scope_definition_sha256": policy_sha256,
+        "verdict": "PASS",
+        "report": _descriptor(SCOPE_REVIEW_RELATIVE_PATH, review_bytes),
+    }
+    review_result_bytes = _canonical_json_bytes(review_result)
+    (project / SCOPE_REVIEW_RESULT_RELATIVE_PATH).write_bytes(review_result_bytes)
+    confirmation = {
+        "schema": "aegis.runtime_behavior_scope_user_confirmation.v1",
+        "confirmation_id": "unit-test-fixture",
+        "project_id_hex": project_id_hex,
+        "scope_definition_sha256": policy_sha256,
+        "review_result": _descriptor(
+            SCOPE_REVIEW_RESULT_RELATIVE_PATH, review_result_bytes
+        ),
+        "decision": "CONFIRMED",
+        "statement": "I confirm this exact runtime behavior scope and PASS review.",
+    }
+    confirmation_bytes = _canonical_json_bytes(confirmation)
+    (project / SCOPE_USER_CONFIRMATION_RELATIVE_PATH).write_bytes(
+        confirmation_bytes
+    )
+    decision = {
+        "schema": "aegis.runtime_behavior_scope_decision.v3",
+        "project_id_hex": project_id_hex,
+        "decision": "APPROVED",
+        "scope_definition": _descriptor(
+            SCOPE_POLICY_RELATIVE_PATH, policy_bytes
+        ),
+        "review_result": _descriptor(
+            SCOPE_REVIEW_RESULT_RELATIVE_PATH, review_result_bytes
+        ),
+        "user_confirmation": {
+            **_descriptor(
+                SCOPE_USER_CONFIRMATION_RELATIVE_PATH, confirmation_bytes
+            ),
+            "confirmation_id": "unit-test-fixture",
+        },
+    }
+    (project / SCOPE_DECISION_RELATIVE_PATH).write_bytes(
+        _canonical_json_bytes(decision)
+    )
+
+
+def write_test_engineering_input_manifest(
+    project: Path,
+    *,
+    project_id: bytes = bytes(range(16)),
+) -> Path:
+    requirements = project / "docs" / "REQUIREMENTS.md"
+    implementation = project / "docs" / "IMPLEMENTATION_PLAN.md"
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_text("Synthetic acceptance requirement.\n", encoding="utf-8")
+    implementation.write_text("Synthetic acceptance implementation.\n", encoding="utf-8")
+
+    def descriptor(kind: str, path: Path) -> dict[str, object]:
+        content = path.read_bytes()
+        return {
+            "kind": kind,
+            "path": str(path.resolve()),
+            "size": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+        }
+
+    manifest = project / "ENGINEERING_INPUT_MANIFEST.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "aegis.engineering_input_manifest.v1",
+                "project_id_hex": project_id.hex(),
+                "created_at_utc": "2026-08-18T00:00:00Z",
+                "documents": [
+                    descriptor("REQUIREMENTS", requirements),
+                    descriptor("IMPLEMENTATION_PLAN", implementation),
+                ],
+            }
         ),
         encoding="utf-8",
     )
-    return path
+    return manifest
 
 
 def write_test_execution_request(

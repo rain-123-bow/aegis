@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from typing import Any, Iterator
 from uuid import uuid4
 
@@ -39,8 +39,16 @@ from final_review_verdict import (
     validate_final_review_verdict,
 )
 from frozen_input_watcher import FileSystemEvent, FrozenInputWatcher
-from path_security import PathSecurityError, read_regular_file, require_no_reparse
+from path_security import (
+    PathSecurityError,
+    is_within,
+    lexical_absolute,
+    read_regular_file,
+    require_no_reparse,
+    same_path,
+)
 from project_seal_store import (
+    SEAL_RECORD_RELATIVE_PATH,
     StoredProjectSeal,
     hold_verified_project_git_runtime,
     verify_expected_project_seal,
@@ -49,12 +57,19 @@ from runtime_behavior_scope import (
     SCOPE_DECISION_RELATIVE_PATH,
     SCOPE_POLICY_RELATIVE_PATH,
     SCOPE_REVIEW_RELATIVE_PATH,
-    SCOPE_USER_STATEMENT_RELATIVE_PATH,
+    SCOPE_REVIEW_RESULT_RELATIVE_PATH,
+    SCOPE_USER_CONFIRMATION_RELATIVE_PATH,
     RuntimeBehaviorScopeError,
     resolve_runtime_behavior_scope,
     runtime_behavior_path_is_selected,
 )
 from runtime_identity import RuntimeIdentityError, capture_production_runtime_identity
+from runtime_contracts import (
+    FINAL_REVIEW_INPUT_MANIFEST_SCHEMA,
+    RUN_STATE_SCHEMA,
+    RuntimeContractError,
+    validate_final_review_input_manifest_payload,
+)
 from remote_seal_witness import verify_remote_project_seal_witness
 from reasoning_context_pack import (
     ReasoningContextPackError,
@@ -81,6 +96,7 @@ from tracerelay_client import (
     TraceRelayClient,
     TraceRelayError,
     TraceRelayRegistration,
+    _windows_job_command,
     parse_loopback_proxy_port,
     resolve_tracerelay_command,
 )
@@ -93,7 +109,9 @@ RESERVATION_TABLE = "aegis_run_reservations"
 ACCOUNTABILITY_TABLE = "aegis_project_accountability"
 RUNTIME_AUTHORITY_TABLE = "aegis_runtime_authority"
 RUNTIME_AUTHORITY_RELATIVE_PATH = Path("project_state/runtime-authority.json")
-RUN_STATE_SCHEMA = "aegis.run_state.v10"
+FINAL_REVIEW_INPUT_MANIFEST_NAME = "FINAL_REVIEW_INPUT_MANIFEST.json"
+RUN_AUTHORITY_EVIDENCE_NAME = "RUN_AUTHORITY_EVIDENCE.json"
+MAX_TEST_OUTPUT_BYTES = 32 * 1024 * 1024
 PLANNING_STAGE_STATUSES = frozenset({"not_started", "active", "completed"})
 PLANNING_ROUND_STATUSES = frozenset(
     {
@@ -112,6 +130,15 @@ EXECUTION_NODE_ROLES = {
     "D": "TEST_RESULT_REVIEWER",
     "E": "TEST_REPORT_WRITER",
     "F": "FINAL_REVIEWER",
+}
+EXECUTION_REQUIRED_OUTPUTS = {
+    "C": {"test-execution-request": TEST_EXECUTION_REQUEST_NAME},
+    "D": {"test-result-review": "TEST_RESULT_REVIEW.md"},
+    "E": {"test-report": "TEST_REPORT.md"},
+    "F": {
+        "final-review": "FINAL_REVIEW.md",
+        "final-review-verdict": "FINAL_REVIEW_VERDICT.json",
+    },
 }
 EXECUTION_AGENT_STATUSES = frozenset({"allocating", "ready"})
 EXECUTION_TURN_STATUSES = frozenset(
@@ -134,6 +161,10 @@ class FrozenInputMutationError(RuntimeStateError):
         self.mutation_event = (
             dict(mutation_event) if mutation_event is not None else None
         )
+
+
+class FreezeContinuityLostError(RuntimeStateError):
+    pass
 
 
 def new_run_id() -> str:
@@ -249,6 +280,7 @@ class RuntimeCoordinator:
         self._seal: StoredProjectSeal | None = None
         self._frozen_runtime_manifest: dict[str, object] | None = None
         self._remote_witness: dict[str, object] | None = None
+        self._authority_evidence: dict[str, object] | None = None
         self._engineering_input_manifest: dict[str, object] | None = None
         self._reasoning_context_pack: dict[str, object] | None = None
         self._planning_reuse: dict[str, object] | None = None
@@ -266,16 +298,82 @@ class RuntimeCoordinator:
         self._execution_attempts: list[dict[str, object]] = []
         self._active_execution_attempt: dict[str, object] | None = None
         self._active_test_input_descriptors: list[dict[str, object]] = []
+        self._accountability_evidence_descriptors: list[dict[str, object]] = []
+        self._run_watchers: list[FrozenInputWatcher] = []
+        self._run_watch_descriptors: dict[str, dict[str, object]] = {}
+        self._run_watch_event_offsets: dict[int, int] = {}
+        self._run_locked_file_paths: set[str] = set()
+        self._run_authorized_adoption_paths: set[str] = set()
+        self._active_node_output_watcher: FrozenInputWatcher | None = None
         self._registration_intent: dict[str, object] | None = None
+        self._tracerelay_runtime: dict[str, object] = {
+            "schema": "aegis.tracerelay_runtime.v1",
+            "runtime_nonce": uuid4().hex,
+            "sdk_manifest_sha256": None,
+            "python_executable_sha256": None,
+            "launch_intent_persisted": False,
+            "observed_identity": None,
+        }
         self._planning_ready_roles: set[str] = set()
         self._planning_stage_status = "not_started"
         self._codex_cli_path: str | None = None
         self._codex_cli_version: str | None = None
         self._is_resume = prior_state is not None
+        self._restored_project_id_hex = (
+            str(prior_state.get("project_id_hex"))
+            if prior_state is not None
+            and isinstance(prior_state.get("project_id_hex"), str)
+            else None
+        )
+        self._restored_seal_sequence = (
+            int(prior_state.get("seal_sequence"))
+            if prior_state is not None
+            and isinstance(prior_state.get("seal_sequence"), int)
+            and not isinstance(prior_state.get("seal_sequence"), bool)
+            else None
+        )
+        self._restored_expected_seal = (
+            str(prior_state.get("expected_seal"))
+            if prior_state is not None
+            and isinstance(prior_state.get("expected_seal"), str)
+            else None
+        )
         self._reservation_token: str | None = None
         self._state_writable = False
+        self._authoritative_state_sha256: str | None = None
+        self._authoritative_state_status: str | None = None
+        self._terminal_state_persisted = False
+        self._terminal_target_status: str | None = None
+        self._committed_terminal_publish_allowed = False
+        self._restored_mutation_event: dict[str, object] | None = None
+        self._restored_terminal_error_message: str | None = None
         if prior_state is not None:
             self._restore(prior_state)
+            prior_encoded = _canonical_json_bytes(prior_state)
+            self._authoritative_state_sha256 = hashlib.sha256(prior_encoded).hexdigest()
+            prior_status = prior_state.get("status")
+            self._authoritative_state_status = (
+                str(prior_status) if isinstance(prior_status, str) else None
+            )
+            self._terminal_state_persisted = prior_status in {
+                "completed",
+                "terminated",
+            }
+            target_status = prior_state.get("terminal_target_status")
+            self._terminal_target_status = (
+                str(target_status) if isinstance(target_status, str) else None
+            )
+            mutation_event = prior_state.get("mutation_event")
+            self._restored_mutation_event = (
+                dict(mutation_event) if isinstance(mutation_event, dict) else None
+            )
+            prior_error = prior_state.get("error")
+            self._restored_terminal_error_message = (
+                str(prior_error.get("message"))
+                if isinstance(prior_error, dict)
+                and isinstance(prior_error.get("message"), str)
+                else None
+            )
 
     def _restore(self, state: Mapping[str, object]) -> None:
         if state.get("schema") in {
@@ -288,13 +386,27 @@ class RuntimeCoordinator:
             "aegis.run_state.v7",
             "aegis.run_state.v8",
             "aegis.run_state.v9",
+            "aegis.run_state.v10",
+            "aegis.run_state.v11",
+            "aegis.run_state.v12",
         }:
             raise RuntimeStateError(
-                "run state predates the v10 authoritative-state contract; "
+                "run state predates the v13 authority and recursive-evidence contract; "
                 "start a new run"
             )
         if state.get("schema") != RUN_STATE_SCHEMA:
             raise RuntimeStateError("run state schema is unsupported")
+        if (
+            not isinstance(state.get("project_id_hex"), str)
+            or re.fullmatch(r"[0-9a-f]{32}", str(state["project_id_hex"])) is None
+            or isinstance(state.get("seal_sequence"), bool)
+            or not isinstance(state.get("seal_sequence"), int)
+            or int(state["seal_sequence"]) < 0
+            or not isinstance(state.get("expected_seal"), str)
+            or re.fullmatch(r"ASC1:[0-9a-f]{64}", str(state["expected_seal"]))
+            is None
+        ):
+            raise RuntimeStateError("prior run state has invalid project Seal identity")
         if state.get("run_id") != self.run_id:
             raise RuntimeStateError("prior run state identity mismatch")
         if state.get("start_node") != self.start_node:
@@ -335,7 +447,9 @@ class RuntimeCoordinator:
         reasoning_context_pack = state.get("reasoning_context_pack")
         frozen_runtime_manifest = state.get("frozen_runtime_manifest")
         planning_reuse = state.get("planning_reuse")
+        authority_evidence = state.get("authority_evidence")
         reservation_token = state.get("reservation_token")
+        tracerelay_runtime = state.get("tracerelay_runtime")
         if not isinstance(created_at, str) or not created_at:
             raise RuntimeStateError("prior run state has no creation time")
         if graph_state is not None and not isinstance(graph_state, dict):
@@ -379,6 +493,11 @@ class RuntimeCoordinator:
                 "prior execution attempts must be a list of objects"
             )
         _validate_execution_attempts(execution_attempts)
+        _validate_execution_path(execution_attempts)
+        if execution_attempts and planning_stage_status != "completed":
+            raise RuntimeStateError(
+                "prior execution attempts exist before planning completion"
+            )
         _validate_execution_bindings(
             execution_attempts,
             execution_agents,
@@ -409,6 +528,9 @@ class RuntimeCoordinator:
             or RESERVATION_TOKEN_PATTERN.fullmatch(reservation_token) is None
         ):
             raise RuntimeStateError("prior run state has an invalid reservation token")
+        self._tracerelay_runtime = _validate_tracerelay_runtime_record(
+            tracerelay_runtime
+        )
         self._created_at_utc = created_at
         self._current_node = _optional_string(state.get("current_node"))
         self._last_completed_node = _optional_string(state.get("last_completed_node"))
@@ -448,6 +570,12 @@ class RuntimeCoordinator:
             )
         if planning_reuse is not None and not isinstance(planning_reuse, dict):
             raise RuntimeStateError("prior planning reuse record must be an object or null")
+        if authority_evidence is not None and not isinstance(
+            authority_evidence, dict
+        ):
+            raise RuntimeStateError(
+                "prior authority evidence record must be an object or null"
+            )
         if reasoning_context_pack is not None and not isinstance(
             reasoning_context_pack, dict
         ):
@@ -478,6 +606,11 @@ class RuntimeCoordinator:
         self._planning_reuse = (
             dict(planning_reuse) if isinstance(planning_reuse, dict) else None
         )
+        self._authority_evidence = (
+            dict(authority_evidence)
+            if isinstance(authority_evidence, dict)
+            else None
+        )
         self._reservation_token = reservation_token
 
     @property
@@ -485,6 +618,68 @@ class RuntimeCoordinator:
         return self._planning_stage_status
 
     def preflight(self) -> None:
+        self._preflight_inner_started = False
+        continuity_error: FreezeContinuityLostError | None = None
+        if self._is_resume:
+            assert self._reservation_token is not None
+            _validate_run_reservation(
+                self.runtime_root,
+                self.artifact_path,
+                self.run_id,
+                self._reservation_token,
+            )
+            if (
+                self._restored_project_id_hex is None
+                or re.fullmatch(r"[0-9a-f]{32}", self._restored_project_id_hex) is None
+            ):
+                raise RuntimeStateError("prior run state has no valid project identity")
+            self._agent_registry = DynamicAgentRegistry(
+                self.runtime_root,
+                project_id=self._restored_project_id_hex,
+            )
+            # A competing resume must fail without gaining authority to modify
+            # the shared reservation or RUN_STATE projection.
+            self._agent_registry.acquire_project_lease(self.run_id)
+            self._project_lease_acquired = True
+            self._state_writable = True
+        try:
+            if self._is_resume and self._authoritative_state_status in {
+                "ready",
+                "running",
+                "starting_tracerelay",
+                "tracerelay_attached",
+            }:
+                continuity_error = FreezeContinuityLostError(
+                    "the prior Coordinator ended without a durable freeze boundary; "
+                    "this run cannot resume safely"
+                )
+                for cleanup_error in self._cleanup_after_freeze_continuity_loss():
+                    continuity_error.add_note(
+                        f"TraceRelay cleanup also failed: {cleanup_error}"
+                    )
+                self._write_state("terminated", continuity_error)
+                raise continuity_error
+            self._preflight_impl()
+        except BaseException as error:
+            if continuity_error is not None:
+                if self._authoritative_state_status != "terminated":
+                    try:
+                        self._write_state("terminated", continuity_error)
+                    except BaseException as persistence_error:
+                        continuity_error.add_note(
+                            "freeze-continuity termination persistence also failed: "
+                            f"{persistence_error}"
+                        )
+                raise continuity_error
+            if self._state_writable and not self._preflight_inner_started:
+                if isinstance(error, FrozenInputMutationError):
+                    error = self._enrich_mutation_error(error)
+                    self._write_state("terminated", error)
+                else:
+                    self._write_state("failed", error)
+            raise
+
+    def _preflight_impl(self) -> None:
         with hold_verified_project_git_runtime(self.project_root) as git_command:
             self._seal = verify_expected_project_seal(
                 self.project_root,
@@ -492,6 +687,8 @@ class RuntimeCoordinator:
                 git_runtime_lock_held=True,
             )
             self._capture_frozen_runtime_manifest(git_command=git_command)
+            if self._is_resume and not self._run_watchers:
+                self._start_run_wide_freeze()
             if self.require_remote_witness:
                 witness = verify_remote_project_seal_witness(
                     self.project_root,
@@ -513,12 +710,25 @@ class RuntimeCoordinator:
             runtime_authority_id=self._seal.runtime_authority_id,
             allow_initialize=not self.require_remote_witness,
         )
-        if not self._is_resume:
-            self._reject_unresolved_mutation_accountability()
-        self._agent_registry = DynamicAgentRegistry(
-            self.runtime_root,
-            project_id=self._seal.project_id.hex(),
+        recovering_own_mutation_terminal = (
+            self._authoritative_state_status
+            in {"terminal_finalizing", "terminal_committed"}
+            and self._restored_mutation_event is not None
         )
+        if not recovering_own_mutation_terminal:
+            self._reject_unresolved_mutation_accountability()
+        if self._run_watchers:
+            self._refresh_run_wide_freeze()
+        if self._agent_registry is None:
+            self._agent_registry = DynamicAgentRegistry(
+                self.runtime_root,
+                project_id=self._seal.project_id.hex(),
+            )
+        elif self._restored_project_id_hex != self._seal.project_id.hex():
+            raise FrozenInputMutationError(
+                "restored project identity differs from the verified project seal"
+            )
+        self._preflight_inner_started = True
         try:
             if self._is_resume:
                 assert self._reservation_token is not None
@@ -543,13 +753,50 @@ class RuntimeCoordinator:
                     payload,
                 )
                 self._reservation_token = reservation_token
+                reserved_encoded = _canonical_json_bytes(payload)
+                self._authoritative_state_sha256 = hashlib.sha256(
+                    reserved_encoded
+                ).hexdigest()
+                self._authoritative_state_status = "reserved"
                 self._state_writable = True
-            self._agent_registry.acquire_project_lease(self.run_id)
-            self._project_lease_acquired = True
+            if not self._project_lease_acquired:
+                self._agent_registry.acquire_project_lease(self.run_id)
+                self._project_lease_acquired = True
             if not self._is_resume:
+                self.artifact_path.mkdir(parents=True, exist_ok=True)
                 self._snapshot_engineering_inputs()
-                if self._planning_reuse_source_state is not None:
-                    self._import_planning_reuse()
+            if not self._run_watchers:
+                self._start_run_wide_freeze()
+            if self._authoritative_state_status in {
+                "terminal_finalizing",
+                "terminal_committed",
+            }:
+                self._recover_terminal_finalization()
+                return
+            if isinstance(self.relay_client, TraceRelayClient):
+                if not self._is_resume:
+                    self._tracerelay_runtime["launch_intent_persisted"] = True
+                    self._write_state("starting_tracerelay")
+                self._bind_tracerelay_runtime_expectation()
+                self.relay_client.establish_runtime(
+                    require_idle=not self._is_resume
+                )
+                observed_runtime = self.relay_client.runtime_identity
+                if observed_runtime is None:
+                    raise RuntimeStateError(
+                        "TraceRelay returned no observed runtime identity"
+                    )
+                prior_observed = self._tracerelay_runtime.get(
+                    "observed_identity"
+                )
+                if prior_observed is not None and prior_observed != observed_runtime:
+                    raise RuntimeStateError(
+                        "TraceRelay observed runtime identity changed"
+                    )
+                self._tracerelay_runtime["observed_identity"] = observed_runtime
+                self._write_state("tracerelay_attached")
+            if not self._is_resume and self._planning_reuse_source_state is not None:
+                self._import_planning_reuse()
             self._validate_engineering_inputs()
             if self._reasoning_context_pack is not None:
                 self._validate_reasoning_context_snapshot()
@@ -562,6 +809,9 @@ class RuntimeCoordinator:
             self._recover_persisted_execution_sessions()
             self.relay_client.start()
             self._validate_persisted_execution_receipts()
+            self._ensure_authority_evidence_snapshot()
+            if not self._run_watchers:
+                self._start_run_wide_freeze()
         except BaseException as error:
             if self._state_writable:
                 self._write_state("failed", error)
@@ -569,15 +819,130 @@ class RuntimeCoordinator:
             raise
         self._write_state("ready")
 
+    def _authority_evidence_payload(self) -> dict[str, object]:
+        if self._seal is None:
+            raise RuntimeStateError("project seal is unavailable for authority evidence")
+        seal_path = lexical_absolute(
+            self.project_root / SEAL_RECORD_RELATIVE_PATH
+        )
+        try:
+            seal_bytes, _identity = read_regular_file(
+                seal_path,
+                allowed_root=self.project_root,
+                label="project seal record",
+                max_bytes=4 * 1024 * 1024,
+            )
+        except PathSecurityError as error:
+            raise FrozenInputMutationError(
+                "project seal record is unavailable for authority evidence"
+            ) from error
+        observed_required = isinstance(self.relay_client, TraceRelayClient)
+        if observed_required and self._tracerelay_runtime.get("observed_identity") is None:
+            raise RuntimeStateError(
+                "production TraceRelay has no observed runtime identity"
+            )
+        if self.require_remote_witness and self._remote_witness is None:
+            raise RuntimeStateError("required remote seal witness is unavailable")
+        return {
+            "schema": "aegis.run_authority_evidence.v1",
+            "workflow_run_id": self.run_id,
+            "project_seal": self._seal.as_json_data(),
+            "project_seal_record": {
+                "path": str(seal_path),
+                "size": len(seal_bytes),
+                "sha256": hashlib.sha256(seal_bytes).hexdigest(),
+            },
+            "remote_witness_required": self.require_remote_witness,
+            "remote_witness": _json_copy(self._remote_witness),
+            "tracerelay_observed_identity_required": observed_required,
+            "tracerelay_runtime": _json_copy(self._tracerelay_runtime),
+        }
+
+    def _load_authority_evidence(self) -> dict[str, object]:
+        record = self._authority_evidence
+        if not isinstance(record, dict) or set(record) != {
+            "path",
+            "size",
+            "sha256",
+        }:
+            raise RuntimeStateError("run authority evidence checkpoint is missing")
+        expected_path = lexical_absolute(
+            self.artifact_path / RUN_AUTHORITY_EVIDENCE_NAME
+        )
+        if not same_path(str(record.get("path")), expected_path):
+            raise FrozenInputMutationError("run authority evidence path changed")
+        try:
+            encoded, _identity = read_regular_file(
+                expected_path,
+                allowed_root=self.artifact_path,
+                label="run authority evidence",
+                max_bytes=4 * 1024 * 1024,
+            )
+            payload = json.loads(encoded.decode("utf-8", errors="strict"))
+        except (PathSecurityError, UnicodeError, json.JSONDecodeError) as error:
+            raise FrozenInputMutationError(
+                "run authority evidence is unreadable"
+            ) from error
+        if (
+            record.get("size") != len(encoded)
+            or record.get("sha256") != hashlib.sha256(encoded).hexdigest()
+            or payload != self._authority_evidence_payload()
+        ):
+            raise FrozenInputMutationError("run authority evidence changed")
+        if not isinstance(payload, dict):
+            raise RuntimeStateError("run authority evidence is not an object")
+        return payload
+
+    def _ensure_authority_evidence_snapshot(self) -> None:
+        payload = self._authority_evidence_payload()
+        encoded = _canonical_json_bytes(payload)
+        expected_path = lexical_absolute(
+            self.artifact_path / RUN_AUTHORITY_EVIDENCE_NAME
+        )
+        if self._authority_evidence is None:
+            if expected_path.exists():
+                try:
+                    existing, _identity = read_regular_file(
+                        expected_path,
+                        allowed_root=self.artifact_path,
+                        label="existing run authority evidence",
+                        max_bytes=4 * 1024 * 1024,
+                    )
+                except PathSecurityError as error:
+                    raise FrozenInputMutationError(
+                        "existing run authority evidence is unsafe"
+                    ) from error
+                if existing != encoded:
+                    raise FrozenInputMutationError(
+                        "existing run authority evidence has different bytes"
+                    )
+            else:
+                _write_bytes_exclusive(expected_path, encoded)
+            self._authority_evidence = {
+                "path": str(expected_path),
+                "size": len(encoded),
+                "sha256": hashlib.sha256(encoded).hexdigest(),
+            }
+        if self._run_watchers:
+            self._lock_run_wide_files([expected_path])
+            self._refresh_run_wide_freeze()
+        self._load_authority_evidence()
+
     def _reject_unresolved_mutation_accountability(self) -> None:
         if self._seal is None:
             raise RuntimeStateError("project seal is unavailable for accountability check")
-        unresolved = _audit_run_reservation_catalog(
-            self.runtime_root,
-            project_id_hex=self._seal.project_id.hex(),
-            project_root=self.project_root,
-            runtime_authority_id=self._seal.runtime_authority_id,
-        )
+        try:
+            unresolved, accountability_descriptors = _audit_run_reservation_catalog(
+                self.runtime_root,
+                project_id_hex=self._seal.project_id.hex(),
+                project_root=self.project_root,
+                runtime_authority_id=self._seal.runtime_authority_id,
+            )
+        except RuntimeStateError as error:
+            raise FrozenInputMutationError(
+                "sealed project mutation-accountability evidence changed"
+            ) from error
+        self._accountability_evidence_descriptors = accountability_descriptors
         if unresolved:
             raise RuntimeStateError(
                 "prior frozen-input mutation still requires a recorded user reason: "
@@ -590,9 +955,32 @@ class RuntimeCoordinator:
         operation: Callable[[dict[str, Any]], dict[str, Any]],
         state: dict[str, Any],
     ) -> dict[str, Any]:
+        cached_replay: dict[str, Any] | None = None
+        if node_name in EXECUTION_NODE_ROLES and self._execution_attempts:
+            latest = self._execution_attempts[-1]
+            if latest.get("node") == node_name and latest.get("status") == "completed":
+                input_sha256 = _state_sha256(state)
+                if latest.get("input_sha256") != input_sha256:
+                    raise RuntimeStateError(
+                        "completed execution node replay changed its input state"
+                    )
+                if (
+                    self._last_completed_node != node_name
+                    or not isinstance(self._last_state, dict)
+                    or _state_sha256(self._last_state)
+                    != latest.get("output_sha256")
+                ):
+                    raise RuntimeStateError(
+                        "completed execution node has no matching cached output"
+                    )
+                cached_replay = dict(self._last_state)
         self._current_node = node_name
-        self._last_state = dict(state)
+        if cached_replay is None:
+            self._last_state = dict(state)
         try:
+            if not self._run_watchers:
+                self._start_run_wide_freeze()
+            self._refresh_run_wide_freeze()
             self._validate_frozen_project_inputs()
             if node_name in {"D", "E", "F"}:
                 self._validate_completed_test_evidence_manifests()
@@ -600,25 +988,69 @@ class RuntimeCoordinator:
             error = self._enrich_mutation_error(error)
             self._write_state("terminated", error)
             raise
+        if cached_replay is not None:
+            self._current_node = None
+            return cached_replay
         execution_attempt: dict[str, object] | None = None
         if node_name in EXECUTION_NODE_ROLES:
             execution_attempt = self._begin_execution_attempt(node_name, state)
-            self._active_execution_attempt = execution_attempt
+            if node_name == "F":
+                try:
+                    self._prepare_final_review_input_manifest(execution_attempt)
+                    self._refresh_run_wide_freeze()
+                except BaseException as error:
+                    self._write_state("failed", error)
+                    raise
+        self._active_execution_attempt = execution_attempt
         self._write_state("running")
-        watchers = self._start_frozen_input_watchers()
+        try:
+            watchers, watch_descriptors = self._start_frozen_input_watchers()
+        except BaseException as error:
+            if isinstance(error, FrozenInputMutationError):
+                error = self._enrich_mutation_error(error)
+            self._active_execution_attempt = None
+            self._write_state(
+                "terminated" if isinstance(error, FrozenInputMutationError) else "failed",
+                error,
+            )
+            raise
+        self._active_node_output_watcher = watchers[0]
         token = _ACTIVE_COORDINATOR.set(self)
         try:
             result = operation(state)
         except BaseException as error:
-            watch_events = self._stop_frozen_input_watchers(watchers)
-            mutation = self._watcher_mutation_error(watch_events)
+            watch_events, watcher_errors = self._drain_frozen_input_watchers(watchers)
+            mutation = self._watcher_mutation_error(
+                watch_events, descriptors=watch_descriptors
+            )
+            if mutation is None:
+                try:
+                    self._validate_frozen_project_inputs()
+                except FrozenInputMutationError as boundary_mutation:
+                    mutation = boundary_mutation
+            close_errors = self._close_frozen_input_watchers(watchers)
+            watcher_errors = (*watcher_errors, *close_errors)
             if mutation is not None:
+                for watcher_error in watcher_errors:
+                    mutation.add_note(f"frozen-input watcher also failed: {watcher_error}")
                 self._write_state("terminated", mutation)
                 raise mutation from error
             if isinstance(error, FrozenInputMutationError):
                 error = self._enrich_mutation_error(error)
+                for watcher_error in watcher_errors:
+                    error.add_note(f"frozen-input watcher also failed: {watcher_error}")
+                self._write_state("terminated", error)
+                raise error
+            if watcher_errors:
+                watcher_failure = RuntimeStateError(
+                    "frozen-input watcher failed while draining all roots"
+                )
+                for watcher_error in watcher_errors:
+                    watcher_failure.add_note(str(watcher_error))
+                self._write_state("failed", watcher_failure)
+                raise watcher_failure from error
             self._write_state(
-                "terminated" if isinstance(error, FrozenInputMutationError) else "failed",
+                "failed",
                 error,
             )
             raise
@@ -626,19 +1058,46 @@ class RuntimeCoordinator:
             _ACTIVE_COORDINATOR.reset(token)
             self._active_execution_attempt = None
         try:
-            watch_events = self._stop_frozen_input_watchers(watchers)
-            mutation = self._watcher_mutation_error(watch_events)
-            if mutation is not None:
-                raise mutation
             self._validate_frozen_project_inputs()
             if execution_attempt is not None:
+                self._seal_execution_role_outputs(
+                    execution_attempt, result, watchers[0]
+                )
                 if node_name == "C":
                     self._seal_test_evidence_manifest(execution_attempt)
                 if node_name == "F":
                     self._seal_final_review_verdict(execution_attempt, result)
+            watch_events, watcher_errors = self._drain_frozen_input_watchers(watchers)
+            mutation = self._watcher_mutation_error(
+                watch_events, descriptors=watch_descriptors
+            )
+            if mutation is not None:
+                for watcher_error in watcher_errors:
+                    mutation.add_note(f"frozen-input watcher also failed: {watcher_error}")
+                raise mutation
+            if watcher_errors:
+                failure = RuntimeStateError(
+                    "frozen-input watcher failed while draining all roots"
+                )
+                for watcher_error in watcher_errors:
+                    failure.add_note(str(watcher_error))
+                raise failure
+            self._validate_frozen_project_inputs()
+            if execution_attempt is not None:
+                self._validate_execution_role_outputs(execution_attempt)
                 output_sha256 = _state_sha256(result)
+                node_status = result.get("status")
+                if not isinstance(node_status, bool):
+                    raise RuntimeStateError(
+                        f"{node_name} returned a non-boolean node status"
+                    )
+                if node_name == "C" and node_status is not True:
+                    raise RuntimeStateError("C cannot complete with status=false")
                 if execution_attempt["status"] == "completed":
-                    if execution_attempt.get("output_sha256") != output_sha256:
+                    if (
+                        execution_attempt.get("output_sha256") != output_sha256
+                        or execution_attempt.get("node_status") is not node_status
+                    ):
                         raise RuntimeStateError(
                             "replayed execution attempt produced a different graph state"
                         )
@@ -646,15 +1105,36 @@ class RuntimeCoordinator:
                     execution_attempt.update(
                         status="completed",
                         output_sha256=output_sha256,
+                        node_status=node_status,
                     )
+            self._refresh_run_wide_freeze()
         except BaseException as error:
+            watch_events, watcher_errors = self._drain_frozen_input_watchers(watchers)
+            mutation = self._watcher_mutation_error(
+                watch_events, descriptors=watch_descriptors
+            )
+            close_errors = self._close_frozen_input_watchers(watchers)
+            if mutation is not None:
+                mutation.add_note(f"node boundary also failed: {error}")
+                error = mutation
+            for close_error in (*watcher_errors, *close_errors):
+                error.add_note(f"frozen-input path-lock release failed: {close_error}")
             if isinstance(error, FrozenInputMutationError):
                 error = self._enrich_mutation_error(error)
             self._write_state(
                 "terminated" if isinstance(error, FrozenInputMutationError) else "failed",
                 error,
             )
+            self._active_node_output_watcher = None
             raise
+        self._active_node_output_watcher = None
+        close_errors = self._close_frozen_input_watchers(watchers)
+        if close_errors:
+            error = RuntimeStateError("frozen-input path locks failed to release")
+            for close_error in close_errors:
+                error.add_note(str(close_error))
+            self._write_state("failed", error)
+            raise error
         self._last_completed_node = node_name
         self._current_node = None
         self._last_state = dict(result)
@@ -740,7 +1220,7 @@ class RuntimeCoordinator:
             for prior in self._execution_attempts
             if prior.get("node") == "C" and prior.get("status") == "completed"
         ]
-        return {
+        control = {
             "schema": "aegis.execution_control.v1",
             "project_root": str(self.project_root),
             "project_id_hex": (
@@ -767,7 +1247,47 @@ class RuntimeCoordinator:
                 "sha256": context_sha256,
             },
             "test_evidence_manifests": evidence_manifests,
+            "prior_role_outputs": [
+                {
+                    "attempt_id": prior.get("attempt_id"),
+                    "node": prior.get("node"),
+                    "artifacts": [
+                        {
+                            "artifact_id": output.get("artifact_id"),
+                            "path": output.get("snapshot_path"),
+                            "size": output.get("size"),
+                            "sha256": output.get("sha256"),
+                        }
+                        for output in prior.get("output_artifacts", [])
+                        if isinstance(output, Mapping)
+                    ],
+                }
+                for prior in self._execution_attempts
+                if prior.get("status") == "completed"
+                and isinstance(prior.get("output_artifacts"), list)
+            ],
         }
+        if node == "F":
+            manifest_path = attempt.get("final_review_input_manifest_path")
+            manifest_sha256 = attempt.get("final_review_input_manifest_sha256")
+            required_ids = attempt.get("final_review_required_evidence_ids")
+            if (
+                not isinstance(manifest_path, str)
+                or not isinstance(manifest_sha256, str)
+                or not isinstance(required_ids, list)
+            ):
+                raise RuntimeStateError("F has no frozen final-review input manifest")
+            control["final_review_input_manifest"] = {
+                "path": manifest_path,
+                "sha256": manifest_sha256,
+                "required_evidence_ids": list(required_ids),
+                "verdict_requirement": (
+                    "FINAL_REVIEW_VERDICT.json must include every descriptor in "
+                    "required_evidence, plus exact descriptors for this manifest "
+                    "and FINAL_REVIEW.md"
+                ),
+            }
+        return control
 
     def run_execution_agent(
         self,
@@ -1243,6 +1763,7 @@ class RuntimeCoordinator:
                 "reasoning context pack requires sealed engineering inputs"
             )
         source = Path(source_path).resolve()
+        self._lock_run_wide_files([source])
         try:
             validated_source = validate_reasoning_context_pack(
                 source,
@@ -1305,6 +1826,7 @@ class RuntimeCoordinator:
                 )
         else:
             _atomic_write_bytes(ledger_snapshot_path, live_proof.encoded)
+        self._lock_run_wide_files([snapshot_path, ledger_snapshot_path])
         self._reasoning_context_pack = {
             "source_path": str(source),
             "snapshot_path": str(snapshot_path),
@@ -1318,6 +1840,7 @@ class RuntimeCoordinator:
             "coordinator_ledger_snapshot_size": len(live_proof.encoded),
             "coordinator_ledger_snapshot_sha256": live_proof.sha256,
         }
+        self._refresh_run_wide_freeze()
 
     def _validate_reasoning_context_snapshot(self) -> None:
         record = self._reasoning_context_pack
@@ -1473,17 +1996,18 @@ class RuntimeCoordinator:
         )
         if hashlib.sha256(source_review).hexdigest() != source_review_sha256:
             raise FrozenInputMutationError("source planning review changed before reuse")
+        source_turns = self._planning_reuse_source_turn_records(source_state)
         self._snapshot_reasoning_context_pack(context_path)
         assert self._reasoning_context_pack is not None
         context_path = Path(
             str(self._reasoning_context_pack["snapshot_path"])
         ).resolve()
         context_sha256 = str(self._reasoning_context_pack["sha256"])
-
         reuse_root = (self.artifact_path / "planning-reuse").resolve()
         approved_path, handoff_path = self._expected_planning_handoff_paths()
         review_path = (reuse_root / "SOURCE_TEST_PLAN_REVIEW.md").resolve()
         source_state_path = (reuse_root / "SOURCE_RUN_STATE.json").resolve()
+        source_turn_root = (reuse_root / "source-turns").resolve()
         _atomic_write_bytes(approved_path, source_plan)
         _atomic_write_bytes(review_path, source_review)
         source_state_bytes = json.dumps(
@@ -1493,6 +2017,84 @@ class RuntimeCoordinator:
             separators=(",", ":"),
         ).encode("utf-8")
         _atomic_write_bytes(source_state_path, source_state_bytes)
+        source_turn_snapshots: list[dict[str, object]] = []
+        source_run_root = lexical_absolute(
+            self.runtime_root / "runs" / parent_run_id
+        )
+        for index, turn in enumerate(source_turns, start=1):
+            role = _required_string(turn.get("role"), "planning reuse turn role")
+            job_id = _required_string(
+                turn.get("job_id"), "planning reuse turn job_id"
+            )
+            response_source = lexical_absolute(
+                _required_string(
+                    turn.get("raw_response_path"),
+                    "planning reuse raw_response_path",
+                )
+            )
+            receipt_source = lexical_absolute(
+                _required_string(
+                    turn.get("instruction_receipt_path"),
+                    "planning reuse instruction_receipt_path",
+                )
+            )
+            try:
+                response_bytes, _response_identity = read_regular_file(
+                    response_source,
+                    allowed_root=source_run_root,
+                    label=f"source planning response {index}",
+                    max_bytes=16 * 1024 * 1024,
+                )
+                receipt_bytes, _receipt_identity = read_regular_file(
+                    receipt_source,
+                    allowed_root=source_run_root,
+                    label=f"source planning instruction receipt {index}",
+                    max_bytes=4 * 1024 * 1024,
+                )
+            except PathSecurityError as error:
+                raise FrozenInputMutationError(
+                    f"source planning turn {index} is unsafe"
+                ) from error
+            response_sha256 = hashlib.sha256(response_bytes).hexdigest()
+            receipt_sha256 = hashlib.sha256(receipt_bytes).hexdigest()
+            if response_sha256 != _require_sha256(
+                turn.get("raw_response_sha256"), "raw_response_sha256"
+            ) or receipt_sha256 != _require_sha256(
+                turn.get("instruction_receipt_sha256"),
+                "instruction_receipt_sha256",
+            ):
+                raise FrozenInputMutationError(
+                    f"source planning turn {index} changed before reuse"
+                )
+            expected_response_size = turn.get("raw_response_size")
+            expected_receipt_size = turn.get("instruction_receipt_size")
+            if (
+                expected_response_size is not None
+                and expected_response_size != len(response_bytes)
+            ) or (
+                expected_receipt_size is not None
+                and expected_receipt_size != len(receipt_bytes)
+            ):
+                raise FrozenInputMutationError(
+                    f"source planning turn {index} size changed before reuse"
+                )
+            response_path = source_turn_root / f"{index:04d}-response.json"
+            receipt_path = source_turn_root / f"{index:04d}-instruction-receipt.json"
+            _atomic_write_bytes(response_path, response_bytes)
+            _atomic_write_bytes(receipt_path, receipt_bytes)
+            source_turn_snapshots.append(
+                {
+                    "source_index": index,
+                    "role": role,
+                    "job_id": job_id,
+                    "raw_response_path": str(response_path),
+                    "raw_response_size": len(response_bytes),
+                    "raw_response_sha256": response_sha256,
+                    "instruction_receipt_path": str(receipt_path),
+                    "instruction_receipt_size": len(receipt_bytes),
+                    "instruction_receipt_sha256": receipt_sha256,
+                }
+            )
         self._planning_reuse = {
             "schema": "aegis.planning_reuse.v1",
             "parent_run_id": parent_run_id,
@@ -1500,10 +2102,14 @@ class RuntimeCoordinator:
             "source_run_state_snapshot_sha256": hashlib.sha256(
                 source_state_bytes
             ).hexdigest(),
+            "source_run_state_snapshot_size": len(source_state_bytes),
             "approved_plan_path": str(approved_path),
+            "approved_plan_size": len(source_plan),
             "approved_plan_sha256": source_plan_sha256,
             "review_report_path": str(review_path),
+            "review_report_size": len(source_review),
             "review_report_sha256": source_review_sha256,
+            "source_turn_snapshots": source_turn_snapshots,
             "score": review["score"],
             "error_count": review["error_count"],
             "warning_count": review["warning_count"],
@@ -1515,8 +2121,14 @@ class RuntimeCoordinator:
             "created_at_utc": _utc_now_text(),
         }
         _atomic_write_json(handoff_path, self._planning_reuse_handoff_payload())
+        handoff_bytes = _read_required_file(handoff_path, "reused planning handoff")
+        self._planning_reuse.update(
+            handoff_size=len(handoff_bytes),
+            handoff_sha256=hashlib.sha256(handoff_bytes).hexdigest(),
+        )
         self._planning_stage_status = "completed"
         self._validate_planning_reuse()
+        self._refresh_run_wide_freeze()
         self._write_state("ready")
 
     def _validate_planning_reuse_source_state(
@@ -1592,11 +2204,8 @@ class RuntimeCoordinator:
         _validate_planning_rounds(rounds)
         if not rounds or rounds[-1].get("status") != "approved":
             raise RuntimeStateError("planning reuse source has no approved final round")
-        completed_roles = {
-            turn.get("role")
-            for turn in turns
-            if turn.get("status") == "completed"
-        }
+        source_turns = self._planning_reuse_source_turn_records(source_state)
+        completed_roles = {turn.get("role") for turn in source_turns}
         if not PLANNING_AGENT_ROLES.issubset(completed_roles):
             raise RuntimeStateError(
                 "planning reuse source lacks completed author and reviewer turns"
@@ -1612,6 +2221,61 @@ class RuntimeCoordinator:
             raise RuntimeStateError(
                 "planning reuse source context pack binding is incomplete"
             )
+
+    def _planning_reuse_source_turn_records(
+        self,
+        source_state: Mapping[str, object],
+    ) -> list[Mapping[str, object]]:
+        turns = source_state.get("planning_turns")
+        if isinstance(turns, list) and turns:
+            if not all(
+                isinstance(turn, Mapping) and turn.get("status") == "completed"
+                for turn in turns
+            ):
+                raise RuntimeStateError(
+                    "planning reuse source contains an incomplete planning turn"
+                )
+            return [turn for turn in turns if isinstance(turn, Mapping)]
+        nested = source_state.get("planning_reuse")
+        snapshots = (
+            nested.get("source_turn_snapshots")
+            if isinstance(nested, Mapping)
+            else None
+        )
+        if not isinstance(snapshots, list) or not snapshots or not all(
+            isinstance(item, Mapping) for item in snapshots
+        ):
+            raise RuntimeStateError(
+                "planning reuse source has no completed A/B turn evidence"
+            )
+        normalized = [item for item in snapshots if isinstance(item, Mapping)]
+        for index, item in enumerate(normalized, start=1):
+            if item.get("source_index") != index:
+                raise RuntimeStateError(
+                    "planning reuse source turn snapshots are not contiguous"
+                )
+            _required_string(item.get("role"), "planning reuse source role")
+            _required_string(item.get("job_id"), "planning reuse source job_id")
+            for path_field, size_field, sha_field in (
+                (
+                    "raw_response_path",
+                    "raw_response_size",
+                    "raw_response_sha256",
+                ),
+                (
+                    "instruction_receipt_path",
+                    "instruction_receipt_size",
+                    "instruction_receipt_sha256",
+                ),
+            ):
+                _required_string(item.get(path_field), path_field)
+                size = item.get(size_field)
+                if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+                    raise RuntimeStateError(
+                        f"planning reuse source has invalid {size_field}"
+                    )
+                _require_sha256(item.get(sha_field), sha_field)
+        return normalized
 
     def _planning_reuse_source_artifacts(
         self, source_state: Mapping[str, object]
@@ -1677,44 +2341,118 @@ class RuntimeCoordinator:
         approved_path, handoff_path = self._expected_planning_handoff_paths()
         fixed_paths = {
             "approved_plan_path": approved_path,
-            "review_report_path": (
+            "review_report_path": lexical_absolute(
                 self.artifact_path / "planning-reuse" / "SOURCE_TEST_PLAN_REVIEW.md"
-            ).resolve(),
-            "source_run_state_snapshot_path": (
+            ),
+            "source_run_state_snapshot_path": lexical_absolute(
                 self.artifact_path / "planning-reuse" / "SOURCE_RUN_STATE.json"
-            ).resolve(),
+            ),
             "handoff_path": handoff_path,
         }
         for field, expected in fixed_paths.items():
             value = record.get(field)
-            if not isinstance(value, str) or Path(value).resolve() != expected:
+            if not isinstance(value, str) or not same_path(value, expected):
                 raise FrozenInputMutationError(f"planning reuse {field} changed")
         checks = (
-            (approved_path, "approved_plan_sha256", "reused approved test plan"),
+            (
+                approved_path,
+                "approved_plan_size",
+                "approved_plan_sha256",
+                "reused approved test plan",
+            ),
             (
                 fixed_paths["review_report_path"],
+                "review_report_size",
                 "review_report_sha256",
                 "reused planning review report",
             ),
             (
                 fixed_paths["source_run_state_snapshot_path"],
+                "source_run_state_snapshot_size",
                 "source_run_state_snapshot_sha256",
                 "reused source run state",
             ),
             (
                 Path(str(record.get("context_pack_path"))).resolve(),
+                None,
                 "context_pack_sha256",
                 "reasoning context pack",
             ),
+            (
+                handoff_path,
+                "handoff_size",
+                "handoff_sha256",
+                "reused planning handoff",
+            ),
         )
-        for path, hash_field, label in checks:
-            actual = hashlib.sha256(_read_required_file(path, label)).hexdigest()
+        for path, size_field, hash_field, label in checks:
+            content = _read_required_file(path, label)
+            actual = hashlib.sha256(content).hexdigest()
             if actual != _require_sha256(record.get(hash_field), hash_field):
                 raise FrozenInputMutationError(f"{label} changed after planning reuse")
+            if size_field is not None and record.get(size_field) != len(content):
+                raise FrozenInputMutationError(
+                    f"{label} size changed after planning reuse"
+                )
+        snapshots = record.get("source_turn_snapshots")
+        if not isinstance(snapshots, list) or not snapshots:
+            raise RuntimeStateError("planning reuse has no source A/B turn snapshots")
+        completed_roles: set[object] = set()
+        source_turn_root = lexical_absolute(
+            self.artifact_path / "planning-reuse" / "source-turns"
+        )
+        for index, snapshot in enumerate(snapshots, start=1):
+            if not isinstance(snapshot, Mapping) or snapshot.get("source_index") != index:
+                raise RuntimeStateError(
+                    "planning reuse source turn snapshots are invalid"
+                )
+            completed_roles.add(snapshot.get("role"))
+            _required_string(snapshot.get("job_id"), "planning reuse source job_id")
+            for suffix, path_field, size_field, sha_field in (
+                (
+                    "response.json",
+                    "raw_response_path",
+                    "raw_response_size",
+                    "raw_response_sha256",
+                ),
+                (
+                    "instruction-receipt.json",
+                    "instruction_receipt_path",
+                    "instruction_receipt_size",
+                    "instruction_receipt_sha256",
+                ),
+            ):
+                expected = source_turn_root / f"{index:04d}-{suffix}"
+                path_value = snapshot.get(path_field)
+                if not isinstance(path_value, str) or not same_path(
+                    path_value, expected
+                ):
+                    raise FrozenInputMutationError(
+                        f"planning reuse source turn {index} path changed"
+                    )
+                content = _read_required_file(
+                    expected, f"planning reuse source turn {index} {suffix}"
+                )
+                if (
+                    snapshot.get(size_field) != len(content)
+                    or snapshot.get(sha_field)
+                    != hashlib.sha256(content).hexdigest()
+                ):
+                    raise FrozenInputMutationError(
+                        f"planning reuse source turn {index} changed"
+                    )
+        if not PLANNING_AGENT_ROLES.issubset(completed_roles):
+            raise RuntimeStateError(
+                "planning reuse lacks source author and reviewer evidence"
+            )
         if not _planning_review_is_accepted(record):
             raise RuntimeStateError("reused planning review does not satisfy approval rules")
         try:
-            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+            handoff = json.loads(
+                _read_required_file(handoff_path, "reused planning handoff").decode(
+                    "utf-8", errors="strict"
+                )
+            )
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
             raise FrozenInputMutationError("reused planning handoff is unreadable") from error
         if handoff != self._planning_reuse_handoff_payload():
@@ -1725,6 +2463,8 @@ class RuntimeCoordinator:
     ) -> dict[str, object]:
         if self._seal is None:
             raise RuntimeStateError("planning handoff requires a verified project seal")
+        if not self._run_watchers:
+            self._start_run_wide_freeze()
         supplied_path = Path(context_pack_path).resolve()
         if self._reasoning_context_pack is None:
             self._snapshot_reasoning_context_pack(supplied_path)
@@ -1763,10 +2503,12 @@ class RuntimeCoordinator:
                 self._validate_planning_project_seal(current)
                 if status == "review_pending":
                     self._validate_frozen_plan(current)
-                return self._author_control(
+                control = self._author_control(
                     current,
                     skip_turn=status == "review_pending",
                 )
+                self._refresh_run_wide_freeze()
+                return control
             if status in {"publishing", "approved"}:
                 raise RuntimeStateError("planning handoff is already approved")
 
@@ -1800,7 +2542,9 @@ class RuntimeCoordinator:
         self._planning_rounds.append(record)
         self._write_state("running")
         self._finish_round_allocation(record)
-        return self._author_control(record, skip_turn=False)
+        control = self._author_control(record, skip_turn=False)
+        self._refresh_run_wide_freeze()
+        return control
 
     def freeze_planning_plan(self, round_id: str) -> dict[str, object]:
         record = self._current_planning_round(round_id)
@@ -1813,11 +2557,13 @@ class RuntimeCoordinator:
         if record["status"] != "authoring":
             raise RuntimeStateError("only an authoring round can be frozen")
         plan_path = Path(str(record["plan_path"]))
+        self._lock_run_wide_files([plan_path])
         plan_bytes = _read_required_file(plan_path, "test plan")
         record["plan_sha256"] = hashlib.sha256(plan_bytes).hexdigest()
         record["status"] = "review_pending"
         record["frozen_at_utc"] = _utc_now_text()
         self._write_state("running")
+        self._refresh_run_wide_freeze()
         return dict(record)
 
     def prepare_planning_review(self) -> dict[str, object]:
@@ -1839,7 +2585,7 @@ class RuntimeCoordinator:
             status = "approved"
         if status == "approved":
             self._validate_published_planning_handoff(record)
-        return {
+        control = {
             "schema": "aegis.planning_review_control.v1",
             "run_id": self.run_id,
             "round_id": record["round_id"],
@@ -1869,6 +2615,8 @@ class RuntimeCoordinator:
             "skip_turn": status in {"rejected", "approved"},
             "accepted": status == "approved",
         }
+        self._refresh_run_wide_freeze()
+        return control
 
     def record_planning_review(
         self, round_id: str, node_output: Mapping[str, object]
@@ -1958,6 +2706,7 @@ class RuntimeCoordinator:
                         )
                     repeated_issue_ids.append(str(current_id))
         report_path = Path(str(record["review_report_path"]))
+        self._lock_run_wide_files([report_path])
         report_bytes = _read_required_file(report_path, "planning review report")
         accepted = accepted_candidate
         record.update(
@@ -1980,6 +2729,7 @@ class RuntimeCoordinator:
         self._write_state("running")
         if accepted:
             self._finish_planning_publication(record)
+        self._refresh_run_wide_freeze()
         return accepted
 
     def _author_control(
@@ -2175,8 +2925,19 @@ class RuntimeCoordinator:
         self._validate_review_report(record)
         self._validate_review_decision(record)
         self._publish_approved_planning_handoff(record)
+        approved_path, handoff_path = self._expected_planning_handoff_paths()
+        self._lock_run_wide_files([approved_path, handoff_path])
         self._validate_published_planning_handoff(record)
+        approved_bytes = _read_required_file(approved_path, "approved test plan")
+        handoff_bytes = _read_required_file(handoff_path, "planning handoff")
+        record.update(
+            approved_plan_size=len(approved_bytes),
+            approved_plan_sha256=hashlib.sha256(approved_bytes).hexdigest(),
+            handoff_size=len(handoff_bytes),
+            handoff_sha256=hashlib.sha256(handoff_bytes).hexdigest(),
+        )
         record["status"] = "approved"
+        self._refresh_run_wide_freeze()
         self._write_state("running")
 
     def _publish_approved_planning_handoff(self, record: dict[str, object]) -> None:
@@ -2215,6 +2976,18 @@ class RuntimeCoordinator:
             ) from error
         if handoff != self._planning_handoff_payload(record):
             raise RuntimeStateError("planning handoff does not match approved round")
+        if record.get("status") == "approved":
+            approved_bytes = _read_required_file(approved_path, "approved test plan")
+            handoff_bytes = _read_required_file(handoff_path, "planning handoff")
+            if (
+                record.get("approved_plan_size") != len(approved_bytes)
+                or record.get("approved_plan_sha256")
+                != hashlib.sha256(approved_bytes).hexdigest()
+                or record.get("handoff_size") != len(handoff_bytes)
+                or record.get("handoff_sha256")
+                != hashlib.sha256(handoff_bytes).hexdigest()
+            ):
+                raise RuntimeStateError("published planning checkpoint changed")
 
     def complete_planning_stage(self) -> None:
         if (
@@ -2324,6 +3097,13 @@ class RuntimeCoordinator:
     def _begin_execution_attempt(
         self, node: str, state: Mapping[str, Any]
     ) -> dict[str, object]:
+        _validate_execution_path(self._execution_attempts)
+        if not self._execution_attempts:
+            if self._planning_stage_status != "completed":
+                raise RuntimeStateError(
+                    "C cannot start before the planning stage is completed"
+                )
+            self._validate_completed_planning_stage()
         input_sha256 = _state_sha256(state)
         latest = self._execution_attempts[-1] if self._execution_attempts else None
         if latest is not None and latest.get("node") == node:
@@ -2335,6 +3115,15 @@ class RuntimeCoordinator:
         if latest is not None and latest.get("status") != "completed":
             raise RuntimeStateError(
                 "a new execution node cannot start while the prior attempt is incomplete"
+            )
+        if latest is not None and latest.get("output_sha256") != input_sha256:
+            raise RuntimeStateError(
+                "execution graph state is not the prior completed node output"
+            )
+        allowed = _allowed_next_execution_nodes(self._execution_attempts)
+        if node not in allowed:
+            raise RuntimeStateError(
+                f"execution node {node} violates the Coordinator-owned C-F route"
             )
         sequence = len(self._execution_attempts) + 1
         attempt_id = f"attempt-{sequence:04d}"
@@ -2364,8 +3153,9 @@ class RuntimeCoordinator:
                 f"cannot capture frozen runtime manifest: {error}"
             ) from error
         captured = {
-            "schema": "aegis.frozen_runtime_manifest.v1",
+            "schema": "aegis.frozen_runtime_manifest.v2",
             "scope_policy_sha256": resolved.policy_sha256,
+            "scope_decision_sha256": resolved.decision_sha256,
             "resolved_manifest_sha256": resolved.manifest_sha256,
             "runtime_authority_id": resolved.runtime_authority_id,
             "scope_controls": [
@@ -2379,7 +3169,8 @@ class RuntimeCoordinator:
                     SCOPE_POLICY_RELATIVE_PATH,
                     SCOPE_DECISION_RELATIVE_PATH,
                     SCOPE_REVIEW_RELATIVE_PATH,
-                    SCOPE_USER_STATEMENT_RELATIVE_PATH,
+                    SCOPE_REVIEW_RESULT_RELATIVE_PATH,
+                    SCOPE_USER_CONFIRMATION_RELATIVE_PATH,
                 )
             ],
             "entries": [
@@ -2404,6 +3195,78 @@ class RuntimeCoordinator:
                 "frozen runtime manifest changed during recovery"
             )
         self._frozen_runtime_manifest = captured
+        self._set_tracerelay_runtime_expectation(captured)
+
+    def _set_tracerelay_runtime_expectation(
+        self, runtime_manifest: Mapping[str, object]
+    ) -> None:
+        if not isinstance(self.relay_client, TraceRelayClient):
+            return
+        external = runtime_manifest.get("external_runtime")
+        if not isinstance(external, Mapping):
+            raise RuntimeStateError("TraceRelay external runtime identity is unavailable")
+        sdk = external.get("tracerelay_sdk")
+        files = external.get("files")
+        if not isinstance(sdk, Mapping) or not isinstance(files, list):
+            raise RuntimeStateError("TraceRelay frozen SDK identity is unavailable")
+        sdk_manifest_sha256 = sdk.get("snapshot_manifest_sha256")
+        python_entries = [
+            item
+            for item in files
+            if isinstance(item, Mapping)
+            and item.get("source") == "python_executable"
+            and item.get("path") == self.relay_client.command[0]
+        ]
+        if (
+            not isinstance(sdk_manifest_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", sdk_manifest_sha256) is None
+            or len(python_entries) != 1
+            or not isinstance(python_entries[0].get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", str(python_entries[0]["sha256"]))
+            is None
+        ):
+            raise RuntimeStateError("TraceRelay frozen runtime expectation is invalid")
+        expected = {
+            "sdk_manifest_sha256": sdk_manifest_sha256,
+            "python_executable_sha256": str(python_entries[0]["sha256"]),
+        }
+        for field, value in expected.items():
+            prior = self._tracerelay_runtime.get(field)
+            if prior is not None and prior != value:
+                raise FrozenInputMutationError(
+                    f"TraceRelay frozen runtime expectation changed: {field}"
+                )
+            self._tracerelay_runtime[field] = value
+
+    def _bind_tracerelay_runtime_expectation(self) -> None:
+        if not isinstance(self.relay_client, TraceRelayClient):
+            return
+        runtime_nonce = self._tracerelay_runtime.get("runtime_nonce")
+        sdk_manifest_sha256 = self._tracerelay_runtime.get(
+            "sdk_manifest_sha256"
+        )
+        python_executable_sha256 = self._tracerelay_runtime.get(
+            "python_executable_sha256"
+        )
+        if not all(
+            isinstance(item, str)
+            for item in (
+                runtime_nonce,
+                sdk_manifest_sha256,
+                python_executable_sha256,
+            )
+        ):
+            raise RuntimeStateError("TraceRelay runtime expectation is incomplete")
+        observed = self._tracerelay_runtime.get("observed_identity")
+        if observed is not None and not isinstance(observed, Mapping):
+            raise RuntimeStateError("TraceRelay observed runtime identity is invalid")
+        self.relay_client.bind_runtime_expectation(
+            runtime_nonce=runtime_nonce,
+            sdk_manifest_sha256=sdk_manifest_sha256,
+            python_executable_sha256=python_executable_sha256,
+            observed_identity=observed,
+            require_existing_runtime=self._is_resume,
+        )
 
     def _capture_external_runtime_identity(
         self, *, git_command: str | None = None
@@ -2439,17 +3302,41 @@ class RuntimeCoordinator:
         ) -> None:
             if not isinstance(path_value, (str, Path)):
                 return
-            path = Path(path_value).resolve()
+            if (
+                not isinstance(size_value, int)
+                or isinstance(size_value, bool)
+                or not isinstance(sha_value, str)
+                or re.fullmatch(r"[0-9a-f]{64}", sha_value) is None
+            ):
+                return
+            path = lexical_absolute(path_value)
             descriptors[str(path).casefold()] = {
                 "path": str(path),
                 "source": source,
-                "expected_size": (
-                    size_value
-                    if isinstance(size_value, int) and not isinstance(size_value, bool)
-                    else None
-                ),
-                "expected_sha256": sha_value if isinstance(sha_value, str) else None,
+                "expected_size": size_value,
+                "expected_sha256": sha_value,
             }
+
+        seal_record_path = lexical_absolute(
+            self.project_root / SEAL_RECORD_RELATIVE_PATH
+        )
+        try:
+            seal_record, _seal_identity = read_regular_file(
+                seal_record_path,
+                allowed_root=self.project_root,
+                label="project seal record",
+                max_bytes=1024 * 1024,
+            )
+        except PathSecurityError as error:
+            raise FrozenInputMutationError(
+                "project seal record is unavailable before watcher startup"
+            ) from error
+        add(
+            seal_record_path,
+            len(seal_record),
+            hashlib.sha256(seal_record).hexdigest(),
+            "project_seal_record",
+        )
 
         runtime = self._frozen_runtime_manifest or {}
         entries = runtime.get("entries", [])
@@ -2551,6 +3438,129 @@ class RuntimeCoordinator:
                 if isinstance(path_value, str) and Path(path_value).is_file():
                     size = Path(path_value).stat().st_size
                 add(path_value, size, round_record.get(sha_field), source)
+            if round_record.get("status") == "approved":
+                add(
+                    round_record.get("approved_plan_path"),
+                    round_record.get("approved_plan_size"),
+                    round_record.get("approved_plan_sha256"),
+                    "published_approved_test_plan",
+                )
+                add(
+                    round_record.get("handoff_path"),
+                    round_record.get("handoff_size"),
+                    round_record.get("handoff_sha256"),
+                    "published_planning_handoff",
+                )
+        if isinstance(self._planning_reuse, Mapping):
+            reuse = self._planning_reuse
+            for path_field, size_field, sha_field, source in (
+                (
+                    "approved_plan_path",
+                    "approved_plan_size",
+                    "approved_plan_sha256",
+                    "reused_approved_test_plan",
+                ),
+                (
+                    "handoff_path",
+                    "handoff_size",
+                    "handoff_sha256",
+                    "reused_planning_handoff",
+                ),
+                (
+                    "review_report_path",
+                    "review_report_size",
+                    "review_report_sha256",
+                    "reused_planning_review",
+                ),
+                (
+                    "source_run_state_snapshot_path",
+                    "source_run_state_snapshot_size",
+                    "source_run_state_snapshot_sha256",
+                    "reused_source_run_state",
+                ),
+            ):
+                add(
+                    reuse.get(path_field),
+                    reuse.get(size_field),
+                    reuse.get(sha_field),
+                    source,
+                )
+            snapshots = reuse.get("source_turn_snapshots")
+            if isinstance(snapshots, list):
+                for snapshot in snapshots:
+                    if not isinstance(snapshot, Mapping):
+                        continue
+                    for path_field, size_field, sha_field, source in (
+                        (
+                            "raw_response_path",
+                            "raw_response_size",
+                            "raw_response_sha256",
+                            "reused_planning_response",
+                        ),
+                        (
+                            "instruction_receipt_path",
+                            "instruction_receipt_size",
+                            "instruction_receipt_sha256",
+                            "reused_planning_instruction_receipt",
+                        ),
+                    ):
+                        add(
+                            snapshot.get(path_field),
+                            snapshot.get(size_field),
+                            snapshot.get(sha_field),
+                            source,
+                        )
+        for turn in self._planning_turns:
+            fields = [
+                (
+                    "instruction_receipt_path",
+                    "instruction_receipt_sha256",
+                    "planning_instruction_receipt",
+                )
+            ]
+            if turn.get("status") == "completed":
+                fields.append(
+                    (
+                        "raw_response_path",
+                        "raw_response_sha256",
+                        "planning_response",
+                    )
+                )
+            for path_field, sha_field, source in fields:
+                path_value = turn.get(path_field)
+                size = None
+                if isinstance(path_value, str) and Path(path_value).is_file():
+                    size = Path(path_value).stat().st_size
+                add(path_value, size, turn.get(sha_field), source)
+        for turn in self._execution_turns:
+            fields = [
+                (
+                    "instruction_receipt_path",
+                    "instruction_receipt_sha256",
+                    "execution_instruction_receipt",
+                )
+            ]
+            if turn.get("status") == "completed":
+                fields.append(
+                    (
+                        "raw_response_path",
+                        "raw_response_sha256",
+                        "execution_response",
+                    )
+                )
+            for path_field, sha_field, source in fields:
+                path_value = turn.get(path_field)
+                size = None
+                if isinstance(path_value, str) and Path(path_value).is_file():
+                    size = Path(path_value).stat().st_size
+                add(path_value, size, turn.get(sha_field), source)
+        if isinstance(self._authority_evidence, Mapping):
+            add(
+                self._authority_evidence.get("path"),
+                self._authority_evidence.get("size"),
+                self._authority_evidence.get("sha256"),
+                "run_authority_evidence",
+            )
         for descriptor in self._active_test_input_descriptors:
             add(
                 descriptor.get("path"),
@@ -2558,12 +3568,99 @@ class RuntimeCoordinator:
                 descriptor.get("sha256"),
                 str(descriptor.get("source", "test_execution_input")),
             )
+        for descriptor in self._accountability_evidence_descriptors:
+            add(
+                descriptor.get("path"),
+                descriptor.get("size"),
+                descriptor.get("sha256"),
+                str(descriptor.get("source", "project_accountability")),
+            )
+        for attempt in self._execution_attempts:
+            outputs = attempt.get("output_artifacts")
+            if not isinstance(outputs, list):
+                continue
+            for output in outputs:
+                if not isinstance(output, Mapping):
+                    continue
+                add(
+                    output.get("snapshot_path"),
+                    output.get("size"),
+                    output.get("sha256"),
+                    f"role_output_snapshot:{attempt.get('attempt_id')}:{output.get('artifact_id')}",
+                )
+                if output.get("source_retained") is True:
+                    add(
+                        output.get("source_path"),
+                        output.get("size"),
+                        output.get("sha256"),
+                        f"role_output_source:{attempt.get('attempt_id')}:{output.get('artifact_id')}",
+                    )
+            if attempt.get("node") != "C" or attempt.get("status") != "completed":
+                continue
+            for path_field, sha_field, source in (
+                (
+                    "test_execution_request_path",
+                    "test_execution_request_sha256",
+                    "test_execution_request_snapshot",
+                ),
+                (
+                    "test_evidence_manifest_path",
+                    "test_evidence_manifest_sha256",
+                    "test_evidence_manifest",
+                ),
+            ):
+                path_value = attempt.get(path_field)
+                if isinstance(path_value, str):
+                    path = lexical_absolute(path_value)
+                    size = path.stat().st_size if path.is_file() else None
+                    add(path, size, attempt.get(sha_field), source)
+            evidence_root = lexical_absolute(
+                self.artifact_path / "evidence" / str(attempt.get("attempt_id"))
+            )
+            if evidence_root.is_dir():
+                for evidence_path in evidence_root.rglob("*"):
+                    if not evidence_path.is_file():
+                        continue
+                    descriptor = _file_descriptor_allow_empty(evidence_path)
+                    add(
+                        descriptor["path"],
+                        descriptor["size"],
+                        descriptor["sha256"],
+                        f"test_evidence_file:{attempt.get('attempt_id')}",
+                    )
+        for attempt in reversed(self._execution_attempts):
+            if (
+                attempt.get("node") != "F"
+                or not isinstance(
+                    attempt.get("final_review_input_manifest_path"), str
+                )
+            ):
+                continue
+            _payload, required, manifest_bytes = (
+                self._load_final_review_input_manifest(attempt)
+            )
+            add(
+                attempt.get("final_review_input_manifest_path"),
+                len(manifest_bytes),
+                attempt.get("final_review_input_manifest_sha256"),
+                "final_review_input_manifest",
+            )
+            for descriptor in required:
+                add(
+                    descriptor.get("path"),
+                    descriptor.get("size"),
+                    descriptor.get("sha256"),
+                    f"final_review_required:{descriptor.get('evidence_id')}",
+                )
+            break
         return descriptors
 
-    def _start_frozen_input_watchers(self) -> list[FrozenInputWatcher]:
+    def _start_frozen_input_watchers(
+        self,
+    ) -> tuple[list[FrozenInputWatcher], dict[str, dict[str, object]]]:
         descriptors = self._frozen_watch_descriptors()
         roots: list[Path] = [self.project_root]
-        if not self.artifact_path.is_relative_to(self.project_root):
+        if not is_within(self.artifact_path, self.project_root):
             roots.append(self.artifact_path)
         external_runtime = (self._frozen_runtime_manifest or {}).get(
             "external_runtime"
@@ -2572,39 +3669,482 @@ class RuntimeCoordinator:
             watched_roots = external_runtime.get("watched_roots", [])
             if isinstance(watched_roots, list):
                 roots.extend(
-                    Path(value).resolve()
+                    lexical_absolute(value)
                     for value in watched_roots
                     if isinstance(value, str)
                 )
         for descriptor in descriptors.values():
             path = Path(str(descriptor["path"]))
-            if any(path.is_relative_to(root) for root in roots):
+            if any(is_within(path, root) for root in roots):
                 continue
             roots.append(path.parent)
         unique: dict[str, Path] = {}
         for root in roots:
-            if root.is_dir():
-                unique.setdefault(str(root.resolve()).casefold(), root.resolve())
+            lexical = lexical_absolute(root)
+            unique.setdefault(str(lexical).casefold(), lexical)
+        for root in unique.values():
+            try:
+                checked = require_no_reparse(root, root, label="frozen input watch root")
+            except PathSecurityError as error:
+                raise FrozenInputMutationError(
+                    f"required frozen input watch root is unavailable: {root}"
+                ) from error
+            if not checked.is_dir():
+                raise FrozenInputMutationError(
+                    f"required frozen input watch root is not a directory: {root}"
+                )
         watchers: list[FrozenInputWatcher] = []
         try:
             for root in unique.values():
                 watcher = FrozenInputWatcher(root)
-                watcher.start()
                 watchers.append(watcher)
-        except BaseException:
+                watcher.start()
+                if not watcher.listening:
+                    raise RuntimeStateError(
+                        f"frozen input watcher returned before listener arming: {root}"
+                    )
+            file_lock_paths = [
+                lexical_absolute(str(descriptor["path"]))
+                for descriptor in descriptors.values()
+                if isinstance(descriptor.get("expected_size"), int)
+                and not isinstance(descriptor.get("expected_size"), bool)
+                and isinstance(descriptor.get("expected_sha256"), str)
+            ]
+            file_lock_paths.extend(self._existing_git_metadata_files())
+            if not watchers:
+                raise RuntimeStateError("no frozen input watcher is available for locks")
+            watchers[0].lock_files(file_lock_paths)
+            self._validate_armed_watcher_descriptors(
+                descriptors, tuple(unique.values())
+            )
+            self._validate_frozen_project_inputs()
+            mutation = self._watcher_mutation_error(
+                self._current_frozen_input_watch_events(watchers),
+                descriptors=descriptors,
+            )
+            if mutation is not None:
+                raise mutation
+        except BaseException as error:
+            startup_events: list[FileSystemEvent] = []
             for watcher in reversed(watchers):
-                watcher.stop()
+                try:
+                    drain = getattr(watcher, "drain", watcher.stop)
+                    startup_events.extend(drain())
+                except BaseException as cleanup_error:
+                    try:
+                        startup_events.extend(watcher.events())
+                    except BaseException as snapshot_error:
+                        cleanup_error.add_note(
+                            f"cannot snapshot watcher events after stop failure: {snapshot_error}"
+                        )
+                    error.add_note(
+                        f"frozen-input watcher startup cleanup also failed: {cleanup_error}"
+                    )
+                finally:
+                    close = getattr(watcher, "close", None)
+                    if callable(close):
+                        try:
+                            close()
+                        except BaseException as close_error:
+                            error.add_note(
+                                f"frozen-input watcher startup lock release failed: {close_error}"
+                            )
+            mutation = self._watcher_mutation_error(
+                startup_events, descriptors=descriptors
+            )
+            if mutation is not None:
+                mutation.add_note(f"watcher startup also failed: {error}")
+                raise mutation from error
             raise
-        return watchers
+        return watchers, descriptors
+
+    def _start_run_wide_freeze(self) -> None:
+        if self._run_watchers:
+            self._refresh_run_wide_freeze()
+            return
+        watchers, descriptors = self._start_frozen_input_watchers()
+        self._run_watchers = watchers
+        self._run_watch_descriptors = descriptors
+        self._run_watch_event_offsets = {
+            id(watcher): 0 for watcher in watchers
+        }
+        self._run_locked_file_paths = {
+            str(lexical_absolute(str(descriptor["path"]))).casefold()
+            for descriptor in descriptors.values()
+            if isinstance(descriptor.get("expected_size"), int)
+            and not isinstance(descriptor.get("expected_size"), bool)
+            and isinstance(descriptor.get("expected_sha256"), str)
+        }
+        self._run_locked_file_paths.update(
+            str(path).casefold() for path in self._existing_git_metadata_files()
+        )
+        self._run_authorized_adoption_paths = set()
+        self._require_healthy_run_wide_watchers()
+        mutation = self._watcher_mutation_error(
+            self._run_wide_events_since_checkpoint(), descriptors=descriptors
+        )
+        if mutation is not None:
+            self._close_run_wide_freeze()
+            raise mutation
+        self._checkpoint_run_wide_events()
+
+    def _require_healthy_run_wide_watchers(self) -> None:
+        for watcher in self._run_watchers:
+            if not watcher.listening:
+                raise RuntimeStateError(
+                    f"run-wide frozen-input watcher stopped: {watcher.root}"
+                )
+
+    def _checkpoint_expected_run_wide_outputs(self) -> None:
+        if not self._run_watchers:
+            raise RuntimeStateError("run-wide frozen-input watcher is unavailable")
+        self._require_healthy_run_wide_watchers()
+        mutation = self._watcher_mutation_error(
+            self._run_wide_events_since_checkpoint(),
+            descriptors=self._run_watch_descriptors,
+        )
+        if mutation is not None:
+            raise mutation
+        self._validate_frozen_project_inputs()
+        self._checkpoint_run_wide_events()
+
+    def _lock_run_wide_files(self, paths: Sequence[str | Path]) -> None:
+        if not self._run_watchers:
+            raise RuntimeStateError("run-wide frozen-input watcher is unavailable")
+        self._require_healthy_run_wide_watchers()
+        existing_roots = [
+            lexical_absolute(watcher.root) for watcher in self._run_watchers
+        ]
+        normalized = [lexical_absolute(path) for path in paths]
+        for path in normalized:
+            if any(is_within(path, root) for root in existing_roots):
+                continue
+            watcher = FrozenInputWatcher(path.parent)
+            watcher.start()
+            if not watcher.listening:
+                watcher.close()
+                raise RuntimeStateError(
+                    f"run-wide frozen-input watcher did not arm: {path.parent}"
+                )
+            self._run_watchers.append(watcher)
+            self._run_watch_event_offsets[id(watcher)] = 0
+            existing_roots.append(lexical_absolute(path.parent))
+        pending = [
+            path
+            for path in normalized
+            if str(path).casefold() not in self._run_locked_file_paths
+        ]
+        if not pending:
+            return
+        self._run_watchers[0].lock_files(pending)
+        adopted = {str(path).casefold() for path in pending}
+        self._run_locked_file_paths.update(adopted)
+        self._run_authorized_adoption_paths.update(adopted)
+
+    def _run_wide_events_since_checkpoint(self) -> list[FileSystemEvent]:
+        events: list[FileSystemEvent] = []
+        for watcher in self._run_watchers:
+            snapshot = watcher.events()
+            offset = self._run_watch_event_offsets.get(id(watcher), 0)
+            events.extend(snapshot[offset:])
+        return events
+
+    def _checkpoint_run_wide_events(self) -> None:
+        self._run_watch_event_offsets = {
+            id(watcher): len(watcher.events()) for watcher in self._run_watchers
+        }
+
+    def _desired_run_wide_watch_roots(
+        self, descriptors: Mapping[str, Mapping[str, object]]
+    ) -> list[Path]:
+        roots: list[Path] = [self.project_root]
+        if not is_within(self.artifact_path, self.project_root):
+            roots.append(self.artifact_path)
+        external_runtime = (self._frozen_runtime_manifest or {}).get(
+            "external_runtime"
+        )
+        if isinstance(external_runtime, Mapping):
+            watched_roots = external_runtime.get("watched_roots")
+            if isinstance(watched_roots, list):
+                roots.extend(
+                    lexical_absolute(value)
+                    for value in watched_roots
+                    if isinstance(value, str)
+                )
+        for descriptor in descriptors.values():
+            path = lexical_absolute(str(descriptor["path"]))
+            if not any(is_within(path, root) for root in roots):
+                roots.append(path.parent)
+        unique: dict[str, Path] = {}
+        for root in roots:
+            lexical = lexical_absolute(root)
+            unique.setdefault(str(lexical).casefold(), lexical)
+        return list(unique.values())
+
+    def _refresh_run_wide_freeze(self) -> None:
+        if not self._run_watchers:
+            raise RuntimeStateError("run-wide frozen-input watcher is unavailable")
+        self._require_healthy_run_wide_watchers()
+        descriptors = self._frozen_watch_descriptors()
+        mutation = self._watcher_mutation_error(
+            self._run_wide_events_since_checkpoint(),
+            descriptors=self._run_watch_descriptors,
+        )
+        if mutation is not None:
+            raise mutation
+        existing_roots = {
+            str(lexical_absolute(watcher.root)).casefold()
+            for watcher in self._run_watchers
+        }
+        for root in self._desired_run_wide_watch_roots(descriptors):
+            folded = str(root).casefold()
+            if folded in existing_roots:
+                continue
+            watcher = FrozenInputWatcher(root)
+            watcher.start()
+            if not watcher.listening:
+                watcher.close()
+                raise RuntimeStateError(
+                    f"run-wide frozen-input watcher did not arm: {root}"
+                )
+            self._run_watchers.append(watcher)
+            self._run_watch_event_offsets[id(watcher)] = 0
+            existing_roots.add(folded)
+
+        new_lock_paths: list[Path] = []
+        for descriptor in descriptors.values():
+            if (
+                not isinstance(descriptor.get("expected_size"), int)
+                or isinstance(descriptor.get("expected_size"), bool)
+                or not isinstance(descriptor.get("expected_sha256"), str)
+            ):
+                continue
+            path = lexical_absolute(str(descriptor["path"]))
+            folded = str(path).casefold()
+            if folded in self._run_locked_file_paths:
+                continue
+            new_lock_paths.append(path)
+        if new_lock_paths:
+            self._run_watchers[0].lock_files(new_lock_paths)
+            adopted = {str(path).casefold() for path in new_lock_paths}
+            self._run_locked_file_paths.update(adopted)
+            self._run_authorized_adoption_paths.update(adopted)
+
+        roots = tuple(
+            lexical_absolute(watcher.root) for watcher in self._run_watchers
+        )
+        self._validate_armed_watcher_descriptors(descriptors, roots)
+        self._validate_frozen_project_inputs()
+        self._require_healthy_run_wide_watchers()
+        mutation = self._watcher_mutation_error(
+            self._run_wide_events_since_checkpoint(),
+            descriptors=self._run_watch_descriptors,
+        )
+        if mutation is not None:
+            raise mutation
+        self._run_watch_descriptors = descriptors
+        self._checkpoint_run_wide_events()
+
+    def _close_run_wide_freeze(self) -> list[BaseException]:
+        if not self._run_watchers:
+            return []
+        errors: list[BaseException] = []
+        for watcher in reversed(self._run_watchers):
+            try:
+                watcher.drain()
+            except BaseException as error:
+                errors.append(error)
+            try:
+                watcher.close()
+            except BaseException as error:
+                errors.append(error)
+        self._run_watchers = []
+        self._run_watch_descriptors = {}
+        self._run_watch_event_offsets = {}
+        self._run_locked_file_paths = set()
+        self._run_authorized_adoption_paths = set()
+        return errors
+
+    def _finalize_run_wide_freeze(self) -> None:
+        """Drain every listener while retaining all file and ancestor handles."""
+
+        primary: BaseException | None = None
+        try:
+            self._refresh_run_wide_freeze()
+        except BaseException as error:
+            primary = error
+        events: list[FileSystemEvent] = []
+        errors: list[BaseException] = []
+        for watcher in reversed(self._run_watchers):
+            offset = self._run_watch_event_offsets.get(id(watcher), 0)
+            try:
+                watcher.drain()
+            except BaseException as error:
+                errors.append(error)
+            try:
+                events.extend(watcher.events()[offset:])
+            except BaseException as error:
+                errors.append(error)
+        mutation = self._watcher_mutation_error(
+            events, descriptors=self._run_watch_descriptors
+        )
+        if mutation is not None:
+            if primary is not None:
+                mutation.add_note(f"run-wide boundary also failed: {primary}")
+            for error in errors:
+                mutation.add_note(f"run-wide watcher also failed: {error}")
+            raise mutation
+        if isinstance(primary, FrozenInputMutationError):
+            for error in errors:
+                primary.add_note(f"run-wide watcher also failed: {error}")
+            raise primary
+        if primary is not None:
+            for error in errors:
+                primary.add_note(f"run-wide watcher also failed: {error}")
+            raise primary
+        if errors:
+            failure = RuntimeStateError("run-wide frozen-input watcher failed")
+            for error in errors:
+                failure.add_note(str(error))
+            raise failure
+
+    def _existing_git_metadata_files(self) -> list[Path]:
+        git_path = lexical_absolute(self.project_root / ".git")
+        try:
+            checked = require_no_reparse(
+                self.project_root, git_path, label="Git metadata"
+            )
+        except PathSecurityError as error:
+            raise FrozenInputMutationError(
+                "Git metadata became unavailable before file locking"
+            ) from error
+        if checked.is_file():
+            return [checked]
+        if not checked.is_dir():
+            raise FrozenInputMutationError("Git metadata is not a file or directory")
+        files: list[Path] = []
+        for directory, child_directories, child_files in os.walk(
+            checked, topdown=True, followlinks=False
+        ):
+            current = lexical_absolute(directory)
+            try:
+                require_no_reparse(
+                    self.project_root, current, label="Git metadata directory"
+                )
+                for child in child_directories:
+                    require_no_reparse(
+                        self.project_root,
+                        current / child,
+                        label="Git metadata directory",
+                    )
+                for child in child_files:
+                    path = require_no_reparse(
+                        self.project_root,
+                        current / child,
+                        label="Git metadata file",
+                    )
+                    if not path.is_file():
+                        raise PathSecurityError(
+                            f"Git metadata is not a regular file: {path}"
+                        )
+                    files.append(path)
+            except PathSecurityError as error:
+                raise FrozenInputMutationError(
+                    "Git metadata contains an unsafe path before file locking"
+                ) from error
+        return files
 
     @staticmethod
-    def _stop_frozen_input_watchers(
+    def _validate_armed_watcher_descriptors(
+        descriptors: Mapping[str, Mapping[str, object]],
+        roots: Sequence[Path],
+    ) -> None:
+        for descriptor in descriptors.values():
+            path = lexical_absolute(str(descriptor["path"]))
+            containing_roots = [root for root in roots if is_within(path, root)]
+            if not containing_roots:
+                raise FrozenInputMutationError(
+                    f"frozen descriptor has no armed watcher root: {path}"
+                )
+            allowed_root = max(containing_roots, key=lambda value: len(value.parts))
+            label = str(descriptor.get("source", "frozen input"))
+            expected_size = descriptor.get("expected_size")
+            expected_sha256 = descriptor.get("expected_sha256")
+            if expected_size is None and expected_sha256 is None:
+                try:
+                    checked = require_no_reparse(allowed_root, path, label=label)
+                except PathSecurityError as error:
+                    raise FrozenInputMutationError(
+                        f"frozen directory descriptor changed before listener arming: {path}"
+                    ) from error
+                if not checked.is_dir():
+                    raise FrozenInputMutationError(
+                        f"frozen directory descriptor is unavailable: {path}"
+                    )
+                continue
+            if (
+                isinstance(expected_size, bool)
+                or not isinstance(expected_size, int)
+                or expected_size < 0
+                or not isinstance(expected_sha256, str)
+                or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
+            ):
+                raise RuntimeStateError(
+                    f"frozen file descriptor is incomplete: {path}"
+                )
+            try:
+                content, _identity = read_regular_file(
+                    path,
+                    allowed_root=allowed_root,
+                    label=label,
+                    max_bytes=expected_size,
+                )
+            except PathSecurityError as error:
+                raise FrozenInputMutationError(
+                    f"frozen file changed before listener arming: {path}"
+                ) from error
+            if (
+                len(content) != expected_size
+                or hashlib.sha256(content).hexdigest() != expected_sha256
+            ):
+                raise FrozenInputMutationError(
+                    f"frozen file changed before listener arming: {path}"
+                )
+
+    @staticmethod
+    def _drain_frozen_input_watchers(
         watchers: Sequence[FrozenInputWatcher],
-    ) -> tuple[FileSystemEvent, ...]:
+    ) -> tuple[tuple[FileSystemEvent, ...], tuple[BaseException, ...]]:
         events: list[FileSystemEvent] = []
+        errors: list[BaseException] = []
         for watcher in reversed(watchers):
-            events.extend(watcher.stop())
-        return tuple(events)
+            try:
+                drain = getattr(watcher, "drain", watcher.stop)
+                events.extend(drain())
+            except BaseException as error:
+                try:
+                    events.extend(watcher.events())
+                except BaseException as snapshot_error:
+                    error.add_note(
+                        f"cannot snapshot watcher events after stop failure: {snapshot_error}"
+                    )
+                errors.append(error)
+        return tuple(events), tuple(errors)
+
+    @staticmethod
+    def _close_frozen_input_watchers(
+        watchers: Sequence[FrozenInputWatcher],
+    ) -> tuple[BaseException, ...]:
+        errors: list[BaseException] = []
+        for watcher in reversed(watchers):
+            close = getattr(watcher, "close", None)
+            if not callable(close):
+                continue
+            try:
+                close()
+            except BaseException as error:
+                errors.append(error)
+        return tuple(errors)
 
     @staticmethod
     def _current_frozen_input_watch_events(
@@ -2616,17 +4156,20 @@ class RuntimeCoordinator:
         return tuple(events)
 
     def _watcher_mutation_error(
-        self, events: Sequence[FileSystemEvent]
+        self,
+        events: Sequence[FileSystemEvent],
+        *,
+        descriptors: Mapping[str, Mapping[str, object]],
     ) -> FrozenInputMutationError | None:
-        descriptors = self._frozen_watch_descriptors()
         relevant: dict[str, dict[str, object]] = {}
-        policy_path = (self.project_root / SCOPE_POLICY_RELATIVE_PATH).resolve()
+        policy_path = lexical_absolute(self.project_root / SCOPE_POLICY_RELATIVE_PATH)
+        git_metadata_root = lexical_absolute(self.project_root / ".git")
         external_runtime = (self._frozen_runtime_manifest or {}).get(
             "external_runtime"
         )
         external_roots = (
             [
-                Path(value).resolve()
+                lexical_absolute(value)
                 for value in external_runtime.get("watched_roots", [])
                 if isinstance(value, str)
             ]
@@ -2634,16 +4177,72 @@ class RuntimeCoordinator:
             and isinstance(external_runtime.get("watched_roots"), list)
             else []
         )
+        structural_actions = {"removed", "renamed_from", "renamed_to"}
+        descriptor_paths = [
+            lexical_absolute(str(descriptor["path"]))
+            for descriptor in descriptors.values()
+        ]
+        completed_evidence_roots = [
+            lexical_absolute(
+                self.artifact_path / "evidence" / str(attempt.get("attempt_id"))
+            )
+            for attempt in self._execution_attempts
+            if attempt.get("node") == "C" and attempt.get("status") == "completed"
+        ]
         for event in events:
-            path = event.path.resolve()
+            path = lexical_absolute(event.path)
             folded = str(path).casefold()
-            is_relevant = folded in descriptors or folded == str(policy_path).casefold()
+            authorized_adoption = (
+                folded in self._run_authorized_adoption_paths
+                and folded in self._run_locked_file_paths
+            ) or (
+                event.action in {"added", "renamed_to", "modified"}
+                and any(
+                    not same_path(locked_path, path)
+                    and is_within(lexical_absolute(locked_path), path)
+                    for locked_path in self._run_authorized_adoption_paths
+                )
+            )
+            if (
+                authorized_adoption
+                and event.action in {"added", "renamed_to", "modified"}
+            ):
+                # The final bytes were validated only after a file-object lock that
+                # denies writes/deletes through every hardlink. Notifications for
+                # the authorized pre-lock creation/adoption may arrive later; the
+                # locked object cannot generate any equivalent post-adoption event.
+                continue
+            if (
+                event.action == "modified"
+                and folded not in descriptors
+                and path.is_dir()
+            ):
+                continue
+            is_relevant = (
+                event.action == "journal_overflow"
+                or folded in descriptors
+                or folded == str(policy_path).casefold()
+                or is_within(path, git_metadata_root)
+            )
+            ancestor_sources: list[str] = []
+            if not is_relevant and event.action in structural_actions:
+                for descriptor_path in descriptor_paths:
+                    if not same_path(descriptor_path, path) and is_within(
+                        descriptor_path, path
+                    ):
+                        descriptor = descriptors[str(descriptor_path).casefold()]
+                        ancestor_sources.append(str(descriptor.get("source", "frozen_input")))
+                is_relevant = bool(ancestor_sources)
             if not is_relevant and any(
-                path.is_relative_to(root) for root in external_roots
+                is_within(path, root) for root in external_roots
             ):
                 is_relevant = True
-            if not is_relevant and path.is_relative_to(self.project_root):
-                logical_path = path.relative_to(self.project_root).as_posix()
+            if not is_relevant and any(
+                is_within(path, root) for root in completed_evidence_roots
+            ):
+                is_relevant = True
+            if not is_relevant and is_within(path, self.project_root):
+                logical_path = os.path.relpath(path, self.project_root).replace("\\", "/")
                 try:
                     is_relevant = (
                         self._seal is not None
@@ -2664,7 +4263,18 @@ class RuntimeCoordinator:
                         folded,
                         {
                             "path": str(path),
-                            "source": "runtime_scope",
+                            "source": (
+                                "frozen_input_ancestor:"
+                                + ",".join(sorted(set(ancestor_sources)))
+                                if ancestor_sources
+                                else (
+                                    "git_metadata"
+                                    if is_within(path, git_metadata_root)
+                                    else "frozen_input_watcher"
+                                    if event.action == "journal_overflow"
+                                    else "runtime_scope"
+                                )
+                            ),
                             "expected_size": None,
                             "expected_sha256": None,
                         },
@@ -2702,9 +4312,14 @@ class RuntimeCoordinator:
             "reason": "a frozen input received a filesystem change event during node execution",
             "changes": changes,
         }
+        summary = "; ".join(
+            f"{change['path']} ({','.join(str(item) for item in change['observed_actions'])})"
+            for change in changes[:5]
+        )
         return FrozenInputMutationError(
-            "frozen project inputs changed during A-F; the run is terminated and "
-            "requires the user to provide a reason",
+            "frozen project inputs changed during A-F: "
+            + summary
+            + "; the run is terminated and requires the user to provide a reason",
             mutation_event=event_payload,
         )
 
@@ -2903,6 +4518,8 @@ class RuntimeCoordinator:
             current.expected_seal != self._seal.expected_seal
             or current.sequence != self._seal.sequence
             or current.scope_policy_sha256 != self._seal.scope_policy_sha256
+            or current.scope_decision_sha256
+            != self._seal.scope_decision_sha256
             or current.resolved_manifest_sha256
             != self._seal.resolved_manifest_sha256
         ):
@@ -2920,9 +4537,21 @@ class RuntimeCoordinator:
                 "production runtime dependencies became unverifiable during A-F"
             ) from error
         if current_external != expected_external:
+            expected_mapping = (
+                expected_external
+                if isinstance(expected_external, Mapping)
+                else {}
+            )
+            changed_sections = sorted(
+                key
+                for key in set(expected_mapping) | set(current_external)
+                if expected_mapping.get(key) != current_external.get(key)
+            )
             raise FrozenInputMutationError(
                 "production runtime dependencies or effective environment changed "
-                "during A-F; the run is terminated and requires the user to provide a reason"
+                "during A-F; changed sections: "
+                + ", ".join(changed_sections)
+                + "; the run is terminated and requires the user to provide a reason"
             )
         self._validate_engineering_inputs()
         if self._reasoning_context_pack is not None:
@@ -2935,6 +4564,278 @@ class RuntimeCoordinator:
                     "frozen planning inputs changed during A-F; "
                     "the run is terminated and requires the user to provide a reason"
                 ) from error
+        self._validate_project_accountability_evidence()
+        # C-start reuse arms the run-wide watcher before importing any derived
+        # snapshots. The authority-evidence snapshot is created later in the
+        # same preflight transaction and is mandatory before ready is written.
+        if self._authority_evidence is not None:
+            self._load_authority_evidence()
+        self._validate_completed_test_evidence_manifests()
+        self._validate_completed_execution_role_outputs()
+
+    def _validate_project_accountability_evidence(self) -> None:
+        for descriptor in self._accountability_evidence_descriptors:
+            path = Path(str(descriptor.get("path"))).resolve()
+            allowed_root = Path(str(descriptor.get("allowed_root"))).resolve()
+            try:
+                content, _identity = read_regular_file(
+                    path,
+                    allowed_root=allowed_root,
+                    label=str(descriptor.get("source", "project accountability")),
+                    max_bytes=1024 * 1024,
+                )
+            except PathSecurityError as error:
+                raise FrozenInputMutationError(
+                    "sealed project accountability evidence changed during A-F"
+                ) from error
+            if (
+                descriptor.get("size") != len(content)
+                or descriptor.get("sha256")
+                != hashlib.sha256(content).hexdigest()
+            ):
+                raise FrozenInputMutationError(
+                    "sealed project accountability evidence changed during A-F"
+                )
+
+    def _seal_execution_role_outputs(
+        self,
+        attempt: dict[str, object],
+        state: Mapping[str, object],
+        node_watcher: FrozenInputWatcher,
+    ) -> None:
+        node = str(attempt.get("node"))
+        required = EXECUTION_REQUIRED_OUTPUTS.get(node)
+        if required is None:
+            raise RuntimeStateError("execution attempt has no output contract")
+        receipt = self._execution_turn_for_job(str(attempt.get("job_id")))
+        if receipt is None or receipt.get("status") != "completed":
+            raise RuntimeStateError(
+                f"{node} cannot seal outputs before its GPT turn completes"
+            )
+        self._lock_run_wide_files(
+            [
+                _required_string(
+                    receipt.get("raw_response_path"), "raw_response_path"
+                ),
+                _required_string(
+                    receipt.get("instruction_receipt_path"),
+                    "instruction_receipt_path",
+                ),
+            ]
+        )
+        try:
+            raw_response = self._read_completed_execution_response(receipt)
+            response_payload = json.loads(raw_response)
+        except (RuntimeStateError, json.JSONDecodeError) as error:
+            raise RuntimeStateError(
+                f"{node} completed GPT response is not valid JSON"
+            ) from error
+        if not isinstance(response_payload, dict):
+            raise RuntimeStateError(f"{node} completed GPT response is not an object")
+        raw_outputs = response_payload.get("output_artifacts")
+        if state.get("output_artifacts") != raw_outputs:
+            raise RuntimeStateError(
+                f"{node} graph output artifacts differ from the persisted GPT response"
+            )
+        if not isinstance(raw_outputs, list) or not all(
+            isinstance(item, Mapping) for item in raw_outputs
+        ):
+            raise RuntimeStateError(f"{node} returned no output artifact descriptors")
+        by_id: dict[str, Mapping[str, object]] = {}
+        for raw in raw_outputs:
+            artifact_id = raw.get("artifact_id")
+            if not isinstance(artifact_id, str) or artifact_id in by_id:
+                raise RuntimeStateError(f"{node} returned duplicate output artifact IDs")
+            by_id[artifact_id] = raw
+        if set(by_id) != set(required):
+            raise RuntimeStateError(
+                f"{node} output artifact IDs do not match its required contract"
+            )
+
+        prepared: list[tuple[str, str, int, str, Path]] = []
+        for artifact_id, relative_name in required.items():
+            raw = by_id[artifact_id]
+            expected_source = lexical_absolute(self.artifact_path / relative_name)
+            raw_path = raw.get("path")
+            raw_size = raw.get("size")
+            raw_sha256 = raw.get("sha256")
+            if not isinstance(raw_path, str) or not same_path(raw_path, expected_source):
+                raise RuntimeStateError(
+                    f"{node} output artifact path changed: {artifact_id}"
+                )
+            if (
+                isinstance(raw_size, bool)
+                or not isinstance(raw_size, int)
+                or raw_size <= 0
+                or raw_size > 64 * 1024 * 1024
+            ):
+                raise RuntimeStateError(
+                    f"{node} output artifact size is invalid: {artifact_id}"
+                )
+            expected_sha256 = _require_sha256(
+                raw_sha256, f"{node}.{artifact_id}.sha256"
+            )
+            prepared.append(
+                (
+                    artifact_id,
+                    relative_name,
+                    raw_size,
+                    expected_sha256,
+                    expected_source,
+                )
+            )
+        node_watcher.lock_files([item[4] for item in prepared])
+
+        normalized: list[dict[str, object]] = []
+        persistent_paths: list[Path] = []
+        snapshot_root = (
+            self.artifact_path / "role-output-snapshots" / str(attempt["attempt_id"])
+        ).resolve()
+        snapshot_root.mkdir(parents=True, exist_ok=True)
+        for (
+            artifact_id,
+            relative_name,
+            raw_size,
+            expected_sha256,
+            expected_source,
+        ) in prepared:
+            try:
+                content, _identity = read_regular_file(
+                    expected_source,
+                    allowed_root=self.artifact_path,
+                    label=f"{node} output artifact {artifact_id}",
+                    max_bytes=raw_size,
+                )
+            except PathSecurityError as error:
+                raise FrozenInputMutationError(
+                    f"{node} output artifact became unavailable: {artifact_id}"
+                ) from error
+            if (
+                len(content) != raw_size
+                or hashlib.sha256(content).hexdigest() != expected_sha256
+            ):
+                raise FrozenInputMutationError(
+                    f"{node} output artifact does not match its GPT response: {artifact_id}"
+                )
+            snapshot_path = (snapshot_root / relative_name).resolve()
+            if snapshot_path.exists():
+                try:
+                    existing, _existing_identity = read_regular_file(
+                        snapshot_path,
+                        allowed_root=self.artifact_path,
+                        label=f"{node} output snapshot {artifact_id}",
+                        max_bytes=raw_size,
+                    )
+                except PathSecurityError as error:
+                    raise FrozenInputMutationError(
+                        f"immutable {node} output snapshot became unavailable"
+                    ) from error
+                if existing != content:
+                    raise FrozenInputMutationError(
+                        f"immutable {node} output snapshot changed: {artifact_id}"
+                    )
+            else:
+                _atomic_write_bytes(snapshot_path, content)
+            persistent_paths.append(snapshot_path)
+            if node not in {"C", "D"}:
+                persistent_paths.append(expected_source)
+            normalized.append(
+                {
+                    "artifact_id": artifact_id,
+                    "source_path": str(expected_source),
+                    "snapshot_path": str(snapshot_path),
+                    "size": raw_size,
+                    "sha256": expected_sha256,
+                    "source_retained": node not in {"C", "D"},
+                }
+            )
+        self._lock_run_wide_files(persistent_paths)
+        normalized.sort(key=lambda item: str(item["artifact_id"]))
+        prior = attempt.get("output_artifacts")
+        if prior is not None and prior != normalized:
+            raise FrozenInputMutationError(
+                f"{node} output artifact checkpoint changed during replay"
+            )
+        attempt["output_artifacts"] = normalized
+        if node == "E":
+            report = next(
+                item for item in normalized if item["artifact_id"] == "test-report"
+            )
+            attempt.update(
+                test_report_path=report["source_path"],
+                test_report_snapshot_path=report["snapshot_path"],
+                test_report_size=report["size"],
+                test_report_sha256=report["sha256"],
+            )
+        self._validate_execution_role_outputs(attempt)
+
+    def _validate_execution_role_outputs(
+        self, attempt: Mapping[str, object]
+    ) -> None:
+        node = str(attempt.get("node"))
+        outputs = attempt.get("output_artifacts")
+        required = EXECUTION_REQUIRED_OUTPUTS.get(node)
+        if not isinstance(outputs, list) or required is None or len(outputs) != len(required):
+            raise RuntimeStateError(f"completed {node} attempt has invalid output artifacts")
+        seen: set[str] = set()
+        for output in outputs:
+            if not isinstance(output, Mapping):
+                raise RuntimeStateError(f"completed {node} output checkpoint is invalid")
+            artifact_id = output.get("artifact_id")
+            if not isinstance(artifact_id, str) or artifact_id in seen or artifact_id not in required:
+                raise RuntimeStateError(f"completed {node} output IDs are invalid")
+            seen.add(artifact_id)
+            size = output.get("size")
+            sha256 = _require_sha256(output.get("sha256"), f"{node}.{artifact_id}.sha256")
+            if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+                raise RuntimeStateError(f"completed {node} output size is invalid")
+            expected_source = (self.artifact_path / required[artifact_id]).resolve()
+            if not isinstance(output.get("source_path"), str) or not same_path(
+                str(output["source_path"]), expected_source
+            ):
+                raise FrozenInputMutationError(f"completed {node} output path changed")
+            expected_snapshot = (
+                self.artifact_path
+                / "role-output-snapshots"
+                / str(attempt["attempt_id"])
+                / required[artifact_id]
+            ).resolve()
+            if not isinstance(output.get("snapshot_path"), str) or not same_path(
+                str(output["snapshot_path"]), expected_snapshot
+            ):
+                raise FrozenInputMutationError(
+                    f"completed {node} output snapshot path changed"
+                )
+            paths = [expected_snapshot]
+            if output.get("source_retained") is True:
+                paths.append(expected_source)
+            elif output.get("source_retained") is not False:
+                raise RuntimeStateError(
+                    f"completed {node} output retention marker is invalid"
+                )
+            for path in paths:
+                try:
+                    content, _identity = read_regular_file(
+                        path,
+                        allowed_root=self.artifact_path,
+                        label=f"completed {node} output {artifact_id}",
+                        max_bytes=size,
+                    )
+                except PathSecurityError as error:
+                    raise FrozenInputMutationError(
+                        f"completed {node} output became unavailable: {artifact_id}"
+                    ) from error
+                if len(content) != size or hashlib.sha256(content).hexdigest() != sha256:
+                    raise FrozenInputMutationError(
+                        f"completed {node} output changed: {artifact_id}"
+                    )
+        if seen != set(required):
+            raise RuntimeStateError(f"completed {node} output contract is incomplete")
+
+    def _validate_completed_execution_role_outputs(self) -> None:
+        for attempt in self._execution_attempts:
+            if attempt.get("status") == "completed":
+                self._validate_execution_role_outputs(attempt)
 
     def _seal_test_evidence_manifest(
         self, attempt: dict[str, object]
@@ -2982,6 +4883,24 @@ class RuntimeCoordinator:
             raise RuntimeStateError(
                 f"C produced an invalid test execution request: {error}"
             ) from error
+        bound_outputs = attempt.get("output_artifacts")
+        bound_request = next(
+            (
+                item
+                for item in bound_outputs
+                if isinstance(item, Mapping)
+                and item.get("artifact_id") == "test-execution-request"
+            ),
+            None,
+        ) if isinstance(bound_outputs, list) else None
+        if (
+            bound_request is None
+            or bound_request.get("sha256") != request.sha256
+            or bound_request.get("size") != request.path.stat().st_size
+        ):
+            raise FrozenInputMutationError(
+                "C test execution request changed after the GPT response"
+            )
         request_bytes = request.path.read_bytes()
         if request_snapshot_path.exists():
             if request_snapshot_path.read_bytes() != request_bytes:
@@ -3035,8 +4954,16 @@ class RuntimeCoordinator:
             test_ids=list(validated.test_ids),
         )
         self._validate_test_evidence_snapshot(attempt)
+        evidence_root = lexical_absolute(
+            self.artifact_path / "evidence" / attempt_id
+        )
+        evidence_files = [
+            path for path in evidence_root.rglob("*") if path.is_file()
+        ]
+        self._lock_run_wide_files(
+            [request_snapshot_path, snapshot_path, *evidence_files]
+        )
         current_path.unlink()
-        request_path.unlink()
 
     def _execute_test_request(
         self,
@@ -3055,9 +4982,18 @@ class RuntimeCoordinator:
             )
         if evidence_root.exists():
             if not evidence_root.is_dir() or any(evidence_root.iterdir()):
-                raise RuntimeStateError(
-                    "Coordinator test evidence root contains untrusted pre-existing data"
-                )
+                if not evidence_root.is_dir():
+                    raise RuntimeStateError(
+                        "Coordinator test evidence root is not a directory"
+                    )
+                abandoned_root = (
+                    self.artifact_path
+                    / "abandoned-test-evidence"
+                    / f"{attempt_id}-{uuid4().hex}"
+                ).resolve()
+                abandoned_root.parent.mkdir(parents=True, exist_ok=True)
+                evidence_root.replace(abandoned_root)
+                evidence_root.mkdir(parents=True, exist_ok=False)
         else:
             evidence_root.mkdir(parents=True, exist_ok=False)
         approved_path, _handoff_path = self._expected_planning_handoff_paths()
@@ -3088,7 +5024,11 @@ class RuntimeCoordinator:
                 self._active_test_input_descriptors.append(
                     {**descriptor, "source": source}
                 )
-        watchers = self._start_frozen_input_watchers()
+        try:
+            watchers, watch_descriptors = self._start_frozen_input_watchers()
+        except BaseException:
+            self._active_test_input_descriptors = []
+            raise
         primary: BaseException | None = None
         watch_events: tuple[FileSystemEvent, ...] = ()
         try:
@@ -3100,20 +5040,11 @@ class RuntimeCoordinator:
                 stderr_path = test_root / "stderr.bin"
                 receipt_path = test_root / "execution_receipt.json"
                 command = [str(part) for part in test_value["command"]]
-                wrapper_command = [
-                    str(Path(sys._base_executable).resolve()),
-                    "-I",
-                    "-S",
-                    str(Path(__file__).with_name("windows_job_runner.py").resolve()),
-                    "--active-process-limit",
-                    "64",
-                    "--job-memory-limit-bytes",
-                    str(4 * 1024**3),
-                    "--process-time-limit-100ns",
-                    str(int(test_value["timeout_seconds"]) * 10_000_000),
-                    "--",
-                    *command,
-                ]
+                wrapper_command = _windows_job_command(
+                    command,
+                    process_time_limit_seconds=int(test_value["timeout_seconds"]),
+                    job_identity=uuid4().hex,
+                )
                 approved_environment = test_value["environment"]
                 assert isinstance(approved_environment, dict)
                 environment = {
@@ -3126,46 +5057,58 @@ class RuntimeCoordinator:
                         test_value,
                         project_root=self.project_root,
                         artifact_root=self.artifact_path,
-                    ):
+                    ), stdout_path.open("xb") as stdout_stream, stderr_path.open(
+                        "xb"
+                    ) as stderr_stream:
                         process = subprocess.Popen(
                             wrapper_command,
                             cwd=str(test_value["cwd"]),
                             env=environment,
                             stdin=subprocess.DEVNULL,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
+                            stdout=stdout_stream,
+                            stderr=stderr_stream,
                         )
                         timed_out = False
+                        output_limit_exceeded = False
                         deadline = monotonic() + int(test_value["timeout_seconds"])
-                        while True:
-                            remaining = deadline - monotonic()
-                            if remaining <= 0:
+                        while process.poll() is None:
+                            stdout_stream.flush()
+                            stderr_stream.flush()
+                            if (
+                                stdout_path.stat().st_size > MAX_TEST_OUTPUT_BYTES
+                                or stderr_path.stat().st_size > MAX_TEST_OUTPUT_BYTES
+                            ):
+                                output_limit_exceeded = True
+                                process.kill()
+                                process.wait(timeout=30)
+                                break
+                            if monotonic() >= deadline:
                                 timed_out = True
                                 process.kill()
-                                stdout, stderr = process.communicate(timeout=30)
+                                process.wait(timeout=30)
                                 break
-                            try:
-                                stdout, stderr = process.communicate(
-                                    timeout=min(remaining, 0.1)
-                                )
-                                break
-                            except subprocess.TimeoutExpired:
-                                mutation = self._watcher_mutation_error(
-                                    self._current_frozen_input_watch_events(watchers)
-                                )
-                                if mutation is None:
-                                    continue
+                            mutation = self._watcher_mutation_error(
+                                self._current_frozen_input_watch_events(watchers),
+                                descriptors=watch_descriptors,
+                            )
+                            if mutation is not None:
                                 process.kill()
-                                process.communicate(timeout=30)
+                                process.wait(timeout=30)
                                 raise mutation
+                            sleep(0.05)
+                        stdout_stream.flush()
+                        stderr_stream.flush()
+                        if output_limit_exceeded:
+                            raise RuntimeStateError(
+                                f"Coordinator test {test_value['test_id']} exceeded the "
+                                f"{MAX_TEST_OUTPUT_BYTES}-byte stdout/stderr limit"
+                            )
                 except (OSError, TestExecutionRequestError) as error:
                     raise RuntimeStateError(
                         f"Coordinator could not start test {test_value['test_id']}: {error}"
                     ) from error
                 finished = _utc_now_text()
                 exit_code = 124 if timed_out else int(process.returncode)
-                _write_bytes_exclusive(stdout_path, stdout)
-                _write_bytes_exclusive(stderr_path, stderr)
                 stdout_descriptor = _file_descriptor_allow_empty(stdout_path)
                 stderr_descriptor = _file_descriptor_allow_empty(stderr_path)
                 environment_fingerprint = {
@@ -3249,32 +5192,59 @@ class RuntimeCoordinator:
             primary = error
         finally:
             try:
-                watch_events = self._stop_frozen_input_watchers(watchers)
+                watch_events, watcher_errors = self._drain_frozen_input_watchers(
+                    watchers
+                )
+                for watcher_error in watcher_errors:
+                    if primary is None:
+                        primary = watcher_error
+                    else:
+                        primary.add_note(
+                            f"frozen-input watcher cleanup also failed: {watcher_error}"
+                        )
             except BaseException as watcher_error:
                 if primary is None:
                     primary = watcher_error
                 else:
                     primary.add_note(
-                        f"frozen-input watcher cleanup also failed: {watcher_error}"
+                        f"frozen-input watcher drain also failed: {watcher_error}"
                     )
-        mutation = self._watcher_mutation_error(watch_events)
+        mutation = self._watcher_mutation_error(
+            watch_events, descriptors=watch_descriptors
+        )
         self._active_test_input_descriptors = []
         if mutation is not None:
             if primary is not None:
                 mutation.add_note(f"test execution also failed: {primary}")
+            for close_error in self._close_frozen_input_watchers(watchers):
+                mutation.add_note(f"test-input path-lock release failed: {close_error}")
             raise mutation
         if primary is not None:
+            for close_error in self._close_frozen_input_watchers(watchers):
+                primary.add_note(f"test-input path-lock release failed: {close_error}")
             raise primary
-        manifest = {
-            "schema": "aegis.test_evidence_manifest.v2",
-            "project_id_hex": request["project_id_hex"],
-            "workflow_run_id": request["workflow_run_id"],
-            "attempt_id": attempt_id,
-            "approved_test_plan": plan_descriptor,
-            "created_at_utc": _utc_now_text(),
-            "records": records,
-        }
-        _write_bytes_exclusive(manifest_path, _canonical_json_bytes(manifest))
+        try:
+            self._validate_frozen_project_inputs()
+            manifest = {
+                "schema": "aegis.test_evidence_manifest.v2",
+                "project_id_hex": request["project_id_hex"],
+                "workflow_run_id": request["workflow_run_id"],
+                "attempt_id": attempt_id,
+                "approved_test_plan": plan_descriptor,
+                "created_at_utc": _utc_now_text(),
+                "records": records,
+            }
+            _write_bytes_exclusive(manifest_path, _canonical_json_bytes(manifest))
+        except BaseException as error:
+            for close_error in self._close_frozen_input_watchers(watchers):
+                error.add_note(f"test-input path-lock release failed: {close_error}")
+            raise
+        close_errors = self._close_frozen_input_watchers(watchers)
+        if close_errors:
+            failure = RuntimeStateError("test-input path locks failed to release")
+            for close_error in close_errors:
+                failure.add_note(str(close_error))
+            raise failure
 
     def _validate_test_evidence_snapshot(
         self, attempt: Mapping[str, object]
@@ -3355,6 +5325,528 @@ class RuntimeCoordinator:
             if attempt.get("node") == "C" and attempt.get("status") == "completed":
                 self._validate_test_evidence_snapshot(attempt)
 
+    def _completed_test_evidence_descriptors(
+        self, attempt: Mapping[str, object]
+    ) -> list[dict[str, object]]:
+        self._validate_test_evidence_snapshot(attempt)
+        manifest_path = lexical_absolute(
+            _required_string(
+                attempt.get("test_evidence_manifest_path"),
+                "test_evidence_manifest_path",
+            )
+        )
+        try:
+            encoded, _identity = read_regular_file(
+                manifest_path,
+                allowed_root=self.artifact_path,
+                label="sealed test evidence manifest",
+                max_bytes=16 * 1024 * 1024,
+            )
+            payload = json.loads(encoded.decode("utf-8", errors="strict"))
+        except (PathSecurityError, UnicodeError, json.JSONDecodeError) as error:
+            raise FrozenInputMutationError(
+                "sealed test evidence manifest is unreadable"
+            ) from error
+        records = payload.get("records") if isinstance(payload, Mapping) else None
+        if not isinstance(records, list):
+            raise RuntimeStateError("sealed test evidence records are missing")
+        descriptors: list[dict[str, object]] = []
+        seen_paths: set[str] = set()
+
+        def append(
+            evidence_id: str,
+            value: object,
+        ) -> None:
+            if not isinstance(value, Mapping):
+                raise RuntimeStateError(
+                    f"sealed test evidence descriptor is invalid: {evidence_id}"
+                )
+            path = _required_string(value.get("path"), f"{evidence_id}.path")
+            folded = str(lexical_absolute(path)).casefold()
+            if folded in seen_paths:
+                return
+            size = value.get("size")
+            if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+                raise RuntimeStateError(
+                    f"sealed test evidence size is invalid: {evidence_id}"
+                )
+            sha256 = _require_sha256(value.get("sha256"), f"{evidence_id}.sha256")
+            descriptors.append(
+                {
+                    "evidence_id": evidence_id,
+                    "path": path,
+                    "size": size,
+                    "sha256": sha256,
+                }
+            )
+            seen_paths.add(folded)
+
+        attempt_id = _required_string(attempt.get("attempt_id"), "attempt_id")
+        for record_index, record in enumerate(records, start=1):
+            if not isinstance(record, Mapping):
+                raise RuntimeStateError("sealed test evidence record is invalid")
+            prefix = f"test-evidence-raw:{attempt_id}:{record_index:04d}"
+            append(f"{prefix}:stdout", record.get("stdout"))
+            append(f"{prefix}:stderr", record.get("stderr"))
+            append(
+                f"{prefix}:execution-receipt", record.get("execution_receipt")
+            )
+            raw_results = record.get("raw_results")
+            if not isinstance(raw_results, list):
+                raise RuntimeStateError("sealed test raw results are invalid")
+            for result_index, result in enumerate(raw_results, start=1):
+                append(f"{prefix}:raw-result:{result_index:04d}", result)
+        return descriptors
+
+    def _prepare_final_review_input_manifest(
+        self, attempt: dict[str, object]
+    ) -> None:
+        expected_path = (
+            self.artifact_path / FINAL_REVIEW_INPUT_MANIFEST_NAME
+        ).resolve()
+        existing_fields = (
+            attempt.get("final_review_input_manifest_path"),
+            attempt.get("final_review_input_manifest_sha256"),
+            attempt.get("final_review_required_evidence_ids"),
+        )
+        if any(value is not None for value in existing_fields):
+            if not all(value is not None for value in existing_fields):
+                raise RuntimeStateError(
+                    "F final-review input manifest checkpoint is partial"
+                )
+            self._load_final_review_input_manifest(attempt)
+            return
+
+        required_evidence = self._build_final_review_required_evidence()
+        payload: dict[str, object] = {
+            "schema": FINAL_REVIEW_INPUT_MANIFEST_SCHEMA,
+            "workflow_run_id": self.run_id,
+            "final_attempt": {
+                "attempt_id": attempt["attempt_id"],
+                "job_id": attempt["job_id"],
+                "input_sha256": attempt["input_sha256"],
+            },
+            "frozen_runtime_manifest": _json_copy(
+                self._frozen_runtime_manifest or {}
+            ),
+            "engineering_input_manifest": _json_copy(
+                self._engineering_input_manifest or {}
+            ),
+            "reasoning_context_pack": _json_copy(
+                self._reasoning_context_pack or {}
+            ),
+            "authorities": self._load_authority_evidence(),
+            "planning": {
+                "rounds": _json_copy(self._planning_rounds),
+                "reuse": _json_copy(self._planning_reuse),
+                "turns": _json_copy(self._planning_turns),
+            },
+            "execution": {
+                "attempts": _json_copy(self._execution_attempts[:-1]),
+                "turns": _json_copy(self._execution_turns),
+                "evidence_sessions": _json_copy(self._evidence_sessions),
+            },
+            "required_evidence": required_evidence,
+        }
+        encoded = _canonical_json_bytes(payload)
+        if expected_path.exists():
+            try:
+                existing = expected_path.read_bytes()
+            except OSError as error:
+                raise RuntimeStateError(
+                    "cannot read existing final-review input manifest"
+                ) from error
+            if existing != encoded:
+                raise FrozenInputMutationError(
+                    "final-review input manifest already exists with different bytes"
+                )
+        else:
+            _write_bytes_exclusive(expected_path, encoded)
+        manifest_sha256 = hashlib.sha256(encoded).hexdigest()
+        attempt.update(
+            final_review_input_manifest_path=str(expected_path),
+            final_review_input_manifest_sha256=manifest_sha256,
+            final_review_required_evidence_ids=[
+                str(item["evidence_id"]) for item in required_evidence
+            ],
+        )
+        self._lock_run_wide_files([expected_path])
+        self._load_final_review_input_manifest(attempt)
+
+    def _build_final_review_required_evidence(self) -> list[dict[str, object]]:
+        runtime = self._frozen_runtime_manifest
+        engineering = self._engineering_input_manifest
+        context = self._reasoning_context_pack
+        if runtime is None or engineering is None or context is None:
+            raise RuntimeStateError("F final-review inputs are not frozen")
+        descriptors: list[dict[str, object]] = []
+        seen_ids: set[str] = set()
+        seen_paths: set[Path] = set()
+
+        def add(
+            evidence_id: str,
+            path_value: object,
+            *,
+            expected_sha256: object | None = None,
+            expected_size: object | None = None,
+            require_nonblank: bool = False,
+        ) -> None:
+            if not evidence_id or evidence_id in seen_ids:
+                raise RuntimeStateError("F required evidence IDs are not unique")
+            if not isinstance(path_value, str) or not path_value:
+                raise RuntimeStateError(f"F required evidence has no path: {evidence_id}")
+            path = lexical_absolute(path_value)
+            if path in seen_paths:
+                raise RuntimeStateError("F required evidence paths are not unique")
+            allowed_root = next(
+                (
+                    root
+                    for root in (self.project_root, self.artifact_path)
+                    if is_within(path, root)
+                ),
+                None,
+            )
+            if allowed_root is None:
+                raise RuntimeStateError(
+                    f"F required evidence is outside allowed roots: {evidence_id}"
+                )
+            try:
+                content, _identity = read_regular_file(
+                    path,
+                    allowed_root=allowed_root,
+                    label=f"F required evidence {evidence_id}",
+                    max_bytes=64 * 1024 * 1024,
+                )
+            except PathSecurityError as error:
+                raise FrozenInputMutationError(
+                    f"F required evidence is unsafe: {evidence_id}"
+                ) from error
+            if require_nonblank and not content.strip():
+                raise RuntimeStateError(
+                    f"F required evidence is blank: {evidence_id}"
+                )
+            descriptor = {
+                "path": str(path),
+                "size": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+            if (
+                expected_sha256 is not None
+                and descriptor["sha256"]
+                != _require_sha256(expected_sha256, f"{evidence_id}.sha256")
+            ):
+                raise FrozenInputMutationError(
+                    f"F required evidence SHA-256 changed: {evidence_id}"
+                )
+            if expected_size is not None and descriptor["size"] != expected_size:
+                raise FrozenInputMutationError(
+                    f"F required evidence size changed: {evidence_id}"
+                )
+            descriptors.append({"evidence_id": evidence_id, **descriptor})
+            seen_ids.add(evidence_id)
+            seen_paths.add(path)
+
+        entries = runtime.get("entries")
+        if not isinstance(entries, list) or not entries:
+            raise RuntimeStateError("F frozen runtime manifest has no project entries")
+        for entry in sorted(entries, key=lambda item: str(item.get("logical_path"))):
+            logical_path = entry.get("logical_path")
+            if not isinstance(logical_path, str) or not logical_path:
+                raise RuntimeStateError("F frozen runtime entry has no logical path")
+            add(
+                f"project-runtime:{logical_path}",
+                entry.get("path"),
+                expected_sha256=entry.get("sha256"),
+                expected_size=entry.get("size"),
+            )
+        controls = runtime.get("scope_controls")
+        if not isinstance(controls, list) or not controls:
+            raise RuntimeStateError("F frozen runtime manifest has no scope controls")
+        for index, control in enumerate(controls, start=1):
+            add(
+                f"scope-control:{index:02d}",
+                control.get("path"),
+                expected_sha256=control.get("sha256"),
+                expected_size=control.get("size"),
+            )
+        authority = self._load_authority_evidence()
+        authority_checkpoint = self._authority_evidence or {}
+        add(
+            "run-authority-evidence",
+            authority_checkpoint.get("path"),
+            expected_sha256=authority_checkpoint.get("sha256"),
+            expected_size=authority_checkpoint.get("size"),
+        )
+        seal_descriptor = authority.get("project_seal_record")
+        if not isinstance(seal_descriptor, Mapping):
+            raise RuntimeStateError(
+                "run authority evidence has no project seal descriptor"
+            )
+        add(
+            "project-seal-record",
+            seal_descriptor.get("path"),
+            expected_sha256=seal_descriptor.get("sha256"),
+            expected_size=seal_descriptor.get("size"),
+        )
+
+        add(
+            "engineering-input-manifest",
+            engineering.get("snapshot_path"),
+            expected_sha256=engineering.get("snapshot_sha256"),
+        )
+        documents = engineering.get("documents")
+        if not isinstance(documents, list) or not documents:
+            raise RuntimeStateError("F engineering input manifest has no documents")
+        for index, document in enumerate(documents, start=1):
+            kind = document.get("kind")
+            if not isinstance(kind, str) or not kind:
+                raise RuntimeStateError("F engineering document has no kind")
+            add(
+                f"engineering-input:{kind.casefold()}:{index:04d}",
+                document.get("snapshot_path"),
+                expected_sha256=document.get("snapshot_sha256"),
+                expected_size=document.get("snapshot_size"),
+            )
+        add(
+            "reasoning-context-pack",
+            context.get("snapshot_path"),
+            expected_sha256=context.get("sha256"),
+            expected_size=context.get("size"),
+        )
+        add(
+            "reasoning-ledger-snapshot",
+            context.get("coordinator_ledger_snapshot_path"),
+            expected_sha256=context.get("coordinator_ledger_snapshot_sha256"),
+            expected_size=context.get("coordinator_ledger_snapshot_size"),
+        )
+        approved_path, handoff_path = self._expected_planning_handoff_paths()
+        if isinstance(self._planning_reuse, Mapping):
+            planning_checkpoint: Mapping[str, object] = self._planning_reuse
+        elif self._planning_rounds and isinstance(
+            self._planning_rounds[-1], Mapping
+        ):
+            planning_checkpoint = self._planning_rounds[-1]
+        else:
+            raise RuntimeStateError("F has no completed planning checkpoint")
+        add(
+            "approved-test-plan",
+            str(approved_path),
+            expected_sha256=planning_checkpoint.get("approved_plan_sha256"),
+            expected_size=planning_checkpoint.get("approved_plan_size"),
+        )
+        add(
+            "planning-handoff",
+            str(handoff_path),
+            expected_sha256=planning_checkpoint.get("handoff_sha256"),
+            expected_size=planning_checkpoint.get("handoff_size"),
+        )
+        if isinstance(self._planning_reuse, Mapping):
+            reuse = self._planning_reuse
+            add(
+                "planning-reuse-source-state",
+                reuse.get("source_run_state_snapshot_path"),
+                expected_sha256=reuse.get("source_run_state_snapshot_sha256"),
+                expected_size=reuse.get("source_run_state_snapshot_size"),
+            )
+            add(
+                "planning-reuse-source-review",
+                reuse.get("review_report_path"),
+                expected_sha256=reuse.get("review_report_sha256"),
+                expected_size=reuse.get("review_report_size"),
+            )
+            snapshots = reuse.get("source_turn_snapshots")
+            if not isinstance(snapshots, list) or not snapshots:
+                raise RuntimeStateError(
+                    "F planning reuse has no source A/B turn snapshots"
+                )
+            for index, snapshot in enumerate(snapshots, start=1):
+                if not isinstance(snapshot, Mapping):
+                    raise RuntimeStateError(
+                        "F planning reuse source turn snapshot is invalid"
+                    )
+                add(
+                    f"planning-response:{index:04d}",
+                    snapshot.get("raw_response_path"),
+                    expected_sha256=snapshot.get("raw_response_sha256"),
+                    expected_size=snapshot.get("raw_response_size"),
+                )
+                add(
+                    f"planning-instruction-receipt:{index:04d}",
+                    snapshot.get("instruction_receipt_path"),
+                    expected_sha256=snapshot.get("instruction_receipt_sha256"),
+                    expected_size=snapshot.get("instruction_receipt_size"),
+                )
+        completed_e = [
+            attempt
+            for attempt in self._execution_attempts[:-1]
+            if attempt.get("node") == "E"
+            and attempt.get("status") == "completed"
+            and attempt.get("node_status") is True
+        ]
+        if len(completed_e) != 1:
+            raise RuntimeStateError(
+                "F requires exactly one successful completed E report attempt"
+            )
+        report_attempt = completed_e[0]
+        add(
+            "test-report",
+            report_attempt.get("test_report_snapshot_path"),
+            expected_sha256=report_attempt.get("test_report_sha256"),
+            expected_size=report_attempt.get("test_report_size"),
+            require_nonblank=True,
+        )
+
+        for prior in self._execution_attempts[:-1]:
+            if prior.get("status") != "completed":
+                continue
+            outputs = prior.get("output_artifacts")
+            if not isinstance(outputs, list):
+                raise RuntimeStateError("F prior execution output checkpoint is missing")
+            attempt_id = _required_string(prior.get("attempt_id"), "attempt_id")
+            for output in outputs:
+                if not isinstance(output, Mapping):
+                    raise RuntimeStateError("F prior execution output is invalid")
+                artifact_id = _required_string(
+                    output.get("artifact_id"), "artifact_id"
+                )
+                if prior is report_attempt and artifact_id == "test-report":
+                    continue
+                add(
+                    f"role-output:{attempt_id}:{artifact_id}",
+                    output.get("snapshot_path"),
+                    expected_sha256=output.get("sha256"),
+                    expected_size=output.get("size"),
+                )
+
+        for prior in self._execution_attempts[:-1]:
+            if prior.get("node") != "C" or prior.get("status") != "completed":
+                continue
+            attempt_id = _required_string(prior.get("attempt_id"), "attempt_id")
+            add(
+                f"test-execution-request:{attempt_id}",
+                prior.get("test_execution_request_path"),
+                expected_sha256=prior.get("test_execution_request_sha256"),
+            )
+            add(
+                f"test-evidence-manifest:{attempt_id}",
+                prior.get("test_evidence_manifest_path"),
+                expected_sha256=prior.get("test_evidence_manifest_sha256"),
+            )
+            for raw_descriptor in self._completed_test_evidence_descriptors(prior):
+                add(
+                    str(raw_descriptor["evidence_id"]),
+                    raw_descriptor.get("path"),
+                    expected_sha256=raw_descriptor.get("sha256"),
+                    expected_size=raw_descriptor.get("size"),
+                )
+        for index, receipt in enumerate(self._planning_turns, start=1):
+            if receipt.get("status") != "completed":
+                raise RuntimeStateError("F has an incomplete planning turn")
+            add(
+                f"planning-response:{index:04d}",
+                receipt.get("raw_response_path"),
+                expected_sha256=receipt.get("raw_response_sha256"),
+            )
+            add(
+                f"planning-instruction-receipt:{index:04d}",
+                receipt.get("instruction_receipt_path"),
+                expected_sha256=receipt.get("instruction_receipt_sha256"),
+            )
+        for receipt in self._execution_turns:
+            if receipt.get("status") != "completed":
+                raise RuntimeStateError("F has an incomplete execution turn")
+            attempt_id = _required_string(receipt.get("attempt_id"), "attempt_id")
+            add(
+                f"execution-response:{attempt_id}",
+                receipt.get("raw_response_path"),
+                expected_sha256=receipt.get("raw_response_sha256"),
+            )
+            add(
+                f"instruction-receipt:{attempt_id}",
+                receipt.get("instruction_receipt_path"),
+                expected_sha256=receipt.get("instruction_receipt_sha256"),
+            )
+        return sorted(descriptors, key=lambda item: str(item["evidence_id"]))
+
+    def _load_final_review_input_manifest(
+        self, attempt: Mapping[str, object]
+    ) -> tuple[dict[str, object], list[dict[str, object]], bytes]:
+        expected_path = (
+            self.artifact_path / FINAL_REVIEW_INPUT_MANIFEST_NAME
+        ).resolve()
+        raw_path = attempt.get("final_review_input_manifest_path")
+        if not isinstance(raw_path, str) or Path(raw_path).resolve() != expected_path:
+            raise FrozenInputMutationError("F final-review input manifest path changed")
+        try:
+            raw, _identity = read_regular_file(
+                expected_path,
+                allowed_root=self.artifact_path,
+                label="final-review input manifest",
+            )
+            payload = json.loads(raw.decode("utf-8", errors="strict"))
+        except (OSError, PathSecurityError, UnicodeError, json.JSONDecodeError) as error:
+            raise FrozenInputMutationError(
+                "F final-review input manifest is unreadable"
+            ) from error
+        expected_sha256 = _require_sha256(
+            attempt.get("final_review_input_manifest_sha256"),
+            "final_review_input_manifest_sha256",
+        )
+        if hashlib.sha256(raw).hexdigest() != expected_sha256:
+            raise FrozenInputMutationError(
+                "F final-review input manifest SHA-256 changed"
+            )
+        try:
+            normalized = validate_final_review_input_manifest_payload(
+                payload,
+                workflow_run_id=self.run_id,
+                final_attempt=attempt,
+            )
+        except RuntimeContractError as error:
+            raise RuntimeStateError(str(error)) from error
+        if payload.get("authorities") != self._load_authority_evidence():
+            raise FrozenInputMutationError(
+                "F final-review input manifest authority evidence changed"
+            )
+        if _canonical_json_bytes(payload) != raw:
+            raise RuntimeStateError("F final-review input manifest is not canonical JSON")
+        required_ids = [str(item["evidence_id"]) for item in normalized]
+        if required_ids != attempt.get("final_review_required_evidence_ids"):
+            raise FrozenInputMutationError("F required evidence IDs changed")
+        return payload, normalized, raw
+
+    def _final_review_required_evidence(
+        self, attempt: Mapping[str, object]
+    ) -> list[dict[str, object]]:
+        _payload, required, manifest_bytes = self._load_final_review_input_manifest(
+            attempt
+        )
+        manifest_path = (
+            self.artifact_path / FINAL_REVIEW_INPUT_MANIFEST_NAME
+        ).resolve()
+        review_path = (self.artifact_path / "FINAL_REVIEW.md").resolve()
+        try:
+            review_content = _read_required_file(review_path, "F final review")
+            if not review_content.strip():
+                raise RuntimeStateError("F final review is blank")
+            review_descriptor = {
+                "path": str(review_path),
+                "size": len(review_content),
+                "sha256": hashlib.sha256(review_content).hexdigest(),
+            }
+        except RuntimeStateError as error:
+            raise FinalReviewVerdictError(str(error)) from error
+        return [
+            *required,
+            {
+                "evidence_id": "final-review-input-manifest",
+                "path": str(manifest_path),
+                "size": len(manifest_bytes),
+                "sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            },
+            {"evidence_id": "final-review", **review_descriptor},
+        ]
+
     def _seal_final_review_verdict(
         self,
         attempt: dict[str, object],
@@ -3365,15 +5857,50 @@ class RuntimeCoordinator:
             raise RuntimeStateError("F returned a non-boolean status")
         verdict_path = (self.artifact_path / "FINAL_REVIEW_VERDICT.json").resolve()
         try:
+            required_evidence = self._final_review_required_evidence(attempt)
             validated = validate_final_review_verdict(
                 verdict_path,
                 project_root=self.project_root,
                 artifact_root=self.artifact_path,
                 workflow_run_id=self.run_id,
                 expected_status=status,
+                required_evidence=required_evidence,
             )
         except FinalReviewVerdictError as error:
             raise RuntimeStateError(f"F produced an invalid verdict: {error}") from error
+        outputs = attempt.get("output_artifacts")
+        outputs_by_id = (
+            {
+                str(item.get("artifact_id")): item
+                for item in outputs
+                if isinstance(item, Mapping)
+            }
+            if isinstance(outputs, list)
+            else {}
+        )
+        bound_verdict = outputs_by_id.get("final-review-verdict")
+        bound_review = outputs_by_id.get("final-review")
+        indexed_review = next(
+            (
+                item
+                for item in required_evidence
+                if item.get("evidence_id") == "final-review"
+            ),
+            None,
+        )
+        if (
+            bound_verdict is None
+            or bound_verdict.get("sha256") != validated.sha256
+            or bound_review is None
+            or indexed_review is None
+            or any(
+                bound_review.get(field) != indexed_review.get(field)
+                for field in ("size", "sha256")
+            )
+        ):
+            raise FrozenInputMutationError(
+                "F outputs changed after the GPT response"
+            )
         attempt.update(
             final_review_verdict_path=str(verdict_path),
             final_review_verdict_sha256=validated.sha256,
@@ -3393,12 +5920,14 @@ class RuntimeCoordinator:
         if not isinstance(raw_path, str) or Path(raw_path).resolve() != expected_path:
             raise FrozenInputMutationError("F verdict path changed after final review")
         try:
+            required_evidence = self._final_review_required_evidence(attempt)
             validated = validate_final_review_verdict(
                 expected_path,
                 project_root=self.project_root,
                 artifact_root=self.artifact_path,
                 workflow_run_id=self.run_id,
                 expected_status=expected_status,
+                required_evidence=required_evidence,
             )
         except FinalReviewVerdictError as error:
             raise FrozenInputMutationError(
@@ -3636,7 +6165,7 @@ class RuntimeCoordinator:
             "skill_bindings_sha256": bindings_sha256,
             "challenge": challenge,
         }
-        encoded = _canonical_json_bytes(payload)
+        encoded = _canonical_instruction_receipt_bytes(payload)
         self._instruction_receipt_specs[role_key] = {
             "path": str(staging_path),
             "payload": payload,
@@ -3647,9 +6176,10 @@ class RuntimeCoordinator:
             "Before every role task, atomically write the exact UTF-8 JSON below "
             f"to `{staging_path}`. This receipt is mandatory and must be written "
             "before reading task artifacts or producing the role result. Do not "
-            "derive it from the user message.\n\n"
+            "derive it from the user message. One terminal LF after the JSON is "
+            "optional; no other byte difference is allowed.\n\n"
             "```json\n"
-            + encoded.decode("utf-8").rstrip("\n")
+            + encoded.decode("utf-8")
             + "\n```"
         )
         return developer_instructions.rstrip() + "\n\n" + protocol
@@ -3712,7 +6242,10 @@ class RuntimeCoordinator:
             raise RuntimeStateError(
                 "GPT instruction receipt snapshot is invalid JSON"
             ) from error
-        if not isinstance(payload, dict) or _canonical_json_bytes(payload) != encoded:
+        if (
+            not isinstance(payload, dict)
+            or _canonical_instruction_receipt_bytes(payload) != encoded
+        ):
             raise RuntimeStateError(
                 "GPT instruction receipt snapshot is not canonical JSON"
             )
@@ -3787,18 +6320,28 @@ class RuntimeCoordinator:
         if spec is None:
             raise RuntimeStateError("role instruction receipt protocol is unavailable")
         staging_path = Path(str(spec["path"]))
-        try:
-            encoded = staging_path.read_bytes()
-        except OSError as error:
-            raise RuntimeStateError(
-                f"{role_key} did not produce the mandatory GPT instruction receipt"
-            ) from error
-        expected = _canonical_json_bytes(spec["payload"])
-        if encoded != expected:
-            raise RuntimeStateError(
-                f"{role_key} GPT instruction receipt does not match injected instructions"
-            )
+        expected = _canonical_instruction_receipt_bytes(spec["payload"])
         snapshot_path = self._expected_instruction_receipt_path(role_key, job_id)
+        try:
+            received = staging_path.read_bytes()
+        except OSError as error:
+            try:
+                received = snapshot_path.read_bytes()
+            except OSError:
+                raise RuntimeStateError(
+                    f"{role_key} did not produce the mandatory GPT instruction receipt"
+                ) from error
+            if received != expected:
+                raise RuntimeStateError(
+                    f"{role_key} GPT instruction receipt snapshot does not match "
+                    "injected instructions"
+                ) from error
+        else:
+            if received not in {expected, expected + b"\n"}:
+                raise RuntimeStateError(
+                    f"{role_key} GPT instruction receipt does not match injected instructions"
+                )
+        encoded = expected
         if snapshot_path.exists():
             if snapshot_path.read_bytes() != encoded:
                 raise FrozenInputMutationError(
@@ -3806,7 +6349,7 @@ class RuntimeCoordinator:
                 )
         else:
             _atomic_write_bytes(snapshot_path, encoded)
-        staging_path.unlink()
+        staging_path.unlink(missing_ok=True)
         turn_receipt.update(
             instruction_receipt_path=str(snapshot_path),
             instruction_receipt_sha256=hashlib.sha256(encoded).hexdigest(),
@@ -3816,6 +6359,9 @@ class RuntimeCoordinator:
                 else None
             ),
         )
+        self._lock_run_wide_files([snapshot_path])
+        self._refresh_run_wide_freeze()
+        self._write_state("running")
 
     def _complete_execution_turn(
         self,
@@ -3829,12 +6375,88 @@ class RuntimeCoordinator:
         ) or result.turn_id != receipt.get("codex_turn_id"):
             raise RuntimeStateError("completed execution turn identity mismatch")
         raw_response = result.final_message
-        response_directory = self.run_state_path.parent / "responses"
+        response_directory = self.artifact_path / "responses"
         response_directory.mkdir(parents=True, exist_ok=True)
         response_path = response_directory / (
             f"execution-{receipt['attempt_id']}-{uuid4().hex}.json"
         )
+        instruction_receipt_path = _required_string(
+            receipt.get("instruction_receipt_path"),
+            "instruction_receipt_path",
+        )
+        node = _required_string(receipt.get("node"), "node")
+        required = EXECUTION_REQUIRED_OUTPUTS.get(node)
+        if required is None:
+            raise RuntimeStateError("execution response has no output contract")
+        try:
+            response_payload = json.loads(raw_response)
+        except json.JSONDecodeError as error:
+            raise RuntimeStateError(
+                f"{node} completed GPT response is not valid JSON"
+            ) from error
+        if not isinstance(response_payload, dict):
+            raise RuntimeStateError(f"{node} completed GPT response is not an object")
+        raw_outputs = response_payload.get("output_artifacts")
+        if not isinstance(raw_outputs, list) or not all(
+            isinstance(item, Mapping) for item in raw_outputs
+        ):
+            raise RuntimeStateError(f"{node} returned no output artifact descriptors")
+        by_id: dict[str, Mapping[str, object]] = {}
+        for raw in raw_outputs:
+            artifact_id = raw.get("artifact_id")
+            if not isinstance(artifact_id, str) or artifact_id in by_id:
+                raise RuntimeStateError(f"{node} returned duplicate output artifact IDs")
+            by_id[artifact_id] = raw
+        if set(by_id) != set(required):
+            raise RuntimeStateError(
+                f"{node} output artifact IDs do not match its required contract"
+            )
+        source_descriptors: list[tuple[str, Path, int, str]] = []
+        for artifact_id, relative_name in required.items():
+            raw = by_id[artifact_id]
+            source_path = lexical_absolute(self.artifact_path / relative_name)
+            if not isinstance(raw.get("path"), str) or not same_path(
+                str(raw["path"]), source_path
+            ):
+                raise RuntimeStateError(
+                    f"{node} output artifact path changed: {artifact_id}"
+                )
+            size = raw.get("size")
+            if (
+                isinstance(size, bool)
+                or not isinstance(size, int)
+                or size <= 0
+                or size > 64 * 1024 * 1024
+            ):
+                raise RuntimeStateError(
+                    f"{node} output artifact size is invalid: {artifact_id}"
+                )
+            sha256 = _require_sha256(
+                raw.get("sha256"), f"{node}.{artifact_id}.sha256"
+            )
+            source_descriptors.append((artifact_id, source_path, size, sha256))
+        node_watcher = self._active_node_output_watcher
+        if node_watcher is None:
+            raise RuntimeStateError("execution output watcher is unavailable")
+        node_watcher.lock_files([item[1] for item in source_descriptors])
+        for artifact_id, source_path, size, sha256 in source_descriptors:
+            try:
+                content, _identity = read_regular_file(
+                    source_path,
+                    allowed_root=self.artifact_path,
+                    label=f"{node} output artifact {artifact_id}",
+                    max_bytes=size,
+                )
+            except PathSecurityError as error:
+                raise FrozenInputMutationError(
+                    f"{node} output artifact became unavailable: {artifact_id}"
+                ) from error
+            if len(content) != size or hashlib.sha256(content).hexdigest() != sha256:
+                raise FrozenInputMutationError(
+                    f"{node} output artifact does not match its GPT response: {artifact_id}"
+                )
         _atomic_write_text(response_path, raw_response)
+        self._lock_run_wide_files([response_path, instruction_receipt_path])
         receipt.update(
             status=result.status,
             raw_response_path=str(response_path),
@@ -3842,6 +6464,7 @@ class RuntimeCoordinator:
                 raw_response.encode("utf-8")
             ).hexdigest(),
         )
+        self._refresh_run_wide_freeze()
         self._write_state("running")
 
     def _finish_execution_process(
@@ -3990,7 +6613,12 @@ class RuntimeCoordinator:
             if status == "completed":
                 self._read_completed_execution_response(receipt)
 
-    def _recover_persisted_execution_sessions(self) -> None:
+    def _recover_persisted_execution_sessions(
+        self,
+        *,
+        application_verification_status: str = "VALID_COMPLETE",
+        write_state: bool = True,
+    ) -> None:
         if not self._is_resume:
             return
         recoverable: list[dict[str, object]] = []
@@ -4037,11 +6665,66 @@ class RuntimeCoordinator:
             registration,
             verification,
             node=str(entry["node"]),
-            application_verification_status="VALID_COMPLETE",
+            application_verification_status=application_verification_status,
             process_pid=int(entry["process_pid"]),
             process_creation_time_100ns=int(entry["process_creation_time_100ns"]),
         )
-        self._write_state("running")
+        if write_state:
+            self._write_state("running")
+
+    def _recover_persisted_planning_sessions(
+        self,
+        *,
+        application_verification_status: str = "INVALID",
+        write_state: bool = True,
+    ) -> None:
+        if not self._is_resume:
+            return
+        recoverable = [
+            entry
+            for entry in self._evidence_sessions
+            if entry.get("node") == "planning"
+            and entry.get("verification_status") == "UNVERIFIED"
+            and entry.get("application_verification_status") is None
+        ]
+        if len(recoverable) > 1:
+            raise RuntimeStateError(
+                "multiple unfinished planning TraceRelay sessions cannot be recovered"
+            )
+        if not recoverable:
+            return
+        entry = recoverable[0]
+        _validate_planning_evidence_record(entry)
+        operation_id = _required_string(
+            entry.get("registration_operation_id"),
+            "registration_operation_id",
+        )
+        registration = self.relay_client.resolve_registration_operation(operation_id)
+        if registration is None:
+            raise RuntimeStateError(
+                "planning TraceRelay registration outcome is unresolved"
+            )
+        if (
+            registration.operation_id != operation_id
+            or registration.session_id != entry.get("session_id")
+            or lexical_absolute(registration.session_path)
+            != lexical_absolute(Path(str(entry["session_path"])))
+            or registration.upstream_port != self.upstream_port
+        ):
+            raise RuntimeStateError(
+                "resolved planning TraceRelay registration changed identity"
+            )
+        verification = self.relay_client.recover_uncheckpointed_registration(
+            registration
+        )
+        self._record_evidence(
+            registration,
+            verification,
+            node="planning",
+            application_verification_status=application_verification_status,
+        )
+        if write_state:
+            self._write_state("running")
 
     def _validate_persisted_execution_receipts(self) -> None:
         for receipt in self._execution_turns:
@@ -4054,8 +6737,15 @@ class RuntimeCoordinator:
                 self._read_completed_execution_response(receipt)
 
     def _validate_execution_stage_complete(self, state: Mapping[str, Any]) -> None:
+        if self._planning_stage_status != "completed":
+            raise RuntimeStateError(
+                "Aegis execution cannot complete before planning completion"
+            )
+        self._validate_completed_planning_stage()
         self._validate_frozen_project_inputs()
         self._validate_completed_test_evidence_manifests()
+        self._validate_completed_execution_role_outputs()
+        _validate_execution_path(self._execution_attempts)
         if any(
             agent.get("status") != "ready" for agent in self._execution_agents.values()
         ):
@@ -4351,10 +7041,15 @@ class RuntimeCoordinator:
         ) or result.turn_id != receipt.get("codex_turn_id"):
             raise RuntimeStateError("completed planning turn identity mismatch")
         raw_response = result.final_message
-        response_directory = self.run_state_path.parent / "responses"
+        response_directory = self.artifact_path / "responses"
         response_directory.mkdir(parents=True, exist_ok=True)
         response_path = response_directory / f"planning-{uuid4().hex}.json"
         _atomic_write_text(response_path, raw_response)
+        instruction_receipt_path = _required_string(
+            receipt.get("instruction_receipt_path"),
+            "instruction_receipt_path",
+        )
+        self._lock_run_wide_files([response_path, instruction_receipt_path])
         receipt.update(
             status=result.status,
             raw_response_path=str(response_path),
@@ -4362,6 +7057,7 @@ class RuntimeCoordinator:
                 raw_response.encode("utf-8")
             ).hexdigest(),
         )
+        self._refresh_run_wide_freeze()
         self._write_state("running")
         return raw_response
 
@@ -4369,7 +7065,7 @@ class RuntimeCoordinator:
         if not self._state_writable:
             raise RuntimeStateError("run state has not been durably reserved")
         node_name = self._current_node or "unknown"
-        directory = self.run_state_path.parent / "responses"
+        directory = self.artifact_path / "responses"
         directory.mkdir(parents=True, exist_ok=True)
         return directory / f"{node_name}-{uuid4().hex}.txt"
 
@@ -4429,6 +7125,7 @@ class RuntimeCoordinator:
         application_verification_status: str | None = None,
         process_pid: int | None = None,
         process_creation_time_100ns: int | None = None,
+        write_state: bool = True,
     ) -> None:
         intent = self._registration_intent
         if intent is None:
@@ -4469,9 +7166,10 @@ class RuntimeCoordinator:
             process_creation_time_100ns=process_creation_time_100ns,
         )
         self._registration_intent = None
-        self._write_state("running")
+        if write_state:
+            self._write_state("running")
 
-    def _reconcile_registration_intent(self) -> None:
+    def _reconcile_registration_intent(self, *, terminal_cleanup: bool = False) -> None:
         intent = self._registration_intent
         if intent is None:
             return
@@ -4512,10 +7210,50 @@ class RuntimeCoordinator:
             node=node,
             receipt=receipt,
             application_verification_status="INVALID",
+            write_state=not terminal_cleanup,
         )
+        if terminal_cleanup:
+            return
         raise RuntimeStateError(
             "uncheckpointed TraceRelay registration invalidates this run"
         )
+
+    def _cleanup_after_freeze_continuity_loss(self) -> list[BaseException]:
+        errors: list[BaseException] = []
+        if isinstance(self.relay_client, TraceRelayClient):
+            try:
+                if self._frozen_runtime_manifest is None:
+                    raise RuntimeStateError(
+                        "restored run has no frozen TraceRelay runtime identity"
+                    )
+                self._set_tracerelay_runtime_expectation(
+                    self._frozen_runtime_manifest
+                )
+                self._bind_tracerelay_runtime_expectation()
+                self.relay_client.establish_runtime(require_idle=False)
+            except BaseException as error:
+                errors.append(error)
+                return errors
+        if self._registration_intent is not None:
+            try:
+                self._reconcile_registration_intent(terminal_cleanup=True)
+            except BaseException as error:
+                errors.append(error)
+        try:
+            self._recover_persisted_planning_sessions(
+                application_verification_status="INVALID",
+                write_state=False,
+            )
+        except BaseException as error:
+            errors.append(error)
+        try:
+            self._recover_persisted_execution_sessions(
+                application_verification_status="INVALID",
+                write_state=False,
+            )
+        except BaseException as error:
+            errors.append(error)
+        return errors
 
     def _record_evidence(
         self,
@@ -4599,13 +7337,17 @@ class RuntimeCoordinator:
         )
 
     def complete(self, state: dict[str, Any]) -> None:
-        self.finish_planning_stage()
-        self._validate_execution_stage_complete(state)
+        try:
+            self.finish_planning_stage()
+            self._validate_execution_stage_complete(state)
+        except FrozenInputMutationError as error:
+            error = self._enrich_mutation_error(error)
+            self._write_state("terminated", error)
+            raise
         self._current_node = None
         self._last_state = dict(state)
         terminal_status = "completed" if state.get("status") is True else "terminated"
         self._write_state(terminal_status)
-        self._release_project_lease()
 
     def fail(self, error: BaseException) -> None:
         try:
@@ -4613,7 +7355,84 @@ class RuntimeCoordinator:
         except BaseException as cleanup_error:
             error.add_note(f"planning stage cleanup also failed: {cleanup_error}")
         self._write_state("failed", error)
-        self._release_project_lease()
+
+    def _recover_terminal_finalization(self) -> None:
+        if self._terminal_target_status not in {"completed", "terminated", "failed"}:
+            raise RuntimeStateError(
+                "terminal-finalizing state has no valid intended outcome"
+            )
+        recovered_error: BaseException
+        if self._restored_mutation_event is not None:
+            recovered_error = FrozenInputMutationError(
+                self._restored_terminal_error_message
+                or "frozen-input mutation recovered during terminal publication",
+                mutation_event=self._restored_mutation_event,
+            )
+            target = "terminated"
+        else:
+            recovered_error = RuntimeStateError(
+                self._restored_terminal_error_message
+                or "terminal publication was interrupted before completion"
+            )
+            target = "failed"
+        try:
+            self._finalize_run_wide_freeze()
+        except FrozenInputMutationError as mutation:
+            mutation = self._enrich_mutation_error(mutation)
+            mutation.add_note(f"terminal recovery also reported: {recovered_error}")
+            recovered_error = mutation
+            target = "terminated"
+        except BaseException as watcher_error:
+            recovered_error.add_note(
+                f"terminal recovery watcher also failed: {watcher_error}"
+            )
+        self._terminal_target_status = target
+        self._persist_authoritative_state(
+            "terminal_committed",
+            recovered_error,
+            projection_best_effort=True,
+        )
+        close_errors = self._close_run_wide_freeze()
+        for close_error in close_errors:
+            recovered_error.add_note(
+                f"run-wide guard recovery release also failed: {close_error}"
+            )
+        committed = self._authoritative_state_status == "terminal_committed"
+        self._terminal_target_status = None
+        self._committed_terminal_publish_allowed = committed
+        try:
+            self._write_state(target, recovered_error)
+        finally:
+            self._committed_terminal_publish_allowed = False
+
+    def _persist_authoritative_state(
+        self,
+        status: str,
+        error: BaseException | None,
+        *,
+        projection_best_effort: bool = False,
+    ) -> None:
+        if self._reservation_token is None:
+            raise RuntimeStateError("run reservation token is unavailable")
+        payload = self._build_state_payload(status, error)
+        encoded = _canonical_json_bytes(payload)
+        new_sha256 = _update_run_reservation_state(
+            self.runtime_root,
+            self.artifact_path,
+            self.run_id,
+            self._reservation_token,
+            status=status,
+            encoded_state=encoded,
+            expected_state_sha256=self._authoritative_state_sha256,
+            expected_state_status=self._authoritative_state_status,
+        )
+        self._authoritative_state_sha256 = new_sha256
+        self._authoritative_state_status = status
+        try:
+            _atomic_write_bytes(self.run_state_path, encoded)
+        except OSError:
+            if not projection_best_effort:
+                raise
 
     def _release_project_lease(self) -> None:
         if not self._project_lease_acquired or self._agent_registry is None:
@@ -4624,17 +7443,119 @@ class RuntimeCoordinator:
     def _write_state(self, status: str, error: BaseException | None = None) -> None:
         if not self._state_writable or self._reservation_token is None:
             raise RuntimeStateError("run state has not been durably reserved")
-        payload = self._build_state_payload(status, error)
-        encoded = _canonical_json_bytes(payload)
-        _update_run_reservation_state(
-            self.runtime_root,
-            self.artifact_path,
-            self.run_id,
-            self._reservation_token,
-            status=status,
-            encoded_state=encoded,
+        if (
+            self._authoritative_state_status == "terminal_committed"
+            and not self._committed_terminal_publish_allowed
+        ):
+            # The committed blob already contains the conservative recovery
+            # outcome and any mutation accountability evidence. Generic outer
+            # error handlers must not replace it after a publication CAS fails.
+            return
+        if self._terminal_state_persisted:
+            if status in {"completed", "terminated", "failed"}:
+                return
+            raise RuntimeStateError("authoritative terminal run state is immutable")
+        if isinstance(error, FrozenInputMutationError):
+            error = self._enrich_mutation_error(error)
+            status = "terminated"
+        terminal = status in {"completed", "terminated", "failed"}
+        terminal_freeze = terminal and bool(self._run_watchers)
+        recovering_finalization = (
+            terminal_freeze
+            and self._authoritative_state_status
+            in {"terminal_finalizing", "terminal_committed"}
         )
-        _atomic_write_bytes(self.run_state_path, encoded)
+        if terminal_freeze:
+            try:
+                self._refresh_run_wide_freeze()
+            except FrozenInputMutationError as mutation:
+                mutation = self._enrich_mutation_error(mutation)
+                if isinstance(error, FrozenInputMutationError):
+                    error.add_note(f"run-wide watcher also detected: {mutation}")
+                else:
+                    if error is not None:
+                        mutation.add_note(f"workflow also failed: {error}")
+                    error = mutation
+                status = "terminated"
+            except BaseException as watcher_error:
+                if error is None:
+                    error = watcher_error
+                    status = "failed"
+                else:
+                    error.add_note(
+                        f"run-wide watcher boundary also failed: {watcher_error}"
+                    )
+
+        if terminal_freeze:
+            # This authority state is deliberately non-deliverable. It marks the
+            # A-F freeze boundary while every lock/listener remains active, so a
+            # concurrent confirmation cannot observe a provisional success/fail.
+            if not recovering_finalization:
+                self._terminal_target_status = status
+                self._persist_authoritative_state(
+                    "terminal_finalizing", error, projection_best_effort=True
+                )
+            try:
+                self._finalize_run_wide_freeze()
+            except FrozenInputMutationError as mutation:
+                mutation = self._enrich_mutation_error(mutation)
+                if error is not None:
+                    mutation.add_note(f"terminal transition also reported: {error}")
+                error = mutation
+                status = "terminated"
+            except BaseException as watcher_error:
+                if error is None:
+                    error = watcher_error
+                    status = "failed"
+                else:
+                    error.add_note(
+                        f"run-wide watcher finalization also failed: {watcher_error}"
+                    )
+            if self._authoritative_state_status != "terminal_committed":
+                # Every listener has been synchronously drained, but every
+                # file-object and ancestor guard remains held. This CAS is the
+                # durable A-F freeze boundary. A crash after it fails closed:
+                # only a proven mutation retains its terminated outcome;
+                # every other unfinished publication recovers as failed.
+                self._terminal_target_status = (
+                    "terminated"
+                    if isinstance(error, FrozenInputMutationError)
+                    else "failed"
+                )
+                self._persist_authoritative_state(
+                    "terminal_committed", error, projection_best_effort=True
+                )
+            close_errors = self._close_run_wide_freeze()
+            if close_errors:
+                if isinstance(error, FrozenInputMutationError):
+                    for close_error in close_errors:
+                        error.add_note(
+                            f"run-wide guard release also failed: {close_error}"
+                        )
+                else:
+                    close_failure = RuntimeStateError(
+                        "run-wide frozen-input guard release failed"
+                    )
+                    if error is not None:
+                        close_failure.add_note(f"workflow also reported: {error}")
+                    for close_error in close_errors:
+                        close_failure.add_note(str(close_error))
+                    error = close_failure
+                    status = "failed"
+            # SQLite is authoritative; RUN_STATE.json is a repairable projection.
+            # Projection failure must not strand an externally visible provisional
+            # terminal state or skip listener finalization.
+            committed_target = self._terminal_target_status
+            self._terminal_target_status = None
+            try:
+                self._persist_authoritative_state(
+                    status, error, projection_best_effort=True
+                )
+            except BaseException:
+                self._terminal_target_status = committed_target
+                raise
+        else:
+            self._persist_authoritative_state(status, error)
         if (
             status not in {"completed", "terminated", "failed"}
             and self._project_lease_acquired
@@ -4642,7 +7563,13 @@ class RuntimeCoordinator:
         ):
             self._agent_registry.heartbeat_project_lease(self.run_id)
         if status in {"completed", "terminated", "failed"}:
-            self._release_project_lease()
+            self._terminal_state_persisted = status in {"completed", "terminated"}
+            try:
+                self._release_project_lease()
+            except BaseException:
+                # The workflow terminal CAS is authoritative. Lease cleanup is
+                # operational and must never rewrite or downgrade that outcome.
+                pass
 
     def _build_state_payload(
         self,
@@ -4659,6 +7586,7 @@ class RuntimeCoordinator:
             "run_id": self.run_id,
             "reservation_token": token,
             "status": status,
+            "terminal_target_status": self._terminal_target_status,
             "project_root": str(self.project_root),
             "runtime_root": str(self.runtime_root),
             "artifact_path": str(self.artifact_path),
@@ -4702,6 +7630,11 @@ class RuntimeCoordinator:
                 if self._planning_reuse is not None
                 else None
             ),
+            "authority_evidence": (
+                dict(self._authority_evidence)
+                if self._authority_evidence is not None
+                else None
+            ),
             "execution_agents": {
                 role: dict(value) for role, value in self._execution_agents.items()
             },
@@ -4726,6 +7659,9 @@ class RuntimeCoordinator:
                 if self._registration_intent is not None
                 else None
             ),
+            "tracerelay_runtime": json.loads(
+                json.dumps(self._tracerelay_runtime)
+            ),
             "codex_cli_path": self._codex_cli_path,
             "codex_cli_version": self._codex_cli_version,
             "created_at_utc": self._created_at_utc,
@@ -4743,11 +7679,30 @@ class RuntimeCoordinator:
             )
             if error.mutation_event is not None:
                 payload["mutation_event"] = dict(error.mutation_event)
+        elif isinstance(error, FreezeContinuityLostError):
+            payload.update(
+                workflow_state="TERMINATED",
+                engineering_verdict="UNDETERMINED",
+                delivery_eligible=False,
+                master_review_status="NOT_REQUIRED",
+                termination_reason_code="FREEZE_CONTINUITY_LOST",
+                responsible_node=self._current_node,
+            )
         if self._seal is not None:
             payload.update(
                 project_id_hex=self._seal.project_id.hex(),
                 seal_sequence=self._seal.sequence,
                 expected_seal=self._seal.expected_seal,
+            )
+        elif (
+            self._restored_project_id_hex is not None
+            and self._restored_seal_sequence is not None
+            and self._restored_expected_seal is not None
+        ):
+            payload.update(
+                project_id_hex=self._restored_project_id_hex,
+                seal_sequence=self._restored_seal_sequence,
+                expected_seal=self._restored_expected_seal,
             )
         if error is not None:
             payload["error"] = {"type": type(error).__name__, "message": str(error)}
@@ -4810,9 +7765,11 @@ def load_run_state(runtime_root: str | Path, run_id: str) -> dict[str, object]:
         "aegis.run_state.v7",
         "aegis.run_state.v8",
         "aegis.run_state.v9",
+        "aegis.run_state.v10",
+        "aegis.run_state.v11",
     }:
         raise RuntimeStateError(
-            "run state predates the v10 authoritative-state contract; "
+            "run state predates the v12 final-review evidence contract; "
             "start a new run"
         )
     if payload.get("schema") != RUN_STATE_SCHEMA:
@@ -5176,7 +8133,9 @@ def _update_run_reservation_state(
     *,
     status: str,
     encoded_state: bytes,
-) -> None:
+    expected_state_sha256: str | None,
+    expected_state_status: str | None,
+) -> str:
     database_path = runtime_root / CHECKPOINT_RELATIVE_PATH
     connection = sqlite3.connect(database_path, timeout=30, isolation_level=None)
     transaction_started = False
@@ -5186,7 +8145,7 @@ def _update_run_reservation_state(
         _ensure_reservation_table(connection)
         row = connection.execute(
             f"""
-            SELECT reservation_token, artifact_path
+            SELECT reservation_token, artifact_path, state_sha256, state_status
             FROM {RESERVATION_TABLE}
             WHERE run_id = ?
             """,
@@ -5196,22 +8155,50 @@ def _update_run_reservation_state(
             raise RuntimeStateError("run reservation does not exist")
         if row[0] != reservation_token or Path(str(row[1])).resolve() != artifact_path:
             raise RuntimeStateError("run reservation identity changed")
-        connection.execute(
+        if row[2] != expected_state_sha256 or row[3] != expected_state_status:
+            raise RuntimeStateError(
+                "authoritative run state changed concurrently; refusing overwrite"
+            )
+        if row[3] in {"completed", "terminated"}:
+            raise RuntimeStateError("authoritative terminal run state is immutable")
+        if row[3] == "terminal_finalizing" and status not in {
+            "terminal_committed",
+            "completed",
+            "terminated",
+            "failed",
+        }:
+            raise RuntimeStateError("terminal finalization cannot return to running")
+        if row[3] == "terminal_committed" and status not in {
+            "terminal_committed",
+            "completed",
+            "terminated",
+            "failed",
+        }:
+            raise RuntimeStateError("committed terminal boundary is immutable")
+        new_sha256 = hashlib.sha256(encoded_state).hexdigest()
+        cursor = connection.execute(
             f"""
             UPDATE {RESERVATION_TABLE}
             SET state_sha256 = ?, state_status = ?, state_updated_at_utc = ?,
                 state_blob = ?
             WHERE run_id = ? AND reservation_token = ?
+              AND state_sha256 IS ? AND state_status IS ?
             """,
             (
-                hashlib.sha256(encoded_state).hexdigest(),
+                new_sha256,
                 status,
                 _utc_now_text(),
                 encoded_state,
                 run_id,
                 reservation_token,
+                expected_state_sha256,
+                expected_state_status,
             ),
         )
+        if cursor.rowcount != 1:
+            raise RuntimeStateError(
+                "authoritative run state CAS failed; refusing overwrite"
+            )
         try:
             state = json.loads(encoded_state.decode("utf-8", errors="strict"))
         except (UnicodeError, json.JSONDecodeError) as error:
@@ -5224,9 +8211,10 @@ def _update_run_reservation_state(
         ):
             if state.get("master_review_status") == "REQUIRES_USER_REASON":
                 marker = {
-                    "schema": "aegis.project_accountability_marker.v1",
+                    "schema": "aegis.project_accountability_marker.v2",
                     "project_id_hex": project_id_hex,
                     "run_id": run_id,
+                    "status": "REQUIRES_USER_REASON",
                     "termination_reason_code": state.get("termination_reason_code"),
                     "mutation_event": state.get("mutation_event"),
                 }
@@ -5248,12 +8236,33 @@ def _update_run_reservation_state(
                     ),
                 )
             elif state.get("master_review_status") == "USER_REASON_RECORDED":
+                marker = {
+                    "schema": "aegis.project_accountability_marker.v2",
+                    "project_id_hex": project_id_hex,
+                    "run_id": run_id,
+                    "status": "USER_REASON_RECORDED",
+                    "mutation_reason_record": state.get("mutation_reason_record"),
+                }
                 connection.execute(
-                    f"DELETE FROM {ACCOUNTABILITY_TABLE} WHERE project_id_hex = ? AND run_id = ?",
-                    (project_id_hex, run_id),
+                    f"""
+                    INSERT INTO {ACCOUNTABILITY_TABLE}(
+                        project_id_hex, run_id, marker_json, updated_at_utc
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(project_id_hex) DO UPDATE SET
+                        run_id = excluded.run_id,
+                        marker_json = excluded.marker_json,
+                        updated_at_utc = excluded.updated_at_utc
+                    """,
+                    (
+                        project_id_hex,
+                        run_id,
+                        json.dumps(marker, ensure_ascii=False, sort_keys=True),
+                        _utc_now_text(),
+                    ),
                 )
         connection.execute("COMMIT")
         transaction_started = False
+        return new_sha256
     except RuntimeStateError:
         if transaction_started:
             connection.execute("ROLLBACK")
@@ -5319,7 +8328,286 @@ def _load_authoritative_run_state(
         raise RuntimeStateError("authoritative run state is invalid JSON") from error
     if not isinstance(payload, dict):
         raise RuntimeStateError("authoritative run state is not an object")
+    if payload.get("master_review_status") in {"CONFIRMED", "DISPUTED"}:
+        artifact_raw = payload.get("artifact_path")
+        if not isinstance(artifact_raw, str):
+            raise RuntimeStateError(
+                "confirmed run has no authoritative artifact path"
+            )
+        _validate_final_confirmation_accountability(
+            payload,
+            run_id=run_id,
+            artifact_path=Path(artifact_raw).resolve(),
+        )
     return payload, encoded
+
+
+def _validate_final_confirmation_accountability(
+    state: Mapping[str, object],
+    *,
+    run_id: str,
+    artifact_path: Path,
+) -> list[dict[str, object]]:
+    confirmation_path = (
+        artifact_path / "MASTER_FINAL_REVIEW_CONFIRMATION.json"
+    ).resolve()
+    confirmation_descriptor = _validate_accountability_descriptor(
+        state.get("master_review_confirmation"),
+        expected_path=confirmation_path,
+        artifact_path=artifact_path,
+        label=f"run {run_id} Master final-review confirmation",
+    )
+    try:
+        confirmation_bytes, _identity = read_regular_file(
+            confirmation_path,
+            allowed_root=artifact_path,
+            label=f"run {run_id} Master final-review confirmation",
+            max_bytes=16 * 1024 * 1024,
+        )
+    except PathSecurityError as error:
+        raise RuntimeStateError(
+            f"run reservation {run_id} Master confirmation changed while audited"
+        ) from error
+    if (
+        confirmation_descriptor["size"] != len(confirmation_bytes)
+        or confirmation_descriptor["sha256"]
+        != hashlib.sha256(confirmation_bytes).hexdigest()
+    ):
+        raise RuntimeStateError(
+            f"run reservation {run_id} Master confirmation changed while audited"
+        )
+    try:
+        payload = json.loads(confirmation_bytes.decode("utf-8", errors="strict"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeStateError(
+            f"run reservation {run_id} Master confirmation is invalid JSON"
+        ) from error
+    decision = state.get("master_review_status")
+    if (
+        not isinstance(payload, dict)
+        or set(payload)
+        != {
+            "schema",
+            "run_id",
+            "decision",
+            "reviewed_run_state_sha256",
+            "final_review",
+            "master_review",
+            "evidence_index",
+        }
+        or payload.get("schema")
+        != "aegis.master_final_review_confirmation.v1"
+        or payload.get("run_id") != run_id
+        or payload.get("decision") != decision
+        or not isinstance(payload.get("reviewed_run_state_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", payload["reviewed_run_state_sha256"])
+        is None
+    ):
+        raise RuntimeStateError(
+            f"run reservation {run_id} Master confirmation fields are invalid"
+        )
+    final_review = _validate_accountability_descriptor(
+        payload.get("final_review"),
+        expected_path=(artifact_path / "FINAL_REVIEW.md").resolve(),
+        artifact_path=artifact_path,
+        label=f"run {run_id} F final review",
+    )
+    master_review = _validate_accountability_descriptor(
+        payload.get("master_review"),
+        expected_path=(artifact_path / "MASTER_FINAL_REVIEW.md").resolve(),
+        artifact_path=artifact_path,
+        label=f"run {run_id} Master review",
+    )
+    evidence = payload.get("evidence_index")
+    if not isinstance(evidence, list) or not evidence:
+        raise RuntimeStateError(
+            f"run reservation {run_id} Master confirmation evidence is empty"
+        )
+    descriptors = [confirmation_descriptor, final_review, master_review]
+    normalized_evidence: list[dict[str, object]] = []
+    for index, value in enumerate(evidence):
+        if not isinstance(value, Mapping) or set(value) != {
+            "path",
+            "size",
+            "sha256",
+        }:
+            raise RuntimeStateError(
+                f"run reservation {run_id} Master confirmation evidence is invalid"
+            )
+        evidence_path = Path(str(value.get("path"))).resolve()
+        normalized_evidence.append(
+            _validate_accountability_descriptor(
+                value,
+                expected_path=evidence_path,
+                artifact_path=artifact_path,
+                label=f"run {run_id} Master confirmation evidence {index}",
+            )
+        )
+    if not any(
+        descriptor["path"] == final_review["path"]
+        and descriptor["size"] == final_review["size"]
+        and descriptor["sha256"] == final_review["sha256"]
+        for descriptor in normalized_evidence
+    ):
+        raise RuntimeStateError(
+            f"run reservation {run_id} Master confirmation omits F final review"
+        )
+    descriptors.extend(normalized_evidence)
+    unique: dict[str, dict[str, object]] = {}
+    for descriptor in descriptors:
+        unique[str(descriptor["path"]).casefold()] = descriptor
+    return list(unique.values())
+
+
+def _validate_accountability_descriptor(
+    value: object,
+    *,
+    expected_path: Path,
+    artifact_path: Path,
+    label: str,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "path",
+        "size",
+        "sha256",
+    }:
+        raise RuntimeStateError(f"{label} descriptor is invalid")
+    if Path(str(value.get("path"))).resolve() != expected_path:
+        raise RuntimeStateError(f"{label} path changed")
+    try:
+        content, _identity = read_regular_file(
+            expected_path,
+            allowed_root=artifact_path,
+            label=label,
+            max_bytes=16 * 1024 * 1024,
+        )
+    except PathSecurityError as error:
+        raise RuntimeStateError(f"{label} is invalid: {error}") from error
+    if (
+        value.get("size") != len(content)
+        or value.get("sha256") != hashlib.sha256(content).hexdigest()
+    ):
+        raise RuntimeStateError(f"{label} descriptor mismatch")
+    return {
+        "path": str(expected_path),
+        "size": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "source": label,
+        "allowed_root": str(artifact_path),
+    }
+
+
+def _validate_recorded_mutation_accountability(
+    state: Mapping[str, object],
+    *,
+    run_id: str,
+    artifact_path: Path,
+) -> list[dict[str, object]]:
+    record_descriptor = state.get("mutation_reason_record")
+    if not isinstance(record_descriptor, Mapping) or set(record_descriptor) != {
+        "path",
+        "size",
+        "sha256",
+    }:
+        raise RuntimeStateError(
+            f"run reservation {run_id} has no sealed mutation-reason record"
+        )
+    record_path = (artifact_path / "FROZEN_INPUT_MUTATION_REASON.json").resolve()
+    if Path(str(record_descriptor.get("path"))).resolve() != record_path:
+        raise RuntimeStateError(
+            f"run reservation {run_id} mutation-reason record path changed"
+        )
+    try:
+        record_bytes, _identity = read_regular_file(
+            record_path,
+            allowed_root=artifact_path,
+            label=f"run {run_id} mutation-reason record",
+            max_bytes=1024 * 1024,
+        )
+    except PathSecurityError as error:
+        raise RuntimeStateError(
+            f"run reservation {run_id} mutation-reason record is invalid: {error}"
+        ) from error
+    if (
+        record_descriptor.get("size") != len(record_bytes)
+        or record_descriptor.get("sha256")
+        != hashlib.sha256(record_bytes).hexdigest()
+    ):
+        raise RuntimeStateError(
+            f"run reservation {run_id} mutation-reason record descriptor mismatch"
+        )
+    try:
+        payload = json.loads(record_bytes.decode("utf-8", errors="strict"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeStateError(
+            f"run reservation {run_id} mutation-reason record is invalid JSON"
+        ) from error
+    if (
+        not isinstance(payload, dict)
+        or set(payload)
+        != {
+            "schema",
+            "run_id",
+            "user_confirmation_id",
+            "reason",
+            "recorded_at_utc",
+        }
+        or payload.get("schema") != "aegis.frozen_input_mutation_reason.v1"
+        or payload.get("run_id") != run_id
+        or not isinstance(payload.get("user_confirmation_id"), str)
+        or not str(payload["user_confirmation_id"]).strip()
+        or not isinstance(payload.get("recorded_at_utc"), str)
+        or not str(payload["recorded_at_utc"]).strip()
+    ):
+        raise RuntimeStateError(
+            f"run reservation {run_id} mutation-reason record fields are invalid"
+        )
+    reason_descriptor = payload.get("reason")
+    if not isinstance(reason_descriptor, dict) or set(reason_descriptor) != {
+        "path",
+        "size",
+        "sha256",
+    }:
+        raise RuntimeStateError(
+            f"run reservation {run_id} mutation reason descriptor is invalid"
+        )
+    reason_path = (artifact_path / "FROZEN_INPUT_MUTATION_REASON.md").resolve()
+    if Path(str(reason_descriptor.get("path"))).resolve() != reason_path:
+        raise RuntimeStateError(
+            f"run reservation {run_id} mutation reason path changed"
+        )
+    try:
+        reason_bytes, _identity = read_regular_file(
+            reason_path,
+            allowed_root=artifact_path,
+            label=f"run {run_id} mutation reason",
+            max_bytes=1024 * 1024,
+        )
+    except PathSecurityError as error:
+        raise RuntimeStateError(
+            f"run reservation {run_id} mutation reason is invalid: {error}"
+        ) from error
+    if (
+        not reason_bytes.strip()
+        or reason_descriptor.get("size") != len(reason_bytes)
+        or reason_descriptor.get("sha256")
+        != hashlib.sha256(reason_bytes).hexdigest()
+    ):
+        raise RuntimeStateError(
+            f"run reservation {run_id} mutation reason descriptor mismatch"
+        )
+    return [
+        {
+            **dict(record_descriptor),
+            "source": f"run {run_id} mutation-reason record",
+            "allowed_root": str(artifact_path),
+        },
+        {
+            **reason_descriptor,
+            "source": f"run {run_id} mutation reason",
+            "allowed_root": str(artifact_path),
+        },
+    ]
 
 
 def _audit_run_reservation_catalog(
@@ -5328,7 +8616,7 @@ def _audit_run_reservation_catalog(
     project_id_hex: str,
     project_root: Path,
     runtime_authority_id: str,
-) -> list[str]:
+) -> tuple[list[str], list[dict[str, object]]]:
     database_path = runtime_root / CHECKPOINT_RELATIVE_PATH
     if not database_path.exists():
         raise RuntimeStateError(
@@ -5357,6 +8645,8 @@ def _audit_run_reservation_catalog(
                 (project_id_hex,),
             ).fetchone()
             unresolved: set[str] = set()
+            accountability_descriptors: dict[str, dict[str, object]] = {}
+            project_states: dict[str, dict[str, object]] = {}
             for row in rows:
                 run_id, token, artifact_path, digest, stored_status, raw_blob = row
                 if not isinstance(run_id, str) or RUN_ID_PATTERN.fullmatch(run_id) is None:
@@ -5397,8 +8687,29 @@ def _audit_run_reservation_catalog(
                     same_project = isinstance(stored_root, str) and (
                         Path(stored_root).resolve() == project_root
                     )
-                if same_project and state.get("master_review_status") == "REQUIRES_USER_REASON":
-                    unresolved.add(run_id)
+                if same_project:
+                    project_states[run_id] = state
+                    review_status = state.get("master_review_status")
+                    if review_status == "REQUIRES_USER_REASON":
+                        unresolved.add(run_id)
+                    elif review_status == "USER_REASON_RECORDED":
+                        for descriptor in _validate_recorded_mutation_accountability(
+                            state,
+                            run_id=run_id,
+                            artifact_path=Path(artifact_path).resolve(),
+                        ):
+                            accountability_descriptors[
+                                str(descriptor["path"]).casefold()
+                            ] = descriptor
+                    elif review_status in {"CONFIRMED", "DISPUTED"}:
+                        for descriptor in _validate_final_confirmation_accountability(
+                            state,
+                            run_id=run_id,
+                            artifact_path=Path(artifact_path).resolve(),
+                        ):
+                            accountability_descriptors[
+                                str(descriptor["path"]).casefold()
+                            ] = descriptor
             if marker is not None:
                 marker_run_id, marker_json = marker
                 try:
@@ -5411,9 +8722,45 @@ def _audit_run_reservation_catalog(
                     or marker_payload.get("run_id") != marker_run_id
                 ):
                     raise RuntimeStateError("project accountability marker identity mismatch")
-                unresolved.add(str(marker_run_id))
+                marker_schema = marker_payload.get("schema")
+                marker_status = marker_payload.get("status")
+                if marker_schema == "aegis.project_accountability_marker.v1":
+                    unresolved.add(str(marker_run_id))
+                elif (
+                    marker_schema == "aegis.project_accountability_marker.v2"
+                    and marker_status == "REQUIRES_USER_REASON"
+                ):
+                    state = project_states.get(str(marker_run_id))
+                    if (
+                        state is not None
+                        and state.get("master_review_status")
+                        != "REQUIRES_USER_REASON"
+                    ):
+                        raise RuntimeStateError(
+                            "project accountability marker status mismatch"
+                        )
+                    unresolved.add(str(marker_run_id))
+                elif (
+                    marker_schema == "aegis.project_accountability_marker.v2"
+                    and marker_status == "USER_REASON_RECORDED"
+                ):
+                    state = project_states.get(str(marker_run_id))
+                    if (
+                        state is None
+                        or state.get("master_review_status")
+                        != "USER_REASON_RECORDED"
+                        or marker_payload.get("mutation_reason_record")
+                        != state.get("mutation_reason_record")
+                    ):
+                        raise RuntimeStateError(
+                            "resolved project accountability marker is not bound to authoritative state"
+                        )
+                else:
+                    raise RuntimeStateError(
+                        "project accountability marker schema or status is invalid"
+                    )
             connection.execute("COMMIT")
-            return sorted(unresolved)
+            return sorted(unresolved), list(accountability_descriptors.values())
         except BaseException:
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
@@ -5434,6 +8781,55 @@ def _optional_string(value: object) -> str | None:
     if not isinstance(value, str) or not value:
         raise RuntimeStateError("run state node names must be strings or null")
     return value
+
+
+def _validate_tracerelay_runtime_record(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema",
+        "runtime_nonce",
+        "sdk_manifest_sha256",
+        "python_executable_sha256",
+        "launch_intent_persisted",
+        "observed_identity",
+    }:
+        raise RuntimeStateError("prior TraceRelay runtime record fields are invalid")
+    if value.get("schema") != "aegis.tracerelay_runtime.v1":
+        raise RuntimeStateError("prior TraceRelay runtime record schema is invalid")
+    if not isinstance(value.get("launch_intent_persisted"), bool):
+        raise RuntimeStateError(
+            "prior TraceRelay launch intent marker is invalid"
+        )
+    runtime_nonce = value.get("runtime_nonce")
+    if (
+        not isinstance(runtime_nonce, str)
+        or RESERVATION_TOKEN_PATTERN.fullmatch(runtime_nonce) is None
+    ):
+        raise RuntimeStateError("prior TraceRelay runtime nonce is invalid")
+    digests = (
+        value.get("sdk_manifest_sha256"),
+        value.get("python_executable_sha256"),
+    )
+    if any(item is None for item in digests) and not all(
+        item is None for item in digests
+    ):
+        raise RuntimeStateError("prior TraceRelay runtime expectation is incomplete")
+    if any(
+        item is not None
+        and (
+            not isinstance(item, str)
+            or re.fullmatch(r"[0-9a-f]{64}", item) is None
+        )
+        for item in digests
+    ):
+        raise RuntimeStateError("prior TraceRelay runtime digest is invalid")
+    observed = value.get("observed_identity")
+    if observed is not None and not isinstance(observed, Mapping):
+        raise RuntimeStateError("prior TraceRelay observed identity is invalid")
+    if observed is not None and value.get("launch_intent_persisted") is not True:
+        raise RuntimeStateError(
+            "prior TraceRelay identity has no persisted launch intent"
+        )
+    return json.loads(json.dumps(value))
 
 
 def _required_string(value: object, field_name: str) -> str:
@@ -5659,6 +9055,24 @@ def _validate_execution_attempts(
                 "prior execution attempt role does not match its node"
             )
         _require_sha256(attempt.get("input_sha256"), "input_sha256")
+        if node == "F":
+            manifest_path = attempt.get("final_review_input_manifest_path")
+            if not isinstance(manifest_path, str) or not manifest_path:
+                raise RuntimeStateError(
+                    "F attempt has no final-review input manifest path"
+                )
+            _require_sha256(
+                attempt.get("final_review_input_manifest_sha256"),
+                "final_review_input_manifest_sha256",
+            )
+            required_ids = attempt.get("final_review_required_evidence_ids")
+            if (
+                not isinstance(required_ids, list)
+                or not required_ids
+                or not all(isinstance(item, str) and item for item in required_ids)
+                or len(set(required_ids)) != len(required_ids)
+            ):
+                raise RuntimeStateError("F attempt has invalid required evidence IDs")
         status = attempt.get("status")
         if status == "running":
             if index != len(attempts):
@@ -5669,6 +9083,51 @@ def _validate_execution_attempts(
                 raise RuntimeStateError("running execution attempt already has output")
         elif status == "completed":
             _require_sha256(attempt.get("output_sha256"), "output_sha256")
+            if not isinstance(attempt.get("node_status"), bool):
+                raise RuntimeStateError(
+                    "completed execution attempt has no boolean node status"
+                )
+            outputs = attempt.get("output_artifacts")
+            required_outputs = EXECUTION_REQUIRED_OUTPUTS[str(node)]
+            if not isinstance(outputs, list) or len(outputs) != len(required_outputs):
+                raise RuntimeStateError(
+                    "completed execution attempt has invalid output artifacts"
+                )
+            output_ids: set[str] = set()
+            for output in outputs:
+                if not isinstance(output, Mapping):
+                    raise RuntimeStateError(
+                        "completed execution output checkpoint is invalid"
+                    )
+                artifact_id = output.get("artifact_id")
+                if (
+                    not isinstance(artifact_id, str)
+                    or artifact_id in output_ids
+                    or artifact_id not in required_outputs
+                ):
+                    raise RuntimeStateError(
+                        "completed execution output IDs are invalid"
+                    )
+                output_ids.add(artifact_id)
+                for path_field in ("source_path", "snapshot_path"):
+                    if not isinstance(output.get(path_field), str) or not output[path_field]:
+                        raise RuntimeStateError(
+                            "completed execution output path is invalid"
+                        )
+                size = output.get("size")
+                if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+                    raise RuntimeStateError(
+                        "completed execution output size is invalid"
+                    )
+                _require_sha256(output.get("sha256"), "output_artifact.sha256")
+                if not isinstance(output.get("source_retained"), bool):
+                    raise RuntimeStateError(
+                        "completed execution output retention marker is invalid"
+                    )
+            if output_ids != set(required_outputs):
+                raise RuntimeStateError(
+                    "completed execution output contract is incomplete"
+                )
             if node == "C":
                 if not isinstance(
                     attempt.get("test_execution_request_path"), str
@@ -5712,10 +9171,70 @@ def _validate_execution_attempts(
                     raise RuntimeStateError(
                         "completed C attempt has invalid bound test IDs"
                     )
+            if node == "E":
+                for field in ("test_report_path", "test_report_snapshot_path"):
+                    if not isinstance(attempt.get(field), str) or not attempt[field]:
+                        raise RuntimeStateError(
+                            "completed E attempt has no test report checkpoint path"
+                        )
+                report_size = attempt.get("test_report_size")
+                if (
+                    isinstance(report_size, bool)
+                    or not isinstance(report_size, int)
+                    or report_size <= 0
+                ):
+                    raise RuntimeStateError(
+                        "completed E attempt has invalid test report size"
+                    )
+                _require_sha256(
+                    attempt.get("test_report_sha256"), "test_report_sha256"
+                )
         else:
             raise RuntimeStateError("prior execution attempt has an invalid status")
+        if index > 1:
+            prior_output_sha256 = attempts[index - 2].get("output_sha256")
+            if attempt.get("input_sha256") != prior_output_sha256:
+                raise RuntimeStateError(
+                    "prior execution attempt state chain is discontinuous"
+                )
         if index > 1 and attempts[index - 2].get("node") == node:
             raise RuntimeStateError("prior execution attempts repeat a graph node")
+
+
+def _allowed_next_execution_nodes(
+    attempts: Sequence[Mapping[str, object]],
+) -> frozenset[str]:
+    if not attempts:
+        return frozenset({"C"})
+    latest = attempts[-1]
+    if latest.get("status") != "completed":
+        return frozenset()
+    node = latest.get("node")
+    node_status = latest.get("node_status")
+    if node == "C":
+        return frozenset({"D"}) if node_status is True else frozenset()
+    if node == "D":
+        return frozenset({"E"}) if node_status is True else frozenset({"C"})
+    if node == "E":
+        return frozenset({"F"}) if node_status is True else frozenset()
+    return frozenset()
+
+
+def _validate_execution_path(
+    attempts: Sequence[Mapping[str, object]],
+) -> None:
+    prefix: list[Mapping[str, object]] = []
+    for attempt in attempts:
+        allowed = _allowed_next_execution_nodes(prefix)
+        if attempt.get("node") not in allowed:
+            raise RuntimeStateError(
+                "prior execution attempts violate the Coordinator-owned C-F route"
+            )
+        prefix.append(attempt)
+        if attempt.get("status") != "completed" and attempt is not attempts[-1]:
+            raise RuntimeStateError(
+                "only the latest execution attempt may remain incomplete"
+            )
 
 
 def _validate_execution_turns(turns: Sequence[Mapping[str, object]]) -> None:
@@ -6096,6 +9615,17 @@ def _validate_planning_rounds(rounds: Sequence[Mapping[str, object]]) -> None:
                     raise RuntimeStateError(
                         f"prior planning round has an invalid {field}"
                     )
+        if status == "approved":
+            for field in ("approved_plan_size", "handoff_size"):
+                value = record.get(field)
+                if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                    raise RuntimeStateError(
+                        f"prior planning round has an invalid {field}"
+                    )
+            _require_sha256(
+                record.get("approved_plan_sha256"), "approved_plan_sha256"
+            )
+            _require_sha256(record.get("handoff_sha256"), "handoff_sha256")
         if index < len(rounds) and status != "rejected":
             raise RuntimeStateError(
                 "only a rejected planning round may have a successor"
@@ -6447,6 +9977,20 @@ def _canonical_json_bytes(payload: Mapping[str, object]) -> bytes:
             separators=(",", ":"),
         )
         + "\n"
+    ).encode("utf-8")
+
+
+def _json_copy(value: object) -> object:
+    return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
+
+
+def _canonical_instruction_receipt_bytes(payload: Mapping[str, object]) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode("utf-8")
 
 

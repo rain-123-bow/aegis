@@ -53,6 +53,7 @@ class RemoteSealWitnessTests(unittest.TestCase):
             git_head_before_record="b" * 40,
             scope_policy_version=2,
             scope_policy_sha256="33" * 32,
+            scope_decision_sha256="66" * 32,
             resolved_manifest_sha256="44" * 32,
             runtime_authority_id="55" * 16,
         )
@@ -86,12 +87,13 @@ class RemoteSealWitnessTests(unittest.TestCase):
 
     def witness(self, seal: StoredProjectSeal, head: str) -> dict[str, object]:
         return {
-            "schema": "aegis.remote_seal_witness.v2",
+            "schema": "aegis.remote_seal_witness.v3",
             "project_id_hex": seal.project_id.hex(),
             "seal_chain_id_hex": seal.seal_chain_id.hex(),
             "sequence": seal.sequence,
             "expected_seal": seal.expected_seal,
             "scope_policy_sha256": seal.scope_policy_sha256,
+            "scope_decision_sha256": seal.scope_decision_sha256,
             "resolved_manifest_sha256": seal.resolved_manifest_sha256,
             "git_commit": head,
             "runtime_authority_id": seal.runtime_authority_id,

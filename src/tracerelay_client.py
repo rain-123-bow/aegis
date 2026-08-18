@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import socket
 import subprocess
 import sys
@@ -14,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 
 CONTROL_HOST = "127.0.0.1"
@@ -34,9 +34,17 @@ PROXY_ENVIRONMENT_NAMES = (
 )
 BYPASS_PROXY_ENVIRONMENT_NAMES = ("NO_PROXY", "no_proxy")
 REGISTRATION_OPERATION_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
+RUNTIME_NONCE_PATTERN = re.compile(r"[0-9a-f]{32}")
+SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+RUNTIME_IDENTITY_SCHEMA = "tracerelay.runtime_identity.v1"
+CONTROL_PROTOCOL_VERSION = 2
 
 
 class TraceRelayError(RuntimeError):
+    pass
+
+
+class TraceRelayUnavailableError(TraceRelayError):
     pass
 
 
@@ -210,25 +218,26 @@ def parse_loopback_proxy_port(proxy_url: str) -> int:
     return port
 
 
-def resolve_tracerelay_command(explicit: str | Path | None = None) -> str:
-    if explicit is not None:
-        candidate = Path(explicit).expanduser().resolve()
+def resolve_tracerelay_command(
+    explicit_python: str | Path | None = None,
+) -> tuple[str, ...]:
+    active_python = Path(sys.executable).resolve(strict=True)
+    if explicit_python is not None:
+        candidate = Path(explicit_python).expanduser().resolve()
         if not candidate.is_file():
-            raise TraceRelayError(f"TraceRelay command is missing: {candidate}")
-        return str(candidate)
-    discovered = shutil.which("tracerelay.exe") or shutil.which("tracerelay")
-    if discovered is None:
-        raise TraceRelayError(
-            "tracerelay.exe is not installed or is not available on PATH"
-        )
-    return discovered
+            raise TraceRelayError(f"TraceRelay Python is missing: {candidate}")
+        if candidate != active_python:
+            raise TraceRelayError(
+                "TraceRelay must use the same Python executable as Aegis"
+            )
+    return (str(active_python), "-I", "-B", "-m", "tracerelay")
 
 
 class TraceRelayClient:
     def __init__(
         self,
         *,
-        command: str | Path,
+        command: str | Path | Sequence[str],
         cli_runner: CliRunner | None = None,
         status_requester: StatusRequester | None = None,
         popen_factory: PopenFactory | None = None,
@@ -238,7 +247,13 @@ class TraceRelayClient:
         monitor_interval_seconds: float = 1.0,
         verification_timeout_seconds: float = VERIFY_TIMEOUT_SECONDS,
     ) -> None:
-        self.command = str(command)
+        if isinstance(command, (str, Path)):
+            command_prefix = (str(command),)
+        else:
+            command_prefix = tuple(str(part) for part in command)
+        if not command_prefix or any(not part for part in command_prefix):
+            raise ValueError("TraceRelay command prefix must not be empty")
+        self.command = command_prefix
         self._cli_runner = cli_runner or _run_cli
         self._status_requester = status_requester or _request_status
         self._popen_factory = popen_factory or subprocess.Popen
@@ -261,16 +276,79 @@ class TraceRelayClient:
         self.verification_timeout_seconds = verification_timeout_seconds
         self._service_pid: int | None = None
         self._supervisor_pid: int | None = None
+        self._runtime_expectation: dict[str, str] | None = None
+        self._expected_observed_identity: dict[str, object] | None = None
+        self._runtime_identity: dict[str, object] | None = None
+        self._require_existing_runtime = False
         self._alarm_baseline: set[str] = set()
         self.last_registration: TraceRelayRegistration | None = None
         self.last_verification: dict[str, object] | None = None
 
+    def bind_runtime_expectation(
+        self,
+        *,
+        runtime_nonce: str,
+        sdk_manifest_sha256: str,
+        python_executable_sha256: str,
+        observed_identity: Mapping[str, object] | None = None,
+        require_existing_runtime: bool = False,
+    ) -> None:
+        if RUNTIME_NONCE_PATTERN.fullmatch(runtime_nonce) is None:
+            raise ValueError("TraceRelay runtime nonce is invalid")
+        for name, value in (
+            ("SDK manifest SHA-256", sdk_manifest_sha256),
+            ("Python executable SHA-256", python_executable_sha256),
+        ):
+            if SHA256_PATTERN.fullmatch(value) is None:
+                raise ValueError(f"TraceRelay {name} is invalid")
+        expectation = {
+            "runtime_nonce": runtime_nonce,
+            "sdk_manifest_sha256": sdk_manifest_sha256,
+            "python_executable_sha256": python_executable_sha256,
+        }
+        if self._runtime_expectation is not None and self._runtime_expectation != expectation:
+            raise TraceRelayError("TraceRelay runtime expectation cannot change")
+        if observed_identity is not None:
+            expected_observed = _validate_runtime_identity_shape(
+                observed_identity,
+                expectation,
+            )
+        else:
+            expected_observed = None
+        if (
+            self._expected_observed_identity is not None
+            and self._expected_observed_identity != expected_observed
+        ):
+            raise TraceRelayError("TraceRelay observed runtime identity cannot change")
+        if self._runtime_identity is not None and self._runtime_identity != expected_observed:
+            raise TraceRelayError("TraceRelay is already pinned to another runtime")
+        if not isinstance(require_existing_runtime, bool):
+            raise ValueError("TraceRelay existing-runtime requirement must be boolean")
+        if self._require_existing_runtime and not require_existing_runtime:
+            raise TraceRelayError("TraceRelay existing-runtime requirement cannot be relaxed")
+        self._runtime_expectation = expectation
+        self._expected_observed_identity = expected_observed
+        self._require_existing_runtime = require_existing_runtime
+
+    @property
+    def runtime_identity(self) -> dict[str, object] | None:
+        return (
+            json.loads(json.dumps(self._runtime_identity))
+            if self._runtime_identity is not None
+            else None
+        )
+
     def start(self) -> dict[str, object]:
+        return self.establish_runtime(require_idle=True)
+
+    def establish_runtime(self, *, require_idle: bool) -> dict[str, object]:
+        if not isinstance(require_idle, bool):
+            raise ValueError("TraceRelay idle requirement must be boolean")
         self._alarm_baseline = self._alarm_names()
-        payload = self._invoke(["start"])
+        payload = self._start_runtime_payload()
         self._validate_identity(payload, "start", pin_pids=True)
         self._assert_no_new_alarms()
-        if payload["state"] != "IDLE":
+        if require_idle and payload["state"] != "IDLE":
             raise TraceRelayError(
                 "TraceRelay is already occupied by another session: "
                 f"state={payload['state']}"
@@ -298,7 +376,7 @@ class TraceRelayClient:
         ):
             raise ValueError("process_creation_time_100ns must be a positive integer")
         self._alarm_baseline = self._alarm_names()
-        payload = self._invoke(["start"])
+        payload = self._start_runtime_payload()
         self._validate_identity(payload, "start", pin_pids=True)
         self._assert_no_new_alarms()
         self._require_registration_status(payload, registration)
@@ -364,7 +442,7 @@ class TraceRelayClient:
                 raise TraceRelayError(
                     f"TraceRelay cannot recover registration from state={state}"
                 )
-        except (OSError, TimeoutError, TraceRelayError):
+        except (OSError, TimeoutError, TraceRelayUnavailableError):
             verification = self._verify_resolved_registration(registration)
         self.last_registration = registration
         self.last_verification = dict(verification)
@@ -427,6 +505,7 @@ class TraceRelayClient:
         managed_command = _windows_job_command(
             command,
             process_time_limit_seconds=timeout_seconds,
+            job_identity=uuid4().hex,
         )
 
         try:
@@ -535,7 +614,8 @@ class TraceRelayClient:
         options.setdefault("encoding", "utf-8")
         options.setdefault("errors", "strict")
         options["env"] = environment
-        managed_command = _windows_job_command(command)
+        job_identity = registration.operation_id or uuid4().hex
+        managed_command = _windows_job_command(command, job_identity=job_identity)
         try:
             process = self._popen_factory(managed_command, **options)
         except BaseException as error:
@@ -698,7 +778,7 @@ class TraceRelayClient:
         if command in {"start", "status"}:
             required.update(
                 product="TraceRelay",
-                protocol_version=1,
+                protocol_version=CONTROL_PROTOCOL_VERSION,
                 mode="managed",
             )
         if any(payload.get(field) != value for field, value in required.items()):
@@ -711,14 +791,103 @@ class TraceRelayClient:
             )
         service_pid = _positive_integer(payload, "service_pid")
         supervisor_pid = _positive_integer(payload, "supervisor_pid")
+        if self._runtime_expectation is None:
+            raise TraceRelayError("TraceRelay runtime expectation is not bound")
+        runtime_identity = _validate_runtime_identity_shape(
+            payload.get("runtime_identity"),
+            self._runtime_expectation,
+        )
+        processes = runtime_identity["processes"]
+        assert isinstance(processes, dict)
+        service_identity = processes["service"]
+        supervisor_identity = processes["supervisor"]
+        assert isinstance(service_identity, dict)
+        assert isinstance(supervisor_identity, dict)
+        if (
+            service_identity.get("pid") != service_pid
+            or supervisor_identity.get("pid") != supervisor_pid
+        ):
+            raise TraceRelayError("TraceRelay response PID differs from runtime identity")
+        for process_identity in (service_identity, supervisor_identity):
+            process_pid = int(process_identity["pid"])
+            executable = process_identity.get("python_executable")
+            if (
+                not isinstance(executable, str)
+                or Path(executable).resolve() != Path(self.command[0]).resolve()
+            ):
+                raise TraceRelayError(
+                    "TraceRelay process used a different Python executable"
+                )
+            try:
+                actual_creation_time = self._process_creation_time_reader(process_pid)
+            except (OSError, RuntimeError) as error:
+                raise TraceRelayError(
+                    "TraceRelay process creation time is unavailable"
+                ) from error
+            if process_identity.get("creation_time_100ns") != actual_creation_time:
+                raise TraceRelayError(
+                    "TraceRelay process creation time differs from runtime identity"
+                )
+        if (
+            self._expected_observed_identity is not None
+            and runtime_identity != self._expected_observed_identity
+        ):
+            raise TraceRelayError("TraceRelay recovered a different runtime process")
         if pin_pids:
+            if self._runtime_identity is not None and self._runtime_identity != runtime_identity:
+                raise TraceRelayError("TraceRelay process identity changed")
             self._service_pid = service_pid
             self._supervisor_pid = supervisor_pid
+            self._runtime_identity = runtime_identity
         elif (service_pid, supervisor_pid) != (
             self._service_pid,
             self._supervisor_pid,
         ):
             raise TraceRelayError("TraceRelay process identity changed")
+        elif self._runtime_identity != runtime_identity:
+            raise TraceRelayError("TraceRelay runtime identity changed")
+
+    def _start_arguments(self) -> list[str]:
+        if self._runtime_expectation is None:
+            raise TraceRelayError("TraceRelay runtime expectation is not bound")
+        return [
+            "start",
+            "--runtime-nonce",
+            self._runtime_expectation["runtime_nonce"],
+            "--expected-sdk-manifest-sha256",
+            self._runtime_expectation["sdk_manifest_sha256"],
+            "--expected-python-sha256",
+            self._runtime_expectation["python_executable_sha256"],
+        ]
+
+    def _start_runtime_payload(self) -> dict[str, object]:
+        if (
+            self._require_existing_runtime
+            and self._expected_observed_identity is None
+        ):
+            raise TraceRelayError(
+                "recovery has no persisted observed identity; a replacement "
+                "TraceRelay runtime cannot be distinguished from the original"
+            )
+        if (
+            self._expected_observed_identity is None
+            and self._runtime_identity is None
+            and not self._require_existing_runtime
+        ):
+            return self._invoke(self._start_arguments())
+        try:
+            status = self._status_requester()
+        except (OSError, TimeoutError, TraceRelayError) as error:
+            raise TraceRelayError(
+                "the persisted TraceRelay runtime is unavailable during recovery"
+            ) from error
+        payload = dict(status)
+        payload.update(
+            command="start",
+            started=False,
+            already_running=True,
+        )
+        return payload
 
     def _invoke(
         self,
@@ -727,7 +896,16 @@ class TraceRelayClient:
         require_ok: bool = True,
         allow_nonzero: bool = False,
     ) -> dict[str, object]:
-        command = [self.command, *arguments]
+        if arguments and arguments[0] in {"register", "close", "stop"}:
+            if self._runtime_expectation is None:
+                raise TraceRelayError("TraceRelay runtime expectation is not bound")
+            if "--runtime-nonce" not in arguments:
+                arguments = [
+                    *arguments,
+                    "--runtime-nonce",
+                    self._runtime_expectation["runtime_nonce"],
+                ]
+        command = [*self.command, *arguments]
         try:
             timeout = (
                 self.verification_timeout_seconds
@@ -768,7 +946,78 @@ class TraceRelayClient:
             )
 
 
+def _validate_runtime_identity_shape(
+    value: object,
+    expectation: Mapping[str, str],
+) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema",
+        "runtime_nonce",
+        "sdk_manifest_sha256",
+        "python_executable_sha256",
+        "processes",
+    }:
+        raise TraceRelayError("TraceRelay runtime identity fields are invalid")
+    if (
+        value.get("schema") != RUNTIME_IDENTITY_SCHEMA
+        or value.get("runtime_nonce") != expectation["runtime_nonce"]
+        or value.get("sdk_manifest_sha256")
+        != expectation["sdk_manifest_sha256"]
+        or value.get("python_executable_sha256")
+        != expectation["python_executable_sha256"]
+    ):
+        raise TraceRelayError("TraceRelay runtime identity differs from expectation")
+    processes = value.get("processes")
+    if not isinstance(processes, Mapping) or set(processes) != {
+        "supervisor",
+        "service",
+    }:
+        raise TraceRelayError("TraceRelay process identities are invalid")
+    for role in ("supervisor", "service"):
+        process = processes.get(role)
+        if not isinstance(process, Mapping) or set(process) != {
+            "role",
+            "pid",
+            "creation_time_100ns",
+            "python_executable",
+            "python_executable_sha256",
+            "sdk_manifest_sha256",
+            "python_flags",
+        }:
+            raise TraceRelayError("TraceRelay process identity fields are invalid")
+        if process.get("role") != role:
+            raise TraceRelayError("TraceRelay process role differs")
+        for name in ("pid", "creation_time_100ns"):
+            item = process.get(name)
+            if isinstance(item, bool) or not isinstance(item, int) or item <= 0:
+                raise TraceRelayError(f"TraceRelay process {name} is invalid")
+        executable = process.get("python_executable")
+        if not isinstance(executable, str) or not Path(executable).is_absolute():
+            raise TraceRelayError("TraceRelay Python executable path is invalid")
+        if (
+            process.get("python_executable_sha256")
+            != expectation["python_executable_sha256"]
+            or process.get("sdk_manifest_sha256")
+            != expectation["sdk_manifest_sha256"]
+            or process.get("python_flags")
+            != {
+                "isolated": True,
+                "dont_write_bytecode": True,
+                "safe_path": True,
+            }
+        ):
+            raise TraceRelayError("TraceRelay process runtime identity differs")
+    return json.loads(json.dumps(value))
+
+
 def _run_cli(arguments: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
+    environment = dict(os.environ)
+    for name in tuple(environment):
+        if name.casefold().startswith("python"):
+            environment.pop(name)
+    environment["PYTHONNOUSERSITE"] = "1"
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHONSAFEPATH"] = "1"
     return subprocess.run(
         arguments,
         stdin=subprocess.DEVNULL,
@@ -778,6 +1027,8 @@ def _run_cli(arguments: list[str], timeout: float) -> subprocess.CompletedProces
         errors="strict",
         check=False,
         timeout=timeout,
+        cwd=Path(sys.executable).resolve().parent,
+        env=environment,
     )
 
 
@@ -797,7 +1048,9 @@ def _request_status() -> dict[str, object]:
                 if len(raw) > CONTROL_MESSAGE_LIMIT:
                     raise TraceRelayError("TraceRelay status response exceeds 64 KiB")
     except (OSError, TimeoutError) as error:
-        raise TraceRelayError(f"TraceRelay status is unavailable: {error}") from error
+        raise TraceRelayUnavailableError(
+            f"TraceRelay status is unavailable: {error}"
+        ) from error
     if not raw.endswith(b"\n") or raw.count(b"\n") != 1:
         raise TraceRelayError("TraceRelay status response is not one JSON line")
     try:
@@ -1044,6 +1297,7 @@ def _windows_job_command(
     command: Sequence[str],
     *,
     process_time_limit_seconds: float = 7_200,
+    job_identity: str | None = None,
 ) -> list[str]:
     if os.name != "nt":
         raise TraceRelayError("Aegis managed Codex execution requires Windows")
@@ -1052,20 +1306,36 @@ def _windows_job_command(
     runner = Path(__file__).resolve().with_name("windows_job_runner.py")
     if not runner.is_file():
         raise TraceRelayError(f"Windows Job runner is missing: {runner}")
+    parent_pid = os.getpid()
+    parent_creation_time_100ns = _windows_process_creation_time_100ns(parent_pid)
+    resolved_job_identity = job_identity or uuid4().hex
+    job_name = _windows_job_name(resolved_job_identity)
     return [
         _base_python_executable(),
         "-I",
         "-S",
         str(runner),
+        "--job-name",
+        job_name,
         "--active-process-limit",
         "64",
         "--job-memory-limit-bytes",
         str(4 * 1024**3),
         "--process-time-limit-100ns",
         str(max(10_000_000, int(process_time_limit_seconds * 10_000_000))),
+        "--parent-pid",
+        str(parent_pid),
+        "--parent-creation-time-100ns",
+        str(parent_creation_time_100ns),
         "--",
         *map(str, command),
     ]
+
+
+def _windows_job_name(job_identity: str) -> str:
+    if REGISTRATION_OPERATION_ID_PATTERN.fullmatch(job_identity) is None:
+        raise ValueError("Windows Job identity must be 32 lowercase hex characters")
+    return f"Local\\Aegis-{job_identity}"
 
 
 def _base_python_executable() -> str:

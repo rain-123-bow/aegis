@@ -1,0 +1,67 @@
+{
+  "schema": "aegis.third_party_python_sdk_snapshot.v1",
+  "component": "TraceRelay",
+  "source_repository": "git@github.com:rain-123-bow/TraceRelay.git",
+  "source_commit": "9775e26e6f0999a7047e0cff72e13c62da99c065",
+  "source_tree_state": "clean",
+  "snapshot_kind": "runtime-python-source",
+  "snapshot_root": "src/tracerelay",
+  "snapshot_manifest_sha256": "6f56afaba4b9b2fc9c49ec6b8c1af0847291d3c2f88f6d9b3ccd0867e2f0afd2",
+  "files": [
+    {
+      "path": "src/tracerelay/__init__.py",
+      "size": 136,
+      "sha256": "038ace6e816e9b175140319bb63b55c9b3404cdbeb19d377da872946e1a061df"
+    },
+    {
+      "path": "src/tracerelay/__main__.py",
+      "size": 109,
+      "sha256": "b8082f95ac5669b7a6818c5d4ee997c3e979235298297a750fb4eb7c976c4181"
+    },
+    {
+      "path": "src/tracerelay/cli.py",
+      "size": 14163,
+      "sha256": "3d09781b08170b7c8df1887ea460a36125c2643d3f3ef48523db9e8c4f34e60c"
+    },
+    {
+      "path": "src/tracerelay/config.py",
+      "size": 7301,
+      "sha256": "1333a3dc1e93bedaa7c20a2e5eb0ab38f2f47587429647086b9abd5bd4be806b"
+    },
+    {
+      "path": "src/tracerelay/control.py",
+      "size": 5951,
+      "sha256": "cf565b6b705b81d0131b401530b2b7e0c463126d39b7bf5215e3370095c5d2ae"
+    },
+    {
+      "path": "src/tracerelay/journal.py",
+      "size": 9099,
+      "sha256": "6b7699cf6796ff816b65d3acfc4adeabdb8e4b8bc6873e2bf1f578f6f0544f17"
+    },
+    {
+      "path": "src/tracerelay/runtime_identity.py",
+      "size": 9955,
+      "sha256": "bfb74efb44164af3dd8eefb3b381cc25364babcd1b7a05e47cde9d7fc2143ef4"
+    },
+    {
+      "path": "src/tracerelay/service.py",
+      "size": 21959,
+      "sha256": "1300d83266a9814ffcdf1d1a438c10e80286d3163726d6fa6b80aca313b385f0"
+    },
+    {
+      "path": "src/tracerelay/session.py",
+      "size": 29555,
+      "sha256": "23413276691ffdc84c4b2433bc5ed24ba4eb62c3ee94d812587a5e59b4a6db7f"
+    },
+    {
+      "path": "src/tracerelay/supervisor.py",
+      "size": 15874,
+      "sha256": "fb91f3bd189f10cc662ef7801e0ca7adc17a36217e6f575e975c70808e53703b"
+    },
+    {
+      "path": "src/tracerelay/verify.py",
+      "size": 21853,
+      "sha256": "dd21b7b34144829922ff27d0092a01061332d5548ff7984a62abb8a138d0af73"
+    }
+  ]
+}

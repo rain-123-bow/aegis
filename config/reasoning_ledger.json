@@ -1,0 +1,10 @@
+{
+  "project_id": "5339f0f6f03b4d3c8059fcfd314b2423",
+  "ledger": {
+    "backend": "postgresql_pgvector",
+    "dsn_env": "AEGIS_LEDGER_DSN",
+    "schema": "reasoning_ledger",
+    "artifact_root": ".aegis/reasoning_ledger/artifacts",
+    "embedding_dimensions": 1536
+  }
+}

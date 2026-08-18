@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import ctypes
+import os
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -14,7 +19,92 @@ import test_traced_app_server_real_integration as real_acceptance  # noqa: E402
 
 
 class RegistrationCrashReportTests(unittest.TestCase):
+    def test_wait_failure_is_not_reported_as_process_termination(self) -> None:
+        class Function:
+            def __init__(self, result: object) -> None:
+                self.result = result
+
+            def __call__(self, *_args: object) -> object:
+                return self.result
+
+        class Kernel32:
+            def __init__(self) -> None:
+                self.OpenProcess = Function(123)
+                self.WaitForSingleObject = Function(0xFFFFFFFF)
+                self.CloseHandle = Function(1)
+
+        with patch.object(
+            ctypes, "WinDLL", return_value=Kernel32()
+        ):
+            with self.assertRaises(OSError):
+                real_acceptance._windows_process_is_running(1234)
+
+    def test_creation_time_inspection_failure_is_not_termination(self) -> None:
+        with (
+            patch.object(
+                real_acceptance,
+                "_windows_process_is_running",
+                return_value=True,
+            ),
+            patch.object(
+                real_acceptance,
+                "_windows_process_creation_time_100ns",
+                side_effect=RuntimeError("synthetic identity inspection failure"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "identity inspection failure"),
+        ):
+            real_acceptance._windows_process_identity_is_running(1234, 5678)
+
+    @unittest.skipUnless(os.name == "nt", "process identity test is Windows-only")
+    def test_direct_child_enumerator_binds_live_process_identity(self) -> None:
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while (
+                child.pid
+                not in real_acceptance._windows_direct_child_pids(os.getpid())
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.02)
+            self.assertIn(
+                child.pid,
+                real_acceptance._windows_direct_child_pids(os.getpid()),
+            )
+            creation_time = real_acceptance._windows_process_creation_time_100ns(
+                child.pid
+            )
+            parent_creation_time = (
+                real_acceptance._windows_process_creation_time_100ns(os.getpid())
+            )
+            image_path = real_acceptance._windows_process_image_path(child.pid)
+            self.assertTrue(
+                real_acceptance._windows_process_identity_is_running(
+                    child.pid, creation_time
+                )
+            )
+            self.assertGreater(creation_time, parent_creation_time)
+            self.assertTrue(
+                real_acceptance._same_windows_executable_path(
+                    image_path, Path(sys.executable)
+                )
+            )
+            self.assertIn(
+                "time.sleep(30)",
+                real_acceptance._windows_process_command_line(child.pid),
+            )
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                child.wait(timeout=5)
+
     def valid_case(self, crash_mode: str) -> dict[str, object]:
+        codex_identity = real_acceptance._capture_codex_cli_identity(sys.executable)
+        codex_cli_path = codex_identity["codex_cli_path"]
         operation_id = (
             "1" * 32
             if crash_mode == "after_register_before_popen"
@@ -32,7 +122,62 @@ class RegistrationCrashReportTests(unittest.TestCase):
             "popen_started": crash_mode == "after_popen_before_identity_checkpoint",
         }
         if crash_mode == "after_popen_before_identity_checkpoint":
-            marker["observed_process_pid"] = 1234
+            marker.update(
+                observed_process_pid=1234,
+                observed_process_creation_time_100ns=123_456_789,
+                observed_process_active_before_crash=True,
+                observed_child_pid=5678,
+                observed_child_creation_time_100ns=987_654_321,
+                expected_child_image_path=str(Path(sys.executable).resolve()),
+                observed_child_image_path=str(Path(sys.executable).resolve()),
+                observed_child_active_before_crash=True,
+                observed_descendant_processes=[
+                    {
+                        "pid": 6789,
+                        "parent_pid": 5678,
+                        "creation_time_100ns": 1_000_000_000,
+                        "image_path": str(Path(sys.executable).resolve()),
+                        "command_line": "node codex.js app-server --listen stdio://",
+                        "active_before_crash": True,
+                    }
+                ],
+                job_name=real_acceptance._windows_job_name(operation_id),
+                job_creation_frozen=True,
+                frozen_job_member_processes=[
+                    {
+                        "pid": 1234,
+                        "parent_pid": 1111,
+                        "creation_time_100ns": 123_456_789,
+                        "image_path": str(Path(sys.executable).resolve()),
+                        "command_line": (
+                            "python windows_job_runner.py --job-name "
+                            f"Local\\Aegis-test -- {codex_cli_path} app-server"
+                        ),
+                        "active_before_crash": True,
+                        "suspended_before_crash": False,
+                    },
+                    {
+                        "pid": 5678,
+                        "parent_pid": 1234,
+                        "creation_time_100ns": 987_654_321,
+                        "image_path": str(Path(sys.executable).resolve()),
+                        "command_line": (
+                            f"cmd.exe /c {codex_cli_path} app-server"
+                        ),
+                        "active_before_crash": True,
+                        "suspended_before_crash": True,
+                    },
+                    {
+                        "pid": 6789,
+                        "parent_pid": 5678,
+                        "creation_time_100ns": 1_000_000_000,
+                        "image_path": str(Path(sys.executable).resolve()),
+                        "command_line": "node codex.js app-server --listen stdio://",
+                        "active_before_crash": True,
+                        "suspended_before_crash": True,
+                    },
+                ],
+            )
         return {
             "crash_mode": crash_mode,
             "worker_exit_code": 91,
@@ -42,7 +187,7 @@ class RegistrationCrashReportTests(unittest.TestCase):
             "marker": marker,
             "recovery_cli_commands": [
                 ["resolve-registration", "--operation-id", operation_id],
-                ["close"],
+                ["close", "--runtime-nonce", "a" * 32],
                 ["verify", str(session_path)],
             ],
             "verification": {
@@ -68,8 +213,31 @@ class RegistrationCrashReportTests(unittest.TestCase):
                 },
             },
             "application_verification_status": "INVALID",
+            "final_run_status": "terminated",
+            "termination_reason_code": "FREEZE_CONTINUITY_LOST",
             "persisted_process_pid": None,
             "persisted_process_creation_time_100ns": None,
+            "observed_process_terminated": (
+                True
+                if crash_mode == "after_popen_before_identity_checkpoint"
+                else None
+            ),
+            "observed_child_terminated": (
+                True
+                if crash_mode == "after_popen_before_identity_checkpoint"
+                else None
+            ),
+            "observed_descendants_terminated": (
+                True
+                if crash_mode == "after_popen_before_identity_checkpoint"
+                else None
+            ),
+            "frozen_job_members_terminated": (
+                True
+                if crash_mode == "after_popen_before_identity_checkpoint"
+                else None
+            ),
+            **codex_identity,
         }
 
     def test_report_is_published_only_after_both_required_cases_pass(self) -> None:
@@ -79,6 +247,30 @@ class RegistrationCrashReportTests(unittest.TestCase):
                 self.valid_case(mode)
                 for mode in real_acceptance.REQUIRED_REGISTRATION_CRASH_MODES
             ]
+
+            report = real_acceptance._publish_registration_crash_report(
+                report_path,
+                cases=cases,
+                tracerelay_command=Path(sys.executable),
+            )
+
+            self.assertEqual(
+                report["schema"], "aegis.registration_crash_acceptance.v7"
+            )
+            self.assertEqual(report["verdict"], "PASS")
+            self.assertTrue(report_path.is_file())
+
+    def test_already_idle_recovery_does_not_require_redundant_close(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            report_path = Path(temporary_directory) / "REGISTRATION_CRASH_REPORT.json"
+            cases = [
+                self.valid_case(mode)
+                for mode in real_acceptance.REQUIRED_REGISTRATION_CRASH_MODES
+            ]
+            for case in cases:
+                commands = case["recovery_cli_commands"]
+                assert isinstance(commands, list)
+                commands.pop(1)
 
             report = real_acceptance._publish_registration_crash_report(
                 report_path,
@@ -206,6 +398,17 @@ class RegistrationCrashReportTests(unittest.TestCase):
                 },
                 valid_cases[1],
             ],
+            "invalid_runtime_nonce": [
+                {
+                    **valid_cases[0],
+                    "recovery_cli_commands": [
+                        valid_cases[0]["recovery_cli_commands"][0],
+                        ["close", "--runtime-nonce", "not-a-runtime-nonce"],
+                        valid_cases[0]["recovery_cli_commands"][2],
+                    ],
+                },
+                valid_cases[1],
+            ],
             "invalid_journal": [
                 {
                     **valid_cases[0],
@@ -230,6 +433,103 @@ class RegistrationCrashReportTests(unittest.TestCase):
                     "persisted_process_creation_time_100ns": 123,
                 },
                 valid_cases[1],
+            ],
+            "orphaned_process": [
+                valid_cases[0],
+                {**valid_cases[1], "observed_process_terminated": False},
+            ],
+            "orphaned_child": [
+                valid_cases[0],
+                {**valid_cases[1], "observed_child_terminated": False},
+            ],
+            "orphaned_descendant": [
+                valid_cases[0],
+                {**valid_cases[1], "observed_descendants_terminated": False},
+            ],
+            "orphaned_frozen_job_member": [
+                valid_cases[0],
+                {**valid_cases[1], "frozen_job_members_terminated": False},
+            ],
+            "job_not_frozen": [
+                valid_cases[0],
+                {
+                    **valid_cases[1],
+                    "marker": {
+                        **valid_cases[1]["marker"],
+                        "job_creation_frozen": False,
+                    },
+                },
+            ],
+            "incomplete_job_membership": [
+                valid_cases[0],
+                {
+                    **valid_cases[1],
+                    "marker": {
+                        **valid_cases[1]["marker"],
+                        "frozen_job_member_processes": valid_cases[1]["marker"][
+                            "frozen_job_member_processes"
+                        ][:-1],
+                    },
+                },
+            ],
+            "unproven_runner_identity": [
+                valid_cases[0],
+                {
+                    **valid_cases[1],
+                    "marker": {
+                        **valid_cases[1]["marker"],
+                        "observed_process_active_before_crash": False,
+                    },
+                },
+            ],
+            "unproven_child_identity": [
+                valid_cases[0],
+                {
+                    **valid_cases[1],
+                    "marker": {
+                        **valid_cases[1]["marker"],
+                        "observed_child_creation_time_100ns": 0,
+                    },
+                },
+            ],
+            "child_predates_runner": [
+                valid_cases[0],
+                {
+                    **valid_cases[1],
+                    "marker": {
+                        **valid_cases[1]["marker"],
+                        "observed_child_creation_time_100ns": 123_456_788,
+                    },
+                },
+            ],
+            "wrong_child_image": [
+                valid_cases[0],
+                {
+                    **valid_cases[1],
+                    "marker": {
+                        **valid_cases[1]["marker"],
+                        "observed_child_image_path": str(
+                            (Path(sys.executable).parent / "other.exe").resolve()
+                        ),
+                    },
+                },
+            ],
+            "unbound_app_server_command": [
+                valid_cases[0],
+                {
+                    **valid_cases[1],
+                    "marker": {
+                        **valid_cases[1]["marker"],
+                        "observed_descendant_processes": [
+                            {
+                                **valid_cases[1]["marker"][
+                                    "observed_descendant_processes"
+                                ][0],
+                                "command_line": "node unrelated.js",
+                            }
+                        ],
+                    },
+                },
             ],
         }
         for label, cases in invalid_sets.items():
@@ -261,8 +561,17 @@ class RegistrationCrashReportTests(unittest.TestCase):
             "recovery_cli_commands": "resolve-registration",
             "verification": [],
             "application_verification_status": True,
+            "final_run_status": "completed",
+            "termination_reason_code": "FROZEN_INPUT_MUTATION",
             "persisted_process_pid": False,
             "persisted_process_creation_time_100ns": False,
+            "observed_process_terminated": False,
+            "observed_child_terminated": False,
+            "observed_descendants_terminated": False,
+            "frozen_job_members_terminated": False,
+            "codex_cli_path": 1,
+            "codex_cli_version": "",
+            "codex_cli_sha256": "not-a-sha256",
         }
         for field, invalid_value in invalid_values.items():
             with self.subTest(field=field):

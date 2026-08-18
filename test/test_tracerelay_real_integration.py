@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import socket
 import subprocess
@@ -7,12 +9,13 @@ import sys
 import threading
 import unittest
 from pathlib import Path
+from uuid import uuid4
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from tracerelay_client import TraceRelayClient
+from tracerelay_client import TraceRelayClient, resolve_tracerelay_command
 
 
 class OneShotHttpServer:
@@ -56,13 +59,26 @@ class OneShotHttpServer:
 
 
 @unittest.skipUnless(
-    os.environ.get("TRACERELAY_COMMAND"),
-    "set TRACERELAY_COMMAND to run the installed TraceRelay integration",
+    os.environ.get("RUN_TRACERELAY_REAL_ACCEPTANCE"),
+    "set RUN_TRACERELAY_REAL_ACCEPTANCE=1 to run the installed TraceRelay SDK integration",
 )
 class RealTraceRelayIntegrationTests(unittest.TestCase):
     def test_hostile_proxy_environment_cannot_bypass_registered_relay(self) -> None:
-        command = str(Path(os.environ["TRACERELAY_COMMAND"]).resolve())
+        command = resolve_tracerelay_command(
+            os.environ.get("TRACERELAY_PYTHON")
+        )
         client = TraceRelayClient(command=command, monitor_interval_seconds=0.05)
+        provenance = json.loads(
+            (PROJECT_ROOT / "third_party" / "TraceRelay" / "PROVENANCE.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        runtime_nonce = uuid4().hex
+        client.bind_runtime_expectation(
+            runtime_nonce=runtime_nonce,
+            sdk_manifest_sha256=provenance["snapshot_manifest_sha256"],
+            python_executable_sha256=_sha256_file(Path(command[0])),
+        )
         owned = False
         try:
             started = client.start()
@@ -108,7 +124,12 @@ class RealTraceRelayIntegrationTests(unittest.TestCase):
         finally:
             if owned:
                 subprocess.run(
-                    [command, "stop"],
+                    [
+                        *command,
+                        "stop",
+                        "--runtime-nonce",
+                        runtime_nonce,
+                    ],
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
                     text=True,
@@ -116,6 +137,14 @@ class RealTraceRelayIntegrationTests(unittest.TestCase):
                     check=False,
                     timeout=30,
                 )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 if __name__ == "__main__":

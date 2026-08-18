@@ -30,7 +30,7 @@ description: Use when acting as Aegis MASTER_PROJECT_GATE to create or verify an
 当前代码中的 reasoning ledger 使用项目级配置：
 
 ```text
-<project_root>/.aegis/project.json
+<project_root>/config/reasoning_ledger.json
 <project_root>/.aegis/reasoning_ledger/
 ```
 
@@ -74,8 +74,9 @@ description: Use when acting as Aegis MASTER_PROJECT_GATE to create or verify an
 ```text
 <project_root>/
   code/
+  config/
+    reasoning_ledger.json
   .aegis/
-    project.json
     reasoning_ledger/
       README.md
       migrations/
@@ -92,7 +93,7 @@ description: Use when acting as Aegis MASTER_PROJECT_GATE to create or verify an
 
 `code/` 用于存放真实项目代码。
 
-`.aegis/project.json` 是当前 reasoning ledger 的项目配置入口。
+`config/reasoning_ledger.json` 是当前 reasoning ledger 的受 Seal 覆盖项目配置入口。
 
 `.aegis/reasoning_ledger/migrations/001_init.sql` 是当前 PostgreSQL + pgvector schema 初始化 SQL。
 
@@ -111,7 +112,7 @@ description: Use when acting as Aegis MASTER_PROJECT_GATE to create or verify an
 ```text
 <project_root>/
 <project_root>/code/
-<project_root>/.aegis/project.json
+<project_root>/config/reasoning_ledger.json
 <project_root>/.aegis/reasoning_ledger/
 ```
 
@@ -171,12 +172,12 @@ bootstrap_project_ledger(project_root, project_id=project_id)
 
 如果用户指定其他代码目录，必须确认该目录和 `project_root/code/` 的关系；不得私自把任意目录当作 `code/`。
 
-### 3. .aegis/project.json 检查
+### 3. config/reasoning_ledger.json 检查
 
 确认：
 
 ```text
-<project_root>/.aegis/project.json
+<project_root>/config/reasoning_ledger.json
 ```
 
 必须存在、可读、是合法 JSON。
@@ -186,7 +187,6 @@ bootstrap_project_ledger(project_root, project_id=project_id)
 ```json
 {
   "project_id": "...",
-  "project_root": "...",
   "ledger": {
     "backend": "postgresql_pgvector",
     "dsn_env": "AEGIS_LEDGER_DSN",
@@ -197,13 +197,11 @@ bootstrap_project_ledger(project_root, project_id=project_id)
 }
 ```
 
-`project_root` 可以是绝对路径；必须指向当前目标项目根目录或与当前目标项目根目录等价解析。
-
 `ledger.backend` 当前必须是 `postgresql_pgvector`。
 
 `ledger.dsn_env` 指定的环境变量必须能解析到 PostgreSQL DSN，除非输入显式提供 `dsn`。
 
-缺少或损坏 `.aegis/project.json`：
+缺少或损坏 `config/reasoning_ledger.json`：
 
 - 已授权初始化 reasoning ledger：使用 bootstrap 创建。
 - 未授权初始化：返回 `status=false`，要求用户选择初始化、指定现有项目配置、停止。
@@ -286,7 +284,7 @@ CREATE TABLE IF NOT EXISTS <schema>.reasoning_event
 DSN 来源优先级：
 
 1. 输入 JSON 的 `dsn`。
-2. `.aegis/project.json` 中 `ledger.dsn_env` 指向的环境变量。
+2. `config/reasoning_ledger.json` 中 `ledger.dsn_env` 指向的环境变量。
 
 如果无法解析 DSN，返回 `status=false`，要求用户选择设置环境变量、传入 DSN、仅初始化文件结构后停止。
 
@@ -391,7 +389,7 @@ smoke test 成功但无相关 active item，不是失败。
 
 坏推理库包括：
 
-1. `.aegis/project.json` 缺失、损坏、字段不完整，且用户未授权初始化。
+1. `config/reasoning_ledger.json` 缺失、损坏、字段不完整，且用户未授权初始化。
 2. 必要目录或文件缺失，且用户未授权补全。
 3. 必要路径不可读写。
 4. 文件系统 probe 失败。
@@ -409,7 +407,7 @@ smoke test 成功但无相关 active item，不是失败。
 1. 是否创建缺失的 `project_root`。
 2. 是否创建缺失的 `code/`。
 3. 是否初始化或补全 `.aegis/reasoning_ledger/`。
-4. 是否生成 `.aegis/project.json`。
+4. 是否生成 `config/reasoning_ledger.json`。
 5. 是否设置或提供 PostgreSQL DSN。
 6. 是否执行数据库 migration。
 7. 是否创建或更换 `artifact_path`。
@@ -435,7 +433,7 @@ smoke test 成功但无相关 active item，不是失败。
 
 禁止删除或清空 `artifact_path`。
 
-禁止覆盖已有 `.aegis/project.json`，除非用户明确授权。
+禁止覆盖已有 `config/reasoning_ledger.json`，除非用户明确授权。
 
 禁止覆盖已有 migration 文件，除非用户明确授权。
 
@@ -451,7 +449,7 @@ smoke test 成功但无相关 active item，不是失败。
 
 1. `project_root` 存在、是目录、可读写。
 2. `code/` 存在、是目录、可读写。
-3. `.aegis/project.json` 存在、合法、字段符合当前代码。
+3. `config/reasoning_ledger.json` 存在、合法、字段符合当前代码。
 4. `.aegis/reasoning_ledger/` 标准结构完整。
 5. 文件系统 probe 全部成功。
 6. PostgreSQL + pgvector probe 成功。
@@ -469,7 +467,7 @@ smoke test 成功但无相关 active item，不是失败。
 {
   "project_root": "path/to/project-root",
   "code_path": "path/to/project-root/code",
-  "project_config_path": "path/to/project-root/.aegis/project.json",
+  "project_config_path": "path/to/project-root/config/reasoning_ledger.json",
   "reasoning_ledger_path": "path/to/project-root/.aegis/reasoning_ledger",
   "reasoning_ledger_exports_path": "path/to/project-root/.aegis/reasoning_ledger/exports",
   "artifact_path": "path/to/shared-artifact-folder-or-null",

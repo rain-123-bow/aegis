@@ -15,13 +15,15 @@ import runtime_codex_acceptance
 
 class RuntimeCodexAcceptanceReportTests(unittest.TestCase):
     def valid_report(self) -> dict[str, object]:
-        tracerelay_command = str(Path(sys.executable).resolve())
+        tracerelay_command = list(
+            runtime_codex_acceptance.resolve_tracerelay_command()
+        )
         return {
             "verdict": "PASS",
             "source_sha256": runtime_codex_acceptance._source_sha256(),
             "tracerelay_command": tracerelay_command,
-            "tracerelay_command_sha256": hashlib.sha256(
-                Path(tracerelay_command).read_bytes()
+            "tracerelay_python_sha256": hashlib.sha256(
+                Path(tracerelay_command[0]).read_bytes()
             ).hexdigest(),
         }
 
@@ -58,20 +60,20 @@ class RuntimeCodexAcceptanceReportTests(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, "source_sha256"):
                     runtime_codex_acceptance._validate_report_source_binding(report)
 
-    def test_report_binding_requires_the_current_tracerelay_command_hash(self) -> None:
+    def test_report_binding_requires_the_current_tracerelay_python_hash(self) -> None:
         for missing_field in (
             "tracerelay_command",
-            "tracerelay_command_sha256",
+            "tracerelay_python_sha256",
         ):
             with self.subTest(missing_field=missing_field):
                 report = self.valid_report()
                 report.pop(missing_field)
-                with self.assertRaisesRegex(AssertionError, "TraceRelay command"):
+                with self.assertRaisesRegex(AssertionError, "TraceRelay"):
                     runtime_codex_acceptance._validate_report_source_binding(report)
 
         mismatched = self.valid_report()
-        mismatched["tracerelay_command_sha256"] = "0" * 64
-        with self.assertRaisesRegex(AssertionError, "TraceRelay command"):
+        mismatched["tracerelay_python_sha256"] = "0" * 64
+        with self.assertRaisesRegex(AssertionError, "TraceRelay Python"):
             runtime_codex_acceptance._validate_report_source_binding(mismatched)
 
 

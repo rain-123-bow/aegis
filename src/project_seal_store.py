@@ -38,7 +38,7 @@ from runtime_identity import (
 SEAL_RECORD_RELATIVE_PATH = Path(
     ".aegis/reasoning_ledger/artifacts/facts/project-seal.json"
 )
-SEAL_CHAIN_SCHEMA = "aegis.project_seal_chain.v2"
+SEAL_CHAIN_SCHEMA = "aegis.project_seal_chain.v3"
 
 _HEX_16_PATTERN = re.compile(r"[0-9a-f]{32}")
 _HEX_32_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -54,6 +54,7 @@ _RECORD_FIELDS = {
     "git_head_before_record",
     "scope_policy_version",
     "scope_policy_sha256",
+    "scope_decision_sha256",
     "resolved_manifest_sha256",
     "runtime_authority_id",
 }
@@ -83,6 +84,7 @@ class StoredProjectSeal:
     git_head_before_record: str
     scope_policy_version: int
     scope_policy_sha256: str
+    scope_decision_sha256: str
     resolved_manifest_sha256: str
     runtime_authority_id: str
 
@@ -106,6 +108,7 @@ class StoredProjectSeal:
             "git_head_before_record": self.git_head_before_record,
             "scope_policy_version": self.scope_policy_version,
             "scope_policy_sha256": self.scope_policy_sha256,
+            "scope_decision_sha256": self.scope_decision_sha256,
             "resolved_manifest_sha256": self.resolved_manifest_sha256,
             "runtime_authority_id": self.runtime_authority_id,
         }
@@ -221,6 +224,10 @@ def record_project_seal(
                     "changed runtime scope policy requires a higher version"
                 )
         expected_seal = compute_project_seal(context, resolved_scope.seal_entries())
+        if resolved_scope.decision_sha256 is None:
+            raise ProjectSealStoreError(
+                "runtime scope approval decision is unavailable"
+            )
         record = StoredProjectSeal(
             project_id=context.project_id,
             seal_chain_id=context.seal_chain_id,
@@ -231,6 +238,7 @@ def record_project_seal(
             git_head_before_record=actual_head,
             scope_policy_version=resolved_scope.policy_version,
             scope_policy_sha256=resolved_scope.policy_sha256,
+            scope_decision_sha256=resolved_scope.decision_sha256,
             resolved_manifest_sha256=resolved_scope.manifest_sha256,
             runtime_authority_id=resolved_scope.runtime_authority_id,
         )
@@ -265,6 +273,10 @@ def verify_expected_project_seal(
                     )
         except RuntimeIdentityError as error:
             raise ProjectSealMismatchError(str(error)) from error
+    if resolved_scope.decision_sha256 != record.scope_decision_sha256:
+        raise ProjectSealMismatchError(
+            f"project runtime behavior scope approval decision does not match the recorded seal: {root}"
+        )
     if (
         resolved_scope.policy_version != record.scope_policy_version
         or resolved_scope.policy_sha256 != record.scope_policy_sha256
@@ -372,6 +384,12 @@ def _parse_record(value: Any, index: int) -> StoredProjectSeal:
         "scope_policy_sha256",
         index,
     )
+    scope_decision_sha256 = _require_pattern(
+        value["scope_decision_sha256"],
+        _HEX_32_PATTERN,
+        "scope_decision_sha256",
+        index,
+    )
     resolved_manifest_sha256 = _require_pattern(
         value["resolved_manifest_sha256"],
         _HEX_32_PATTERN,
@@ -407,6 +425,7 @@ def _parse_record(value: Any, index: int) -> StoredProjectSeal:
             git_head_before_record=git_head,
             scope_policy_version=scope_policy_version,
             scope_policy_sha256=scope_policy_sha256,
+            scope_decision_sha256=scope_decision_sha256,
             resolved_manifest_sha256=resolved_manifest_sha256,
             runtime_authority_id=runtime_authority_id,
         )

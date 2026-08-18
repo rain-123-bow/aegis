@@ -59,8 +59,8 @@ Project Gate
 A → B
 B FAIL → A
 B PASS → C
-C FAIL → END
-C PASS → D
+C 协议、请求或受控执行失败 → FAILED
+C completed → D
 D FAIL → C
 D PASS → E
 E FAIL → END
@@ -80,13 +80,13 @@ master_review_status = PENDING | CONFIRMED | DISPUTED
 
 Master 只能验证 F 结论结构、证据真实性和索引完整性。Master 不得修改、隐藏、降级或覆盖 F 的工程结论。存在分歧时，双方结论与证据一并提交用户。
 
-F 必须写入 `FINAL_REVIEW_VERDICT.json`，明确给出结论、原因和证据索引。Coordinator 必须校验其 verdict 与 F 返回状态一致，并封存文件哈希与证据 ID；缺失或不一致时不得形成 F 终态。
+F 启动前，Coordinator 必须生成并持久化 `FINAL_REVIEW_INPUT_MANIFEST.json`，机械列出代码、Scope 控制、需求与方案、测试方案与非空测试报告、全部 A/B 规划响应与指令回执、C 证据、全部 C-E 执行响应与指令回执、reasoning context 的必审描述符。F 必须写入 `FINAL_REVIEW_VERDICT.json`，明确给出结论、原因，并逐项索引全部 Coordinator-required evidence、输入清单自身和非空 `FINAL_REVIEW.md`。Coordinator 必须校验 verdict 与 F 返回状态一致，并重验每个路径、大小、哈希和 evidence ID；缺失、空白或不一致时不得形成 F 终态。
 
 ## 4. 运行冻结和恢复
 
 A-F 运行期间，需求、实现方案、代码、runtime behavior scope、相关 reasoning ledger 事实和绑定 Seal 禁止变化。
 
-Coordinator 必须在节点边界复核全部冻结哈希，并在 Windows 上通过递归目录变更日志捕获节点内“修改后还原”。发现变化后：
+Coordinator 必须在节点边界复核全部冻结哈希，并在 Windows 上通过递归目录变更日志捕获节点内“修改后还原”。Watcher 只有在首个异步监听请求成功挂起后才可报告 ready；全部 watcher ready 后必须在监听已生效的条件下重验 descriptor 和完整 Project Seal，必需 root 缺失直接失败。`.git` 内任意变化均属于冻结变化。Watcher 启动时冻结 descriptor map；冻结文件的祖先目录 rename/remove 同样构成变化；stop 并发必须解析已完成 buffer；单 root 停止失败不得阻止其他 root 排空；事件 buffer overflow 必须 fail closed。已捕获 mutation 的优先级高于 watcher 基础设施错误。发现变化后：
 
 1. 立即终止当前 workflow run；
 2. 保存变化路径、旧新哈希、发现时间和可用进程证据；
@@ -94,7 +94,7 @@ Coordinator 必须在节点边界复核全部冻结哈希，并在 Windows 上�
 4. Master 要求用户说明变化原因；
 5. 原因未记录前禁止重启。
 
-原因通过 `aegis.frozen_input_mutation_reason.v1` 封存，绑定用户确认 ID、原因文件路径、大小和 SHA-256。mutation 终止状态和未解释 marker 在同一 SQLite 事务中持久化；删除或篡改 `RUN_STATE.json` 投影不能解除阻塞。存在任何 `REQUIRES_USER_REASON` 的同项目 run 时，新 run 的 preflight 必须失败；记录原因后只解除启动阻塞，不恢复旧 run，也不改变其失败结论。
+原因通过 `aegis.frozen_input_mutation_reason.v1` 封存，绑定用户确认 ID、原因文件路径、大小和 SHA-256。mutation 终止状态和 marker 在同一 SQLite 事务中持久化；记录原因使用 reservation lock 和旧状态哈希 CAS，resolved marker 长期保留。删除或篡改 `RUN_STATE.json` 投影不能解除阻塞。存在任何 `REQUIRES_USER_REASON` 的同项目 run 时，新 run 的 preflight 必须失败；记录原因后只解除启动阻塞，不恢复旧 run，也不改变其失败结论。历史 reason JSON/MD 在后续 preflight、resume、节点边界和 watcher 中持续复核；删改会终止当前 run。
 
 Master 修复代码后：
 
@@ -161,6 +161,8 @@ Reviewer 输出 `semantic_issue_id`、受质疑前提和结论、缺失证据、
 
 所有 artifact 必须是本地 Windows 路径。大段内容通过文件传递；消息只传路径、哈希、身份和最小控制字段。
 
+Coordinator 创建的 Codex/AppServer 进程树必须进入关闭即终止的、由 registration operation ID 唯一命名的 Windows Job Object。Runner 拒绝复用已存在的同名 Job，在创建子进程前绑定 Coordinator PID 与进程创建时间，并持续等待该父进程句柄。崩溃验收必须从命名 Job 查询权威成员集合，固定 active-process limit，挂起 runner 之外的全部稳定成员以冻结进程创建，再触发 Coordinator 崩溃，并逐一验证冻结成员身份终止。恢复流程禁止接纳替代实例。
+
 `runtime-authority.json`、SQLite authority row、runtime-scope policy、受保护远程 witness 绑定同一永久 `runtime_authority_id`。生产运行不允许隐式初始化；anchor 或 SQLite 任一缺失即视为权威状态删除并终止。
 
 ## 8. 动态 Agent Registry
@@ -191,7 +193,7 @@ Reviewer 输出 `semantic_issue_id`、受质疑前提和结论、缺失证据、
 
 排除 demo、test、example、benchmark、文档、日志、缓存和构建产物。若生产路径实际导入、加载或打包这些目录中的文件，则该文件不能排除。
 
-Scope 采用 `Master 提案并写入 → reviewer 审核 → 用户确认 → Coordinator 解析并执行`。固定 decision manifest 必须绑定 canonical policy SHA-256、project ID、review report、用户确认 statement、confirmation ID 和 `APPROVED` 决定；hash 形状的占位字符串无效。
+Scope 采用 `Master 写入 canonical definition → reviewer 写入结构化 PASS/FAIL result → 用户确认同一 definition 与 review result → 固定 decision manifest 写入 APPROVED → Coordinator 解析并执行`。Definition 禁止包含 review 或用户确认字段。Review result 必须绑定 project ID、definition SHA-256 和固定 report descriptor；用户确认必须绑定相同 definition、review-result descriptor、confirmation ID 和原始 statement；decision 再绑定三者的精确 descriptor。任何层级不一致即拒绝。
 
 Seal 必须绑定 scope policy 哈希、精确 resolved manifest 哈希、project ID、seal chain ID、sequence 和 previous seal。Scope 变更必须产生新版本和新 Seal，历史不可覆盖。
 
@@ -207,7 +209,7 @@ Test/demo 不进入 runtime behavior Seal。C 只提交 `aegis.test_execution_re
 
 所有 Git 调用必须位于同一个已验证 Git 运行时锁会话内。会话按 scope policy 固定 launcher SHA-256 与完整 Git 依赖闭包 SHA-256；Windows 文件与祖先目录共享锁从校验前持续到最后一次本地或远端 Git 调用返回，禁止校验后替换可执行文件、DLL 或子命令。
 
-`config/seal_witness.json` 使用 `aegis.remote_seal_witness_config.v3`，直接封存 canonical SSH repository URL、protected ref、SSH identity 绝对路径与 SHA-256；禁止 remote alias。SSH 强制使用锁定 Git 发行版内的 `usr/bin/ssh.exe`、锁定 identity、`config/git_ssh_known_hosts`、Ed25519 host key、空 HOME、无代理配置。默认 identity、agent、PKCS#11 与 security-key provider 全部禁用。远程读取在一次性 bare repository 中执行，不读取项目 `.git/config`。引用指向的提交必须包含仓库根文件 `aegis-seal-witness.json`；该文件使用 `aegis.remote_seal_witness.v2`，绑定 project ID、seal chain ID、sequence、Seal、scope policy SHA-256、resolved manifest SHA-256、runtime authority ID 和受治理分支提交。Witness分支提交与受治理分支提交是两个不同对象；前者携带见证文件，后者由其中的 `git_commit` 指向。
+`config/seal_witness.json` 使用 `aegis.remote_seal_witness_config.v3`，直接封存 canonical SSH repository URL、protected ref、SSH identity 绝对路径与 SHA-256；禁止 remote alias。SSH 强制使用锁定 Git 发行版内的 `usr/bin/ssh.exe`、锁定 identity、`config/git_ssh_known_hosts`、Ed25519 host key、空 HOME、无代理配置。默认 identity、agent、PKCS#11 与 security-key provider 全部禁用。远程读取在一次性 bare repository 中执行，不读取项目 `.git/config`。引用指向的提交必须包含仓库根文件 `aegis-seal-witness.json`；该文件使用 `aegis.remote_seal_witness.v3`，绑定 project ID、seal chain ID、sequence、Seal、scope policy SHA-256、scope decision SHA-256、resolved manifest SHA-256、runtime authority ID 和受治理分支提交。Witness分支提交与受治理分支提交是两个不同对象；前者携带见证文件，后者由其中的 `git_commit` 指向。
 
 ## 14. 命令、边界与成功标准
 

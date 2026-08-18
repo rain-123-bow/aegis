@@ -13,7 +13,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -26,11 +26,12 @@ REQUIRED_SOURCE_BINDINGS = (
     "src/main.py",
     "src/tracerelay_client.py",
     "src/codex_app_server_client.py",
-    "submodules/TraceRelay/src/tracerelay/cli.py",
-    "submodules/TraceRelay/src/tracerelay/config.py",
-    "submodules/TraceRelay/src/tracerelay/service.py",
-    "submodules/TraceRelay/src/tracerelay/session.py",
-    "submodules/TraceRelay/src/tracerelay/verify.py",
+    "third_party/TraceRelay/src/tracerelay/cli.py",
+    "third_party/TraceRelay/src/tracerelay/config.py",
+    "third_party/TraceRelay/src/tracerelay/service.py",
+    "third_party/TraceRelay/src/tracerelay/session.py",
+    "third_party/TraceRelay/src/tracerelay/verify.py",
+    "third_party/TraceRelay/PROVENANCE.json",
     "test/runtime_codex_acceptance.py",
 )
 
@@ -40,7 +41,7 @@ from aegis_test_support import (
     write_test_runtime_scope_policy,
 )
 from project_seal_store import record_project_seal, verify_expected_project_seal
-from tracerelay_client import TraceRelayClient
+from tracerelay_client import TraceRelayClient, resolve_tracerelay_command
 
 
 def _source_sha256() -> dict[str, str]:
@@ -71,24 +72,33 @@ def _validate_report_source_binding(report: dict[str, object]) -> None:
                 f"acceptance report source_sha256 mismatch: {relative_path}"
             )
     tracerelay_command = report.get("tracerelay_command")
-    command_sha256 = report.get("tracerelay_command_sha256")
-    if not isinstance(tracerelay_command, str) or not tracerelay_command:
-        raise AssertionError("acceptance report TraceRelay command is missing")
-    command_path = Path(tracerelay_command)
-    if not command_path.is_absolute() or not command_path.is_file():
-        raise AssertionError("acceptance report TraceRelay command is unavailable")
+    python_sha256 = report.get("tracerelay_python_sha256")
     if (
-        not isinstance(command_sha256, str)
-        or len(command_sha256) != 64
-        or any(character not in "0123456789abcdef" for character in command_sha256)
-        or command_sha256 != hashlib.sha256(command_path.read_bytes()).hexdigest()
+        not isinstance(tracerelay_command, list)
+        or not tracerelay_command
+        or any(not isinstance(part, str) or not part for part in tracerelay_command)
     ):
-        raise AssertionError("acceptance report TraceRelay command hash mismatch")
+        raise AssertionError("acceptance report TraceRelay command is missing")
+    expected = list(resolve_tracerelay_command())
+    if tracerelay_command != expected:
+        raise AssertionError("acceptance report TraceRelay SDK command differs")
+    python_path = Path(tracerelay_command[0])
+    if (
+        not python_path.is_absolute()
+        or not python_path.is_file()
+        or not isinstance(python_sha256, str)
+        or len(python_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in python_sha256)
+        or python_sha256 != hashlib.sha256(python_path.read_bytes()).hexdigest()
+    ):
+        raise AssertionError("acceptance report TraceRelay Python hash mismatch")
 
 
-def _cli_json(command: str, *arguments: str) -> tuple[int, dict[str, object]]:
+def _cli_json(
+    command: Sequence[str], *arguments: str
+) -> tuple[int, dict[str, object]]:
     completed = subprocess.run(
-        [command, *arguments],
+        [*command, *arguments],
         stdin=subprocess.DEVNULL,
         capture_output=True,
         check=False,
@@ -110,7 +120,7 @@ def _cli_json(command: str, *arguments: str) -> tuple[int, dict[str, object]]:
     return completed.returncode, payload
 
 
-def _wait_for_not_running(command: str, timeout: float = 15) -> None:
+def _wait_for_not_running(command: Sequence[str], timeout: float = 15) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         _returncode, payload = _cli_json(command, "status")
@@ -254,7 +264,7 @@ def _run_graph_once(
     project: Path,
     artifact_path: Path,
     run_id: str,
-    tracerelay_command: str,
+    tracerelay_command: Sequence[str],
     upstream_port: int,
     prompt: str,
     resume: bool,
@@ -282,8 +292,8 @@ def _run_graph_once(
         str(project),
         "--artifact-path",
         str(artifact_path),
-        "--tracerelay-command",
-        tracerelay_command,
+        "--tracerelay-python",
+        tracerelay_command[0],
         "--tracerelay-upstream-port",
         str(upstream_port),
     ]
@@ -306,7 +316,9 @@ def _run_graph_once(
         return aegis_main.main(arguments)
 
 
-def _verify_session(command: str, session_path: str) -> dict[str, object]:
+def _verify_session(
+    command: Sequence[str], session_path: str
+) -> dict[str, object]:
     returncode, payload = _cli_json(command, "verify", session_path)
     if returncode != 0:
         raise RuntimeError(f"TraceRelay verify failed: {payload}")
@@ -316,14 +328,14 @@ def _verify_session(command: str, session_path: str) -> dict[str, object]:
 def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
     if os.name != "nt":
         raise RuntimeError("runtime acceptance is Windows-only")
-    tracerelay_command = str(Path(args.tracerelay_command).resolve())
+    tracerelay_command = resolve_tracerelay_command(args.tracerelay_python)
     evidence_root = Path(args.evidence_root).resolve()
     evidence_root.mkdir(parents=True, exist_ok=True)
     project = evidence_root / "project"
     _prepare_project(project)
     source_sha256 = _source_sha256()
-    tracerelay_command_sha256 = hashlib.sha256(
-        Path(tracerelay_command).read_bytes()
+    tracerelay_python_sha256 = hashlib.sha256(
+        Path(tracerelay_command[0]).read_bytes()
     ).hexdigest()
 
     _returncode, initial_status = _cli_json(tracerelay_command, "status")
@@ -337,12 +349,12 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
     normal_artifacts = evidence_root / "runs" / normal_run_id
     fault_artifacts = evidence_root / "runs" / fault_run_id
     report: dict[str, object] = {
-        "schema": "aegis.runtime_codex_acceptance.v3",
+        "schema": "aegis.runtime_codex_acceptance.v4",
         "created_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "normal_run_id": normal_run_id,
         "fault_run_id": fault_run_id,
-        "tracerelay_command": tracerelay_command,
-        "tracerelay_command_sha256": tracerelay_command_sha256,
+        "tracerelay_command": list(tracerelay_command),
+        "tracerelay_python_sha256": tracerelay_python_sha256,
     }
 
     hostile = {
@@ -563,7 +575,10 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tracerelay-command", required=True)
+    parser.add_argument(
+        "--tracerelay-python",
+        help="Optional assertion of the active Aegis Python executable.",
+    )
     parser.add_argument("--upstream-port", type=int, default=7899)
     parser.add_argument(
         "--evidence-root", default=r"C:\code\aegis-acceptance-artifacts"

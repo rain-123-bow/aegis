@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import importlib.metadata
 import json
 import os
@@ -9,6 +8,7 @@ import re
 import shutil
 import shlex
 import sys
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -34,6 +34,12 @@ _GIT_RUNTIME_ROOTS = (
     Path("mingw64/libexec/git-core"),
     Path("usr/bin"),
 )
+_TRACERELAY_COMPONENT_ROOT = Path("third_party/TraceRelay")
+_TRACERELAY_SNAPSHOT_ROOT = Path("src/tracerelay")
+_TRACERELAY_SDK_SOURCE = _TRACERELAY_COMPONENT_ROOT / _TRACERELAY_SNAPSHOT_ROOT
+_TRACERELAY_SDK_PROVENANCE = Path("third_party/TraceRelay/PROVENANCE.json")
+_TRACERELAY_PROVENANCE_SCHEMA = "aegis.third_party_python_sdk_snapshot.v1"
+_TRACERELAY_SOURCE_REPOSITORY = "git@github.com:rain-123-bow/TraceRelay.git"
 
 
 def git_runtime_manifest(
@@ -71,7 +77,7 @@ def git_runtime_manifest(
 
 
 def _git_runtime_files(git_command: str | Path) -> list[Path]:
-    git = lexical_absolute(git_command)
+    git = lexical_absolute(git_command).resolve(strict=True)
     git_root = git.parent.parent
     candidates: dict[str, Path] = {str(git).casefold(): git}
     for relative in _GIT_RUNTIME_ROOTS:
@@ -278,21 +284,54 @@ def _system_windows_directory() -> Path:
     return lexical_absolute(buffer.value)
 
 
+def _installed_distribution_versions() -> list[list[str]]:
+    versions = {
+        (
+            str(distribution.metadata.get("Name") or distribution.name),
+            str(distribution.version),
+        )
+        for distribution in importlib.metadata.distributions()
+    }
+    return [
+        [name, version]
+        for name, version in sorted(
+            versions,
+            key=lambda item: (item[0].casefold(), item[0], item[1]),
+        )
+    ]
+
+
 def capture_production_runtime_identity(
     project_root: str | Path,
     *,
     codex_command: str | Path,
-    tracerelay_command: str | Path,
+    tracerelay_command: str | Path | Sequence[str],
     git_command: str | Path,
 ) -> dict[str, Any]:
     project = Path(project_root).resolve()
     files: dict[str, dict[str, object]] = {}
     watched_roots: dict[str, str] = {}
 
-    def add(path: str | Path, source: str) -> None:
+    def add(
+        path: str | Path,
+        source: str,
+        expected_size: int | None = None,
+        expected_sha256: str | None = None,
+    ) -> None:
         candidate = lexical_absolute(path)
         key = str(candidate).casefold()
         if key in files:
+            existing = files[key]
+            if (
+                expected_size is not None
+                and existing["size"] != expected_size
+            ) or (
+                expected_sha256 is not None
+                and existing["sha256"] != expected_sha256
+            ):
+                raise RuntimeIdentityError(
+                    f"production runtime dependency differs: {candidate}"
+                )
             return
         try:
             content, identity = read_regular_file(
@@ -303,11 +342,22 @@ def capture_production_runtime_identity(
             )
         except PathSecurityError as error:
             raise RuntimeIdentityError(str(error)) from error
+        sha256 = hashlib.sha256(content).hexdigest()
+        if (
+            expected_size is not None
+            and len(content) != expected_size
+        ) or (
+            expected_sha256 is not None
+            and sha256 != expected_sha256
+        ):
+            raise RuntimeIdentityError(
+                f"production runtime dependency differs: {candidate}"
+            )
         files[key] = {
             "path": str(candidate),
             "source": source,
             "size": len(content),
-            "sha256": hashlib.sha256(content).hexdigest(),
+            "sha256": sha256,
             "file_identity": {
                 "device": identity.device,
                 "inode": identity.inode,
@@ -389,16 +439,7 @@ def capture_production_runtime_identity(
             }
         )
 
-    installed_versions = sorted(
-        {
-            (
-                str(distribution.metadata.get("Name") or distribution.name),
-                str(distribution.version),
-            )
-            for distribution in importlib.metadata.distributions()
-        },
-        key=lambda item: item[0].casefold(),
-    )
+    installed_versions = _installed_distribution_versions()
 
     codex = lexical_absolute(codex_command)
     add(codex, "codex_launcher")
@@ -420,9 +461,21 @@ def capture_production_runtime_identity(
             if path.is_file():
                 add(path, "codex_package")
 
-    tracerelay = lexical_absolute(tracerelay_command)
-    add(tracerelay, "tracerelay_launcher")
-    _verify_tracerelay_source_identity(project, add)
+    tracerelay_prefix = _normalize_tracerelay_command(tracerelay_command)
+    expected_tracerelay_prefix = (
+        str(lexical_absolute(sys.executable)),
+        "-I",
+        "-B",
+        "-m",
+        "tracerelay",
+    )
+    if tracerelay_prefix != expected_tracerelay_prefix:
+        raise RuntimeIdentityError(
+            "TraceRelay must execute as an SDK in the active Aegis Python runtime"
+        )
+    tracerelay_sdk = _verify_tracerelay_source_identity(project, add)
+    installed_tracerelay_root = str(tracerelay_sdk["installed_package_root"])
+    watched_roots[installed_tracerelay_root.casefold()] = installed_tracerelay_root
 
     git = lexical_absolute(git_command)
     git_files, git_runtime_sha256 = git_runtime_manifest(git)
@@ -443,6 +496,8 @@ def capture_production_runtime_identity(
         "python_pycache_prefix": str(Path(sys.pycache_prefix).resolve()),
         "distributions": distributions,
         "installed_distribution_versions": installed_versions,
+        "tracerelay_command": list(tracerelay_prefix),
+        "tracerelay_sdk": tracerelay_sdk,
         "git_runtime_sha256": git_runtime_sha256,
         "environment_value_sha256": environment,
         "watched_roots": sorted(watched_roots.values(), key=str.casefold),
@@ -507,27 +562,240 @@ def _validate_dependency_closure(requirements: list[tuple[str, str]]) -> None:
                 )
 
 
-def _verify_tracerelay_source_identity(project: Path, add: Any) -> None:
-    sealed_source = project / "submodules" / "TraceRelay" / "src" / "tracerelay"
+def _normalize_tracerelay_command(
+    command: str | Path | Sequence[str],
+) -> tuple[str, ...]:
+    if isinstance(command, (str, Path)):
+        return (str(lexical_absolute(command)),)
+    prefix = tuple(str(part) for part in command)
+    if not prefix:
+        raise RuntimeIdentityError("TraceRelay command prefix is empty")
+    return (str(lexical_absolute(prefix[0])), *prefix[1:])
+
+
+def _verify_tracerelay_source_identity(
+    project: Path, add: Any
+) -> dict[str, str]:
+    sealed_source = project / _TRACERELAY_SDK_SOURCE
+    if not sealed_source.is_dir():
+        raise RuntimeIdentityError(
+            f"TraceRelay SDK source snapshot is unavailable: {sealed_source}"
+        )
+    provenance_path = project / _TRACERELAY_SDK_PROVENANCE
+    provenance, provenance_content = _load_tracerelay_provenance(provenance_path)
+    descriptors = provenance["files"]
+    if not isinstance(descriptors, list):
+        raise RuntimeIdentityError("TraceRelay provenance files must be a list")
+    expected_paths: dict[str, tuple[int, str]] = {}
+    normalized_descriptors: list[dict[str, object]] = []
+    prefix = _TRACERELAY_SNAPSHOT_ROOT.as_posix() + "/"
+    for descriptor in descriptors:
+        if not isinstance(descriptor, dict) or set(descriptor) != {
+            "path",
+            "size",
+            "sha256",
+        }:
+            raise RuntimeIdentityError(
+                "TraceRelay provenance contains an invalid file descriptor"
+            )
+        path_value = descriptor["path"]
+        size = descriptor["size"]
+        sha256 = descriptor["sha256"]
+        if (
+            not isinstance(path_value, str)
+            or not path_value.startswith(prefix)
+            or Path(path_value).as_posix() != path_value
+            or ".." in Path(path_value).parts
+            or isinstance(size, bool)
+            or not isinstance(size, int)
+            or size < 0
+            or not isinstance(sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", sha256) is None
+        ):
+            raise RuntimeIdentityError(
+                "TraceRelay provenance contains a non-canonical file descriptor"
+            )
+        relative = path_value.removeprefix(prefix)
+        if not relative or relative in expected_paths:
+            raise RuntimeIdentityError(
+                "TraceRelay provenance contains a duplicate or empty source path"
+            )
+        expected_paths[relative] = (size, sha256)
+        normalized_descriptors.append(
+            {"path": path_value, "size": size, "sha256": sha256}
+        )
+    ordered_paths = sorted(
+        expected_paths,
+        key=lambda value: value.encode("utf-8"),
+    )
+    if list(expected_paths) != ordered_paths:
+        raise RuntimeIdentityError(
+            "TraceRelay provenance file descriptors are not canonically ordered"
+        )
+    encoded_manifest = json.dumps(
+        normalized_descriptors,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if hashlib.sha256(encoded_manifest).hexdigest() != provenance[
+        "snapshot_manifest_sha256"
+    ]:
+        raise RuntimeIdentityError("TraceRelay provenance manifest hash differs")
+    actual_snapshot = _exact_tree_files(sealed_source, "TraceRelay SDK snapshot")
+    if set(actual_snapshot) != set(expected_paths):
+        raise RuntimeIdentityError(
+            "TraceRelay SDK snapshot file set differs from its provenance"
+        )
+    add(
+        provenance_path,
+        "tracerelay_sdk_provenance",
+        len(provenance_content),
+        hashlib.sha256(provenance_content).hexdigest(),
+    )
+    for relative, path in actual_snapshot.items():
+        expected_size, expected_sha256 = expected_paths[relative]
+        add(
+            path,
+            "tracerelay_sdk_snapshot",
+            expected_size,
+            expected_sha256,
+        )
+    installed_source = _locate_installed_tracerelay_source()
     try:
-        package = importlib.import_module("tracerelay")
-    except (ImportError, AttributeError) as error:
-        raise RuntimeIdentityError("TraceRelay Python package is unavailable") from error
-    package_file = getattr(package, "__file__", None)
-    if not isinstance(package_file, str):
-        raise RuntimeIdentityError("TraceRelay package has no filesystem identity")
-    installed_source = Path(package_file).resolve().parent
-    for source_path in sealed_source.rglob("*.py"):
-        relative = source_path.relative_to(sealed_source)
-        installed_path = installed_source / relative
-        if not installed_path.is_file():
+        installed_source.relative_to(project)
+    except ValueError:
+        pass
+    else:
+        raise RuntimeIdentityError(
+            "TraceRelay must be installed as an SDK outside the Aegis repository"
+        )
+    installed_paths = _exact_tree_files(
+        installed_source, "installed TraceRelay SDK package"
+    )
+    if set(installed_paths) != set(expected_paths):
+        raise RuntimeIdentityError(
+            "installed TraceRelay SDK file set differs from the sealed snapshot"
+        )
+    for relative, installed_path in installed_paths.items():
+        expected_size, expected_sha256 = expected_paths[relative]
+        add(
+            installed_path,
+            "tracerelay_installed_source",
+            expected_size,
+            expected_sha256,
+        )
+    return {
+        "source_repository": str(provenance["source_repository"]),
+        "source_commit": str(provenance["source_commit"]),
+        "snapshot_manifest_sha256": str(provenance["snapshot_manifest_sha256"]),
+        "installed_package_root": str(installed_source),
+    }
+
+
+def _locate_installed_tracerelay_source() -> Path:
+    distributions = []
+    for distribution in importlib.metadata.distributions():
+        name = distribution.metadata.get("Name")
+        if isinstance(name, str) and canonicalize_name(name) == "tracerelay":
+            distributions.append(distribution)
+    if len(distributions) != 1:
+        raise RuntimeIdentityError(
+            "exactly one installed TraceRelay distribution is required"
+        )
+    distribution = distributions[0]
+    candidates: list[Path] = []
+    for relative in distribution.files or ():
+        normalized = Path(relative)
+        if normalized.as_posix() != "tracerelay/__init__.py":
+            continue
+        located = Path(distribution.locate_file(relative))
+        if not located.is_file():
             raise RuntimeIdentityError(
-                f"installed TraceRelay omits sealed source file: {relative.as_posix()}"
+                "installed TraceRelay distribution has no package initializer"
             )
-        sealed = source_path.read_bytes()
-        installed = installed_path.read_bytes()
-        if sealed != installed:
-            raise RuntimeIdentityError(
-                f"installed TraceRelay differs from sealed source: {relative.as_posix()}"
-            )
-        add(installed_path, "tracerelay_installed_source")
+        candidates.append(located.resolve().parent)
+    if len(candidates) != 1:
+        raise RuntimeIdentityError(
+            "installed TraceRelay package root is missing or ambiguous"
+        )
+    return candidates[0]
+
+
+def _load_tracerelay_provenance(
+    path: Path,
+) -> tuple[dict[str, object], bytes]:
+    try:
+        content = path.read_bytes()
+        raw = content.decode("utf-8", errors="strict")
+        provenance = json.loads(raw, object_pairs_hook=_reject_duplicate_json_keys)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+        raise RuntimeIdentityError("TraceRelay provenance is invalid") from error
+    required = {
+        "schema",
+        "component",
+        "source_repository",
+        "source_commit",
+        "source_tree_state",
+        "snapshot_kind",
+        "snapshot_root",
+        "snapshot_manifest_sha256",
+        "files",
+    }
+    if not isinstance(provenance, dict) or set(provenance) != required:
+        raise RuntimeIdentityError("TraceRelay provenance schema fields differ")
+    if (
+        provenance["schema"] != _TRACERELAY_PROVENANCE_SCHEMA
+        or provenance["component"] != "TraceRelay"
+        or provenance["source_repository"] != _TRACERELAY_SOURCE_REPOSITORY
+        or not isinstance(provenance["source_commit"], str)
+        or re.fullmatch(r"[0-9a-f]{40}", provenance["source_commit"]) is None
+        or provenance["source_tree_state"] != "clean"
+        or provenance["snapshot_kind"] != "runtime-python-source"
+        or provenance["snapshot_root"] != _TRACERELAY_SNAPSHOT_ROOT.as_posix()
+        or not isinstance(provenance["snapshot_manifest_sha256"], str)
+        or re.fullmatch(
+            r"[0-9a-f]{64}", provenance["snapshot_manifest_sha256"]
+        )
+        is None
+    ):
+        raise RuntimeIdentityError("TraceRelay provenance identity differs")
+    return provenance, content
+
+
+def _reject_duplicate_json_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _exact_tree_files(root: Path, label: str) -> dict[str, Path]:
+    if _is_link_or_junction(root):
+        raise RuntimeIdentityError(f"{label} root is a link or junction")
+    files: dict[str, Path] = {}
+    for path in sorted(
+        root.rglob("*"),
+        key=lambda candidate: candidate.relative_to(root).as_posix().encode("utf-8"),
+    ):
+        relative = path.relative_to(root).as_posix()
+        if _is_link_or_junction(path):
+            raise RuntimeIdentityError(f"{label} contains a link or junction: {relative}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise RuntimeIdentityError(f"{label} contains a non-file: {relative}")
+        files[relative] = path
+    if not files:
+        raise RuntimeIdentityError(f"{label} is empty")
+    return files
+
+
+def _is_link_or_junction(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)
+    return path.is_symlink() or (callable(is_junction) and is_junction())

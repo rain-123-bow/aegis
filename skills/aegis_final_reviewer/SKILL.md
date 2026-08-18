@@ -273,7 +273,7 @@ FINAL_REVIEW.md
 FINAL_REVIEW_VERDICT.json
 ```
 
-`FINAL_REVIEW_VERDICT.json`必须使用 `aegis.final_review_verdict.v1`，包含当前 `workflow_run_id`、与返回 `status`一致的 `PASS|FAIL`、非空结论、非空原因列表和证据索引。证据条目字段为 `evidence_id`、绝对 `path`、`size`、`sha256`；索引必须包含 `FINAL_REVIEW.md`。Coordinator 会机械校验，缺失或不一致将使 F 失败。
+必须先读取 `execution_control.final_review_input_manifest.path`，核对其 SHA-256，并逐项审核 `authorities` 与 `required_evidence`。`authorities` 必须覆盖 Project Seal、远端 witness 要求/结果、TraceRelay 实际 observed identity。证据清单必须覆盖全部 A/B 规划响应与指令回执（含 C-start 复用快照）、全部 C-E 执行响应与指令回执、每个 C evidence manifest 及其递归 stdout/stderr/execution receipt/raw result；任何 role turn 或原始测试证据都不得遗漏。`FINAL_REVIEW_VERDICT.json`必须使用 `aegis.final_review_verdict.v1`，包含当前 `workflow_run_id`、与返回 `status`一致的 `PASS|FAIL`、非空结论、非空原因列表和证据索引。证据条目字段为 `evidence_id`、绝对 `path`、`size`、`sha256`。索引必须原样包含输入清单中的每个 required descriptor，并额外包含 ID 为 `final-review-input-manifest` 和 `final-review` 的输入清单自身与非空 `FINAL_REVIEW.md` 精确描述符。Coordinator 已在 F 启动前封存输入清单哈希和 required ID 集；缺失、空白、改写或哈希不一致将使 F 失败。只索引 F 自写报告不得通过。
 
 ## FINAL_REVIEW.md 必须包含
 
@@ -329,6 +329,15 @@ evidence/
 ```
 
 ## 最终回复
+
+写完 `FINAL_REVIEW.md` 和 `FINAL_REVIEW_VERDICT.json` 后，分别按原始字节计算 `size` 和小写 SHA-256。最终 JSON 的 `output_artifacts` 必须且只能包含两个条目：`final-review` 对应 `artifact_path/FINAL_REVIEW.md`；`final-review-verdict` 对应 `artifact_path/FINAL_REVIEW_VERDICT.json`。两条都使用绝对路径和精确 `size`、`sha256`。禁止按字符数计算 `size`。F 输入只使用最终输入清单和 `execution_control.prior_role_outputs` 快照。
+
+```json
+"output_artifacts": [
+  {"artifact_id":"final-review","path":"绝对路径/FINAL_REVIEW.md","size":123,"sha256":"64位小写十六进制"},
+  {"artifact_id":"final-review-verdict","path":"绝对路径/FINAL_REVIEW_VERDICT.json","size":456,"sha256":"64位小写十六进制"}
+]
+```
 
 最终回复只能是 JSON。
 

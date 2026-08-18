@@ -12,7 +12,15 @@ from final_review_verdict import (
     FinalReviewVerdictError,
     validate_final_review_verdict,
 )
-from run_state_integrity import synchronize_run_state_reservation
+from run_state_integrity import (
+    RunStateIntegrityError,
+    transition_run_state_reservation,
+)
+from runtime_contracts import (
+    RUN_STATE_SCHEMA,
+    RuntimeContractError,
+    validate_final_review_input_manifest_payload,
+)
 from path_security import (
     PathSecurityError,
     is_within,
@@ -45,15 +53,16 @@ def record_final_review_confirmation(
     state_path = (
         Path(runtime_root).resolve() / "runs" / run_id / "RUN_STATE.json"
     ).resolve()
-    projected_state_bytes, projected_state = _read_json_object(state_path, "run state")
-    if projected_state.get("reservation_token") is not None:
+    try:
         from aegis_runtime import load_run_state
+
         state = load_run_state(runtime_root, run_id)
-        state_bytes = _canonical_json(state)
-    else:
-        state = projected_state
-        state_bytes = projected_state_bytes
-    if state.get("schema") != "aegis.run_state.v10" or state.get("run_id") != run_id:
+    except (OSError, RuntimeError, ValueError) as error:
+        raise FinalReviewConfirmationError(
+            f"cannot load authoritative run state: {error}"
+        ) from error
+    state_bytes = _canonical_json(state)
+    if state.get("schema") != RUN_STATE_SCHEMA or state.get("run_id") != run_id:
         raise FinalReviewConfirmationError("run state identity or schema is invalid")
     graph_state = state.get("graph_state")
     if (
@@ -103,6 +112,17 @@ def record_final_review_confirmation(
     )
     if verdict["sha256"] != final_attempt.get("final_review_verdict_sha256"):
         raise FinalReviewConfirmationError("sealed F verdict hash does not match run state")
+    final_review = _descriptor(
+        final_review_path,
+        allowed_root=artifact_root,
+        label="F final review",
+    )
+    required_evidence = _required_final_review_evidence(
+        final_attempt,
+        artifact_root=artifact_root,
+        final_review=final_review,
+        run_id=run_id,
+    )
     try:
         validated_verdict = validate_final_review_verdict(
             verdict_path,
@@ -110,6 +130,7 @@ def record_final_review_confirmation(
             artifact_root=artifact_root,
             workflow_run_id=run_id,
             expected_status=False,
+            required_evidence=required_evidence,
         )
     except FinalReviewVerdictError as error:
         raise FinalReviewConfirmationError(
@@ -121,79 +142,189 @@ def record_final_review_confirmation(
         raise FinalReviewConfirmationError(
             "sealed F verdict evidence IDs do not match run state"
         )
-    final_review = _descriptor(
-        final_review_path,
-        allowed_root=artifact_root,
-        label="F final review",
-    )
     master_source = Path(master_review_path).resolve()
     master_bytes = _read_required_file(master_source, "Master review")
-    sealed_master_path = artifact_root / "MASTER_FINAL_REVIEW.md"
-    if sealed_master_path.exists():
-        if sealed_master_path.read_bytes() != master_bytes:
-            raise FinalReviewConfirmationError(
-                "sealed Master final review already exists with different content"
-            )
-    else:
-        _atomic_write_bytes(sealed_master_path, master_bytes)
-    master_review = _descriptor(
-        sealed_master_path,
-        allowed_root=artifact_root,
-        label="sealed Master review",
-    )
+    evidence_sources = tuple(evidence_paths)
 
-    evidence: list[dict[str, object]] = []
-    seen: set[Path] = set()
-    for raw_path in evidence_paths:
-        path = Path(os.path.abspath(Path(raw_path)))
-        if path in seen:
+    def commit_transition() -> tuple[dict[str, object], bytes, dict[str, Any]]:
+        if _read_required_file(master_source, "Master review") != master_bytes:
             raise FinalReviewConfirmationError(
-                "Master confirmation evidence index contains a duplicate path"
+                "Master review changed before confirmation was committed"
             )
-        seen.add(path)
-        evidence.append(
-            _descriptor(path, allowed_root=artifact_root, label="confirmation evidence")
+        current_final_review = _descriptor(
+            final_review_path,
+            allowed_root=artifact_root,
+            label="F final review",
         )
-    if final_review_path not in seen:
-        evidence.insert(0, final_review)
-    if verdict_path not in seen:
-        evidence.insert(1, verdict)
-    if not evidence:
-        raise FinalReviewConfirmationError(
-            "Master confirmation requires a non-empty evidence index"
+        current_verdict = _descriptor(
+            verdict_path,
+            allowed_root=artifact_root,
+            label="F verdict",
+        )
+        if current_final_review != final_review or current_verdict != verdict:
+            raise FinalReviewConfirmationError(
+                "sealed F evidence changed before confirmation was committed"
+            )
+        current_required = _required_final_review_evidence(
+            final_attempt,
+            artifact_root=artifact_root,
+            final_review=current_final_review,
+            run_id=run_id,
+        )
+        try:
+            validate_final_review_verdict(
+                verdict_path,
+                project_root=project_root,
+                artifact_root=artifact_root,
+                workflow_run_id=run_id,
+                expected_status=False,
+                required_evidence=current_required,
+            )
+        except FinalReviewVerdictError as error:
+            raise FinalReviewConfirmationError(
+                f"sealed F verdict evidence changed: {error}"
+            ) from error
+
+        sealed_master_path = artifact_root / "MASTER_FINAL_REVIEW.md"
+        if sealed_master_path.exists():
+            if sealed_master_path.read_bytes() != master_bytes:
+                raise FinalReviewConfirmationError(
+                    "sealed Master final review already exists with different content"
+                )
+        else:
+            _atomic_write_bytes(sealed_master_path, master_bytes)
+        master_review = _descriptor(
+            sealed_master_path,
+            allowed_root=artifact_root,
+            label="sealed Master review",
         )
 
-    confirmation_path = artifact_root / "MASTER_FINAL_REVIEW_CONFIRMATION.json"
-    payload = {
-        "schema": FINAL_CONFIRMATION_SCHEMA,
-        "run_id": run_id,
-        "decision": decision,
-        "reviewed_run_state_sha256": hashlib.sha256(state_bytes).hexdigest(),
-        "final_review": final_review,
-        "master_review": master_review,
-        "evidence_index": evidence,
-    }
-    encoded = _canonical_json(payload)
-    if confirmation_path.exists():
-        if confirmation_path.read_bytes() != encoded:
-            raise FinalReviewConfirmationError(
-                "Master final-review confirmation is already recorded"
+        evidence: list[dict[str, object]] = []
+        seen: set[Path] = set()
+        for raw_path in evidence_sources:
+            path = Path(os.path.abspath(Path(raw_path)))
+            if path in seen:
+                raise FinalReviewConfirmationError(
+                    "Master confirmation evidence index contains a duplicate path"
+                )
+            seen.add(path)
+            evidence.append(
+                _descriptor(
+                    path,
+                    allowed_root=artifact_root,
+                    label="confirmation evidence",
+                )
             )
-    else:
-        _atomic_write_bytes(confirmation_path, encoded)
+        if final_review_path not in seen:
+            evidence.insert(0, current_final_review)
+        if verdict_path not in seen:
+            evidence.insert(1, current_verdict)
+        if not evidence:
+            raise FinalReviewConfirmationError(
+                "Master confirmation requires a non-empty evidence index"
+            )
+
+        confirmation_path = artifact_root / "MASTER_FINAL_REVIEW_CONFIRMATION.json"
+        payload = {
+            "schema": FINAL_CONFIRMATION_SCHEMA,
+            "run_id": run_id,
+            "decision": decision,
+            "reviewed_run_state_sha256": hashlib.sha256(state_bytes).hexdigest(),
+            "final_review": current_final_review,
+            "master_review": master_review,
+            "evidence_index": evidence,
+        }
+        encoded = _canonical_json(payload)
+        if confirmation_path.exists():
+            if confirmation_path.read_bytes() != encoded:
+                raise FinalReviewConfirmationError(
+                    "Master final-review confirmation is already recorded"
+                )
+        else:
+            _atomic_write_bytes(confirmation_path, encoded)
+        confirmation = _descriptor(
+            confirmation_path,
+            allowed_root=artifact_root,
+            label="Master final-review confirmation",
+        )
+        new_state = dict(state)
+        new_state["master_review_status"] = decision
+        new_state["master_review_confirmation"] = confirmation
+        encoded_state = _canonical_json(new_state)
+        return new_state, encoded_state, payload
+
+    try:
+        payload = transition_run_state_reservation(
+            Path(runtime_root).resolve(),
+            run_id,
+            state,
+            state_bytes,
+            commit_transition,
+        )
+    except RunStateIntegrityError as error:
+        raise FinalReviewConfirmationError(str(error)) from error
     confirmation = _descriptor(
-        confirmation_path,
+        artifact_root / "MASTER_FINAL_REVIEW_CONFIRMATION.json",
         allowed_root=artifact_root,
         label="Master final-review confirmation",
     )
-    state["master_review_status"] = decision
-    state["master_review_confirmation"] = confirmation
-    encoded_state = _canonical_json(state)
-    synchronize_run_state_reservation(
-        Path(runtime_root).resolve(), run_id, state, encoded_state
-    )
+    new_state = dict(state)
+    new_state["master_review_status"] = decision
+    new_state["master_review_confirmation"] = confirmation
+    encoded_state = _canonical_json(new_state)
     _atomic_write_bytes(state_path, encoded_state)
     return payload
+
+
+def _required_final_review_evidence(
+    final_attempt: dict[str, Any],
+    *,
+    artifact_root: Path,
+    final_review: dict[str, object],
+    run_id: str,
+) -> list[dict[str, object]]:
+    manifest_path = (artifact_root / "FINAL_REVIEW_INPUT_MANIFEST.json").resolve()
+    if final_attempt.get("final_review_input_manifest_path") != str(manifest_path):
+        raise FinalReviewConfirmationError(
+            "sealed F final-review input manifest path does not match run state"
+        )
+    manifest = _descriptor(
+        manifest_path,
+        allowed_root=artifact_root,
+        label="F final-review input manifest",
+    )
+    if manifest["sha256"] != final_attempt.get("final_review_input_manifest_sha256"):
+        raise FinalReviewConfirmationError(
+            "sealed F final-review input manifest hash does not match run state"
+        )
+    raw, payload = _read_json_object(
+        manifest_path, "F final-review input manifest"
+    )
+    if _canonical_json(payload) != raw:
+        raise FinalReviewConfirmationError(
+            "sealed F final-review input manifest is not canonical JSON"
+        )
+    try:
+        normalized = validate_final_review_input_manifest_payload(
+            payload,
+            workflow_run_id=run_id,
+            final_attempt=final_attempt,
+        )
+    except RuntimeContractError as error:
+        raise FinalReviewConfirmationError(
+            f"sealed F final-review input manifest is invalid: {error}"
+        ) from error
+    if [item["evidence_id"] for item in normalized] != final_attempt.get(
+        "final_review_required_evidence_ids"
+    ):
+        raise FinalReviewConfirmationError(
+            "sealed F required evidence IDs do not match run state"
+        )
+    return [
+        *normalized,
+        {"evidence_id": "final-review-input-manifest", **manifest},
+        {"evidence_id": "final-review", **final_review},
+    ]
 
 
 def _descriptor(path: Path, *, allowed_root: Path, label: str) -> dict[str, object]:

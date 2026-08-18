@@ -312,6 +312,12 @@ evidence/
 
 ## 最终回复
 
+写完 `TEST_REPORT.md` 后，按 UTF-8 原始字节计算 `size` 和小写 SHA-256。最终 JSON 必须包含一个 `output_artifacts` 条目：`artifact_id=test-report`，`path=artifact_path/TEST_REPORT.md` 的绝对路径，并填入精确 `size`、`sha256`。禁止按字符数计算 `size`。D 输入只使用 `execution_control.prior_role_outputs` 中最新成功 D 快照。
+
+```json
+"output_artifacts": [{"artifact_id":"test-report","path":"绝对路径/TEST_REPORT.md","size":123,"sha256":"64位小写十六进制"}]
+```
+
 最终回复只能是 JSON。
 
 成功：

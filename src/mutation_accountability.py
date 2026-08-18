@@ -9,7 +9,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from run_state_integrity import synchronize_run_state_reservation
+from run_state_integrity import (
+    RunStateIntegrityError,
+    transition_run_state_reservation,
+)
+from runtime_contracts import RUN_STATE_SCHEMA
 
 
 MUTATION_REASON_SCHEMA = "aegis.frozen_input_mutation_reason.v1"
@@ -34,14 +38,16 @@ def record_frozen_input_mutation_reason(
     state_path = (
         Path(runtime_root).resolve() / "runs" / run_id / "RUN_STATE.json"
     ).resolve()
-    projected_state = _read_json_object(state_path, "run state")
-    if projected_state.get("reservation_token") is not None:
+    try:
         from aegis_runtime import load_run_state
+
         state = load_run_state(runtime_root, run_id)
-    else:
-        state = projected_state
+    except (OSError, RuntimeError, ValueError) as error:
+        raise MutationAccountabilityError(
+            f"cannot load authoritative run state: {error}"
+        ) from error
     if (
-        state.get("schema") != "aegis.run_state.v10"
+        state.get("schema") != RUN_STATE_SCHEMA
         or state.get("run_id") != run_id
         or state.get("status") != "terminated"
         or state.get("termination_reason_code") != "FROZEN_INPUT_MUTATION"
@@ -57,31 +63,100 @@ def record_frozen_input_mutation_reason(
     if artifacts != (state_path.parent / "artifacts").resolve():
         raise MutationAccountabilityError("run state artifact path is invalid")
     reason_bytes = _read_required_file(Path(reason_path).resolve(), "user reason")
-    sealed_reason_path = artifacts / "FROZEN_INPUT_MUTATION_REASON.md"
-    if sealed_reason_path.exists():
-        if sealed_reason_path.read_bytes() != reason_bytes:
-            raise MutationAccountabilityError(
-                "a different frozen-input mutation reason is already sealed"
+    current_encoded_state = _canonical_json(state)
+
+    def commit_transition() -> tuple[dict[str, object], bytes, dict[str, Any]]:
+        sealed_reason_path = artifacts / "FROZEN_INPUT_MUTATION_REASON.md"
+        if sealed_reason_path.exists():
+            if sealed_reason_path.read_bytes() != reason_bytes:
+                raise MutationAccountabilityError(
+                    "a different frozen-input mutation reason is already sealed"
+                )
+        else:
+            _atomic_write_bytes(sealed_reason_path, reason_bytes)
+        reason_descriptor = _descriptor(sealed_reason_path)
+        record_path = artifacts / "FROZEN_INPUT_MUTATION_REASON.json"
+        if record_path.exists():
+            payload = _load_existing_record(
+                record_path,
+                run_id=run_id,
+                user_confirmation_id=user_confirmation_id,
+                reason_descriptor=reason_descriptor,
             )
-    else:
-        _atomic_write_bytes(sealed_reason_path, reason_bytes)
-    reason_descriptor = _descriptor(sealed_reason_path)
-    record_path = artifacts / "FROZEN_INPUT_MUTATION_REASON.json"
-    payload = {
-        "schema": MUTATION_REASON_SCHEMA,
-        "run_id": run_id,
-        "user_confirmation_id": user_confirmation_id,
-        "reason": reason_descriptor,
-        "recorded_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-    }
-    _atomic_write_bytes(record_path, _canonical_json(payload))
-    state["master_review_status"] = "USER_REASON_RECORDED"
-    state["mutation_reason_record"] = _descriptor(record_path)
-    encoded_state = _canonical_json(state)
-    synchronize_run_state_reservation(
-        Path(runtime_root).resolve(), run_id, state, encoded_state
+        else:
+            payload = {
+                "schema": MUTATION_REASON_SCHEMA,
+                "run_id": run_id,
+                "user_confirmation_id": user_confirmation_id,
+                "reason": reason_descriptor,
+                "recorded_at_utc": datetime.now(UTC)
+                .isoformat(timespec="microseconds")
+                .replace("+00:00", "Z"),
+            }
+            _atomic_write_bytes(record_path, _canonical_json(payload))
+        new_state = dict(state)
+        new_state["master_review_status"] = "USER_REASON_RECORDED"
+        new_state["mutation_reason_record"] = _descriptor(record_path)
+        encoded_state = _canonical_json(new_state)
+        return new_state, encoded_state, payload
+
+    try:
+        payload = transition_run_state_reservation(
+            Path(runtime_root).resolve(),
+            run_id,
+            state,
+            current_encoded_state,
+            commit_transition,
+        )
+    except RunStateIntegrityError as error:
+        raise MutationAccountabilityError(str(error)) from error
+    new_state = dict(state)
+    new_state["master_review_status"] = "USER_REASON_RECORDED"
+    new_state["mutation_reason_record"] = _descriptor(
+        artifacts / "FROZEN_INPUT_MUTATION_REASON.json"
     )
+    encoded_state = _canonical_json(new_state)
     _atomic_write_bytes(state_path, encoded_state)
+    return payload
+
+
+def _load_existing_record(
+    path: Path,
+    *,
+    run_id: str,
+    user_confirmation_id: str,
+    reason_descriptor: dict[str, object],
+) -> dict[str, Any]:
+    try:
+        payload = json.loads(
+            _read_required_file(path, "mutation accountability record").decode(
+                "utf-8", errors="strict"
+            )
+        )
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise MutationAccountabilityError(
+            "existing frozen-input mutation record is invalid JSON"
+        ) from error
+    if (
+        not isinstance(payload, dict)
+        or set(payload)
+        != {
+            "schema",
+            "run_id",
+            "user_confirmation_id",
+            "reason",
+            "recorded_at_utc",
+        }
+        or payload.get("schema") != MUTATION_REASON_SCHEMA
+        or payload.get("run_id") != run_id
+        or payload.get("user_confirmation_id") != user_confirmation_id
+        or payload.get("reason") != reason_descriptor
+        or not isinstance(payload.get("recorded_at_utc"), str)
+        or not str(payload["recorded_at_utc"]).strip()
+    ):
+        raise MutationAccountabilityError(
+            "existing frozen-input mutation record does not match this confirmation"
+        )
     return payload
 
 
@@ -92,17 +167,6 @@ def _descriptor(path: Path) -> dict[str, object]:
         "size": len(content),
         "sha256": hashlib.sha256(content).hexdigest(),
     }
-
-
-def _read_json_object(path: Path, label: str) -> dict[str, Any]:
-    raw = _read_required_file(path, label)
-    try:
-        value = json.loads(raw.decode("utf-8", errors="strict"))
-    except (UnicodeError, json.JSONDecodeError) as error:
-        raise MutationAccountabilityError(f"{label} is invalid JSON") from error
-    if not isinstance(value, dict):
-        raise MutationAccountabilityError(f"{label} must be a JSON object")
-    return value
 
 
 def _read_required_file(path: Path, label: str) -> bytes:
