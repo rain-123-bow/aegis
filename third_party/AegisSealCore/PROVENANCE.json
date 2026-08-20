@@ -1,8 +1,9 @@
 {
   "component": "AegisSealCore",
   "source_repository": "git@github.com:rain-123-bow/AegisSealCore.git",
-  "source_base_commit": "90281bce2fe48f2c30ab9158e28f43f96aaded8c",
-  "source_tree_state": "modified-uncommitted",
+  "source_commit": "ae1f17b1eb5cedafdda309b41a8f7c17cd114043",
+  "source_parent_commit": "90281bce2fe48f2c30ab9158e28f43f96aaded8c",
+  "source_tree_state": "clean-committed",
   "source_diff_sha256": "4444c2ae941deba3028e797e9c439d61251efa1e70b945c219affc470d7695d3",
   "build_configuration": "Release",
   "target": "Windows 11 x64",

@@ -3,8 +3,8 @@
 This directory contains the pinned Windows x64 Release binary used by Aegis.
 
 - Source: `git@github.com:rain-123-bow/AegisSealCore.git`
-- Source base commit: `90281bce2fe48f2c30ab9158e28f43f96aaded8c`
-- Current source state: modified and uncommitted; see `PROVENANCE.json` for the source-diff SHA-256. This binary is not release-ready until the private source is committed and this field is replaced by that commit ID.
+- Source commit: `ae1f17b1eb5cedafdda309b41a8f7c17cd114043`
+- Current source state: clean and committed. `PROVENANCE.json` retains the parent commit and exact pre-commit source-diff SHA-256 that were used when the binary was built.
 - Binary: `windows-x64/aegis-seal.exe`
 - SHA-256: `eb2d5ce90c8cfa08b30bb37287486a42521ef18ce80ac1ac765461994fd59301`
 - Interface: ASC-1 binary manifest through `compute` and `verify`
