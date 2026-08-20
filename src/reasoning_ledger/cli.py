@@ -4,12 +4,24 @@ import argparse
 import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from path_security import read_regular_file
+
 from .context_pack import write_context_pack
 from .embedding import EmbeddingError, resolve_query_embedding
-from .models import CreateItem, ItemStatus
+from .models import (
+    EmbeddingProfile,
+    EvidenceDescriptor,
+    RelationType,
+    RevisionValidity,
+    StatementRelation,
+    StatementRevision,
+    StatementType,
+    normalize_relative_path,
+)
 from .project import ProjectLedgerConfig, bootstrap_project_ledger
 from .store import ReasoningLedger
 
@@ -39,26 +51,73 @@ def build_parser() -> argparse.ArgumentParser:
     add_project_args(export)
     export.add_argument("--output", required=True)
 
-    add_item = subparsers.add_parser("add-item")
-    add_project_args(add_item)
-    add_item.add_argument("--id", required=True)
-    add_item.add_argument("--type", required=True, choices=("input", "fact", "rule", "claim"))
-    add_item.add_argument("--status", default="active", choices=("active", "stale", "invalid", "superseded"))
-    add_item.add_argument("--scope-json", default="{}")
-    add_item.add_argument("--scope-file")
-    add_item.add_argument("--content")
-    add_item.add_argument("--content-file")
-    add_item.add_argument("--created-by", required=True)
-    add_item.add_argument("--artifact-path")
-    add_item.add_argument("--source")
-    add_item.add_argument("--evidence-path")
-    add_item.add_argument("--confidence", type=float)
-    add_item.add_argument("--level", type=int, default=0)
-    add_item.add_argument("--version", type=int, default=1)
-    add_item.add_argument("--metadata-json", default="{}")
-    add_item.add_argument("--metadata-file")
-    add_embedding_args(add_item, hash_help="generate an offline lexical hash embedding for item content")
-    add_item.add_argument("--no-embedding", action="store_true")
+    evidence = subparsers.add_parser("register-evidence")
+    add_project_args(evidence)
+    evidence.add_argument("--evidence-id", required=True)
+    evidence.add_argument("--path", required=True)
+    evidence.add_argument("--source-identity-json", required=True)
+    evidence.add_argument("--captured-at")
+    evidence.add_argument("--scope-json", default="{}")
+    evidence.add_argument("--scope-file")
+    evidence.add_argument("--created-by", required=True)
+
+    create = subparsers.add_parser("create-statement")
+    add_project_args(create)
+    add_statement_args(create, initial=True)
+
+    supersede = subparsers.add_parser("supersede-statement")
+    add_project_args(supersede)
+    add_statement_args(supersede, initial=False)
+    supersede.add_argument("--reason", required=True)
+    supersede.add_argument("--relation-id")
+
+    link = subparsers.add_parser(
+        "link-revisions",
+        description=(
+            "Create an evidence-bound edge from an upstream basis or earlier state "
+            "to its dependent or successor state."
+        ),
+    )
+    add_project_args(link)
+    link.add_argument("--relation-id", required=True)
+    link.add_argument("--from-statement-id", required=True)
+    link.add_argument("--from-revision", type=int, required=True)
+    link.add_argument("--to-statement-id", required=True)
+    link.add_argument("--to-revision", type=int, required=True)
+    link.add_argument("--relation-type", choices=[value.value for value in RelationType], required=True)
+    link.add_argument("--conditions-json", default="{}")
+    link.add_argument("--reason", required=True)
+    link.add_argument("--evidence-ids", required=True)
+    link.add_argument("--created-by", required=True)
+
+    profile = subparsers.add_parser("register-embedding-profile")
+    add_project_args(profile)
+    profile.add_argument("--profile-id", required=True)
+    profile.add_argument("--provider", required=True)
+    profile.add_argument("--model", required=True)
+    profile.add_argument("--model-version", required=True)
+    profile.add_argument("--normalization", required=True)
+    profile.add_argument("--input-template-version", required=True)
+    profile.add_argument("--created-by", required=True)
+
+    embedding_input = subparsers.add_parser("embedding-input")
+    add_project_args(embedding_input)
+    embedding_input.add_argument("--statement-id", required=True)
+    embedding_input.add_argument("--revision", type=int, required=True)
+    embedding_input.add_argument("--profile-id", required=True)
+    embedding_input.add_argument("--output")
+
+    store_embedding = subparsers.add_parser("store-embedding")
+    add_project_args(store_embedding)
+    store_embedding.add_argument("--statement-id", required=True)
+    store_embedding.add_argument("--revision", type=int, required=True)
+    store_embedding.add_argument("--profile-id", required=True)
+    store_embedding.add_argument("--embedded-text")
+    store_embedding.add_argument("--embedded-text-file")
+    add_embedding_args(
+        store_embedding,
+        hash_help="generate a deterministic development-only embedding",
+    )
 
     search = subparsers.add_parser("semantic-search")
     add_project_args(search)
@@ -67,10 +126,20 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--scope-json", default="{}")
     search.add_argument("--scope-file")
     search.add_argument("--limit", type=int, default=10)
-    search.add_argument("--statuses", default="active")
-    search.add_argument("--item-types")
+    search.add_argument("--profile-id", required=True)
     search.add_argument("--output")
+    add_hard_filter_args(search)
     add_embedding_args(search, hash_help="use offline lexical hash embedding for the search query")
+
+    lexical = subparsers.add_parser("lexical-search")
+    add_project_args(lexical)
+    lexical.add_argument("--query")
+    lexical.add_argument("--query-file")
+    lexical.add_argument("--scope-json", default="{}")
+    lexical.add_argument("--scope-file")
+    lexical.add_argument("--limit", type=int, default=10)
+    lexical.add_argument("--output")
+    add_hard_filter_args(lexical)
 
     context = subparsers.add_parser("context-pack")
     add_project_args(context)
@@ -91,9 +160,33 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--output")
     context.add_argument("--json-output")
     context.add_argument("--require-semantic", action="store_true")
+    context.add_argument("--embedding-profile-id")
+    add_hard_filter_args(context)
     add_embedding_args(context, hash_help="use offline lexical hash embedding for the context-pack query")
 
     return parser
+
+
+def add_statement_args(parser: argparse.ArgumentParser, *, initial: bool) -> None:
+    parser.add_argument("--statement-id", required=True)
+    parser.add_argument("--revision", type=int, default=1 if initial else None, required=not initial)
+    parser.add_argument("--statement-type", choices=[value.value for value in StatementType], required=True)
+    parser.add_argument("--content")
+    parser.add_argument("--content-file")
+    parser.add_argument("--conditions-json", default="{}")
+    parser.add_argument("--validity", choices=[value.value for value in RevisionValidity], default="ACTIVE")
+    parser.add_argument("--scope-json", default="{}")
+    parser.add_argument("--scope-file")
+    parser.add_argument("--confidence", type=float)
+    parser.add_argument("--evidence-ids", required=True)
+    parser.add_argument("--created-by", required=True)
+
+
+def add_hard_filter_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--statement-types")
+    parser.add_argument("--created-after")
+    parser.add_argument("--created-before")
+    parser.add_argument("--permissions", default="")
 
 
 def add_project_args(parser: argparse.ArgumentParser) -> None:
@@ -120,7 +213,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         return _main(args)
-    except (EmbeddingError, ValueError, KeyError, RuntimeError) as exc:
+    except (EmbeddingError, ValueError, KeyError, PermissionError, RuntimeError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False))
         return 2
 
@@ -144,6 +237,8 @@ def _main(args: argparse.Namespace) -> int:
         project_id=config.project_id,
         schema=config.schema,
         embedding_dimensions=config.embedding_dimensions,
+        minimum_postgresql_major=config.minimum_postgresql_major,
+        minimum_pgvector_version=config.minimum_pgvector_version,
     )
 
     if args.command == "migrate":
@@ -174,8 +269,8 @@ def _main(args: argparse.Namespace) -> int:
         print(
             json.dumps(
                 {
-                    "items": len(snapshot["items"]),
-                    "edges": len(snapshot["edges"]),
+                    "statements": len(snapshot["statements"]),
+                    "relations": len(snapshot["relations"]),
                     "events": len(snapshot["events"]),
                     "output": args.output,
                 },
@@ -184,27 +279,120 @@ def _main(args: argparse.Namespace) -> int:
         )
         return 0
 
-    if args.command == "add-item":
-        return _add_item(args, ledger, config)
+    if args.command == "register-evidence":
+        relative_path = normalize_relative_path(args.path)
+        if relative_path is None:
+            raise ValueError("evidence path must not be empty")
+        evidence_path = config.project_root / relative_path
+        content, _identity = read_regular_file(
+            evidence_path,
+            allowed_root=config.project_root,
+            label="reasoning evidence",
+            max_bytes=64 * 1024 * 1024,
+        )
+        descriptor = ledger.register_evidence(
+            EvidenceDescriptor(
+                evidence_id=args.evidence_id,
+                path=relative_path,
+                size=len(content),
+                sha256=hashlib.sha256(content).hexdigest(),
+                source_identity=_json_object(args.source_identity_json, "source identity"),
+                captured_at=args.captured_at
+                or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                scope=_read_json_arg(args.scope_json, args.scope_file, argument_name="scope"),
+                created_by=args.created_by,
+            )
+        )
+        print(json.dumps({"evidence": descriptor.to_dict()}, ensure_ascii=False))
+        return 0
 
-    if args.command == "semantic-search":
-        return _semantic_search(args, ledger, config)
+    if args.command in {"create-statement", "supersede-statement"}:
+        revision = _statement_revision(args)
+        if args.command == "create-statement":
+            result = ledger.create_statement(revision)
+        else:
+            result = ledger.supersede_statement(
+                revision,
+                reason=args.reason,
+                relation_id=args.relation_id,
+            )
+        print(json.dumps({"revision": result.to_dict()}, ensure_ascii=False))
+        return 0
 
-    if args.command == "context-pack":
-        return _context_pack(args, ledger, config)
+    if args.command == "link-revisions":
+        relation = ledger.create_relation(
+            StatementRelation(
+                relation_id=args.relation_id,
+                from_statement_id=args.from_statement_id,
+                from_revision=args.from_revision,
+                to_statement_id=args.to_statement_id,
+                to_revision=args.to_revision,
+                relation_type=args.relation_type,
+                applicable_conditions=_json_object(args.conditions_json, "conditions"),
+                reason=args.reason,
+                created_by=args.created_by,
+                evidence_ids=_csv(args.evidence_ids) or [],
+            )
+        )
+        print(json.dumps({"relation": relation.to_dict()}, ensure_ascii=False))
+        return 0
 
-    raise AssertionError(args.command)
+    if args.command == "register-embedding-profile":
+        profile = ledger.register_embedding_profile(
+            EmbeddingProfile(
+                profile_id=args.profile_id,
+                provider=args.provider,
+                model=args.model,
+                model_version=args.model_version,
+                dimensions=config.embedding_dimensions,
+                normalization=args.normalization,
+                input_template_version=args.input_template_version,
+                created_by=args.created_by,
+            )
+        )
+        print(
+            json.dumps(
+                {"profile_id": profile.profile_id, "content_sha256": profile.content_sha256},
+                ensure_ascii=False,
+            )
+        )
+        return 0
 
+    if args.command == "embedding-input":
+        embedded_text = ledger.get_embedding_input(
+            statement_id=args.statement_id,
+            revision=args.revision,
+            profile_id=args.profile_id,
+        )
+        if args.output:
+            output = Path(args.output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(embedded_text, encoding="utf-8")
+        print(
+            json.dumps(
+                {
+                    "statement_id": args.statement_id,
+                    "revision": args.revision,
+                    "profile_id": args.profile_id,
+                    "embedded_text": embedded_text,
+                    "embedded_text_sha256": hashlib.sha256(
+                        embedded_text.encode("utf-8")
+                    ).hexdigest(),
+                    "output": args.output,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
 
-def _add_item(args: argparse.Namespace, ledger: ReasoningLedger, config: ProjectLedgerConfig) -> int:
-    content = _read_text_arg(args.content, args.content_file, argument_name="content")
-    scope = _read_json_arg(args.scope_json, args.scope_file, argument_name="scope")
-    metadata = _read_json_arg(args.metadata_json, args.metadata_file, argument_name="metadata")
-    embedding = None
-    embedding_source = "none"
-    if not args.no_embedding:
+    if args.command == "store-embedding":
+        embedded_text = _read_text_arg(
+            args.embedded_text,
+            args.embedded_text_file,
+            argument_name="embedded-text",
+        )
         embedding, embedding_source = resolve_query_embedding(
-            text=content,
+            text=embedded_text,
             dimensions=config.embedding_dimensions,
             embedding_json=args.embedding_json,
             embedding_file=args.embedding_file,
@@ -212,26 +400,56 @@ def _add_item(args: argparse.Namespace, ledger: ReasoningLedger, config: Project
             allow_hash_embedding=args.allow_hash_embedding,
             command_timeout_seconds=args.embedding_timeout,
         )
-    item = ledger.add_item(
-        CreateItem(
-            id=args.id,
-            type=args.type,
-            status=args.status,
-            scope=scope,
-            content=content,
-            created_by=args.created_by,
-            artifact_path=args.artifact_path,
-            source=args.source,
-            evidence_path=args.evidence_path,
-            confidence=args.confidence,
-            level=args.level,
-            version=args.version,
+        if embedding is None:
+            raise EmbeddingError("store-embedding requires an embedding source")
+        ledger.store_embedding(
+            statement_id=args.statement_id,
+            revision=args.revision,
+            profile_id=args.profile_id,
             embedding=embedding,
-            metadata=metadata,
+            embedded_text_sha256=hashlib.sha256(
+                embedded_text.encode("utf-8")
+            ).hexdigest(),
         )
+        print(
+            json.dumps(
+                {
+                    "stored": True,
+                    "statement_id": args.statement_id,
+                    "revision": args.revision,
+                    "profile_id": args.profile_id,
+                    "embedding_source": embedding_source,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    if args.command == "semantic-search":
+        return _semantic_search(args, ledger, config)
+
+    if args.command == "lexical-search":
+        return _lexical_search(args, ledger, config)
+
+    if args.command == "context-pack":
+        return _context_pack(args, ledger, config)
+
+    raise AssertionError(args.command)
+
+
+def _statement_revision(args: argparse.Namespace) -> StatementRevision:
+    return StatementRevision(
+        statement_id=args.statement_id,
+        revision=args.revision,
+        statement_type=args.statement_type,
+        content=_read_text_arg(args.content, args.content_file, argument_name="content"),
+        structured_conditions=_json_object(args.conditions_json, "conditions"),
+        validity=args.validity,
+        scope=_read_json_arg(args.scope_json, args.scope_file, argument_name="scope"),
+        confidence=args.confidence,
+        created_by=args.created_by,
+        evidence_ids=_csv(args.evidence_ids) or [],
     )
-    print(json.dumps({"item": item.to_dict(), "embedding_source": embedding_source}, ensure_ascii=False))
-    return 0
 
 
 def _semantic_search(args: argparse.Namespace, ledger: ReasoningLedger, config: ProjectLedgerConfig) -> int:
@@ -253,10 +471,13 @@ def _semantic_search(args: argparse.Namespace, ledger: ReasoningLedger, config: 
         )
     results = ledger.semantic_search(
         embedding,
+        profile_id=args.profile_id,
         limit=args.limit,
-        statuses=_csv(args.statuses) or [ItemStatus.ACTIVE.value],
-        item_types=_csv(args.item_types),
+        statement_types=_csv(args.statement_types),
         scope=scope,
+        created_after=args.created_after,
+        created_before=args.created_before,
+        permissions=_csv(args.permissions) or [],
     )
     data = {
         "project_id": config.project_id,
@@ -268,6 +489,38 @@ def _semantic_search(args: argparse.Namespace, ledger: ReasoningLedger, config: 
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(json.dumps(data, ensure_ascii=False))
+    return 0
+
+
+def _lexical_search(
+    args: argparse.Namespace,
+    ledger: ReasoningLedger,
+    config: ProjectLedgerConfig,
+) -> int:
+    query = _read_text_arg(args.query, args.query_file, argument_name="query")
+    scope = _read_json_arg(args.scope_json, args.scope_file, argument_name="scope")
+    results = ledger.lexical_search(
+        query,
+        limit=args.limit,
+        statement_types=_csv(args.statement_types),
+        scope=scope,
+        created_after=args.created_after,
+        created_before=args.created_before,
+        permissions=_csv(args.permissions) or [],
+    )
+    data = {
+        "project_id": config.project_id,
+        "query": query,
+        "results": [result.to_dict() for result in results],
+    }
+    if args.output:
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
     print(json.dumps(data, ensure_ascii=False))
     return 0
 
@@ -309,7 +562,9 @@ def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: Pro
             "context-pack --require-semantic needs an embedding source: --embedding-json, "
             "--embedding-file, --embedding-command, AEGIS_LEDGER_EMBEDDING_COMMAND, or --allow-hash-embedding"
         )
-    retrieval_mode = "semantic_search" if embedding is not None else "list_items_fallback"
+    if embedding is not None and not args.embedding_profile_id:
+        raise ValueError("semantic context retrieval requires --embedding-profile-id")
+    retrieval_mode = "hybrid_exact" if embedding is not None else "lexical_exact"
     snapshot_before = ledger.export_snapshot()
     snapshot_before_bytes = json.dumps(
         snapshot_before,
@@ -323,7 +578,12 @@ def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: Pro
         agent_role=args.agent_role,
         query=query,
         query_embedding=embedding,
+        embedding_profile_id=args.embedding_profile_id,
+        statement_types=_csv(args.statement_types),
         scope=scope,
+        created_after=args.created_after,
+        created_before=args.created_before,
+        permissions=_csv(args.permissions) or [],
         limit=args.limit,
         include_causes=args.include_causes,
     )
@@ -340,9 +600,9 @@ def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: Pro
             "reasoning ledger changed while generating the context pack"
         )
     event_ids = [
-        event.get("id")
+        event.get("event_id")
         for event in snapshot_after["events"]
-        if isinstance(event.get("id"), int)
+        if isinstance(event.get("event_id"), int)
     ]
     ledger_revision = max(event_ids, default=0)
     ledger_snapshot_sha256 = hashlib.sha256(snapshot_after_bytes).hexdigest()
@@ -387,11 +647,12 @@ def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: Pro
                 "agent_role": pack.agent_role,
                 "retrieval_mode": retrieval_mode,
                 "embedding_source": embedding_source,
-                "items": len(pack.items),
-                "cause_items": len(pack.cause_items),
-                "edges": len(pack.edges),
+                "candidates": len(pack.candidates),
+                "causal_revisions": len(pack.causal_revisions),
+                "relations": len(pack.relations),
+                "conflicts": len(pack.conflicts),
                 "warnings": len(pack.warnings),
-                "required_artifact_paths": json_data.get("required_artifact_paths", []),
+                "evidence_descriptors": len(pack.evidence_descriptors),
             },
             ensure_ascii=False,
         )
@@ -414,6 +675,13 @@ def _read_json_arg(value: str | None, file_path: str | None, *, argument_name: s
         raise ValueError(f"pass either --{argument_name}-json or --{argument_name}-file, not both")
     raw = Path(file_path).read_text(encoding="utf-8") if file_path else (value or "{}")
     parsed = json.loads(raw)
+    if not isinstance(parsed, Mapping):
+        raise ValueError(f"{argument_name} must be a JSON object")
+    return dict(parsed)
+
+
+def _json_object(value: str, argument_name: str) -> dict[str, Any]:
+    parsed = json.loads(value)
     if not isinstance(parsed, Mapping):
         raise ValueError(f"{argument_name} must be a JSON object")
     return dict(parsed)

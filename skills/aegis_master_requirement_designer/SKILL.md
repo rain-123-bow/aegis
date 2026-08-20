@@ -88,12 +88,12 @@ reasoning ledger 用于提供项目级定向知识，而不是替代用户需求
 
 可用性规则：
 
-1. `active` item 可以作为有效依据。
-2. `stale` item 只能作为风险提示或待确认信息。
-3. `invalid` / `superseded` item 不得作为有效依据。
-4. 如果 reasoning ledger 中存在与用户需求冲突的 active item，必须向用户说明冲突并请求确认。
+1. `current_validity=ACTIVE` 的 statement revision 可以作为有效依据。
+2. `current_validity=STALE` 的 statement revision 只能作为风险提示或待确认信息。
+3. `current_validity=INVALID|SUPERSEDED` 的 statement revision 不得作为有效依据。
+4. 如果 reasoning ledger 中存在与用户需求冲突的 ACTIVE statement revision，必须向用户说明冲突并请求确认。
 5. 如果 reasoning ledger 不可用，不得声称需求已完成项目级一致性校验。
-6. 如果 reasoning ledger 可用但没有相关 active item，可以继续，但必须在需求文档中声明“未发现相关项目级定向知识”。
+6. 如果 reasoning ledger 可用但没有相关 ACTIVE statement revision，可以继续，但必须在需求文档中声明“未发现相关项目级定向知识”。
 
 最终需求文档中必须写明使用了哪些 reasoning ledger 依据，或写明未使用的原因。
 
@@ -205,7 +205,7 @@ reviewer 必须使用 `skills/aegis_master_reviewer/SKILL.md` 定义的事实审
 2. 验收标准无法量化。
 3. 输入输出边界不明确。
 4. 文件路径或系统边界会影响后续执行。
-5. 用户需求与 active reasoning ledger 冲突。
+5. 用户需求与 ACTIVE reasoning ledger statement revision 冲突。
 6. reviewer 标记为 blocking 且 master 无法凭现有材料解决。
 7. 需求变更会影响后续设计、实现、测试范围。
 8. 存在多个合理方案且选择会改变系统行为。
@@ -358,7 +358,7 @@ REQUIREMENT_DESIGN_FINAL.md 将作为后续设计、实现、测试、审核的�
 3. 用聊天上下文替代文档内容。
 4. 替用户决定关键需求边界。
 5. 跳过 reasoning ledger 检查。
-6. 把 stale / invalid / superseded ledger item 当有效依据。
+6. 把 STALE / INVALID / SUPERSEDED statement revision 当有效依据。
 7. 为了推进流程隐藏歧义。
 8. 为了降低实现难度改写用户目标。
 9. 把 reviewer 反馈选择性摘录。

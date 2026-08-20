@@ -7,8 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from path_security import PathSecurityError, read_regular_file
-from reasoning_ledger.project import PROJECT_LEDGER_CONFIG_RELATIVE_PATH
+from reasoning_ledger.project import ProjectLedgerConfig
 from reasoning_ledger.store import ReasoningLedger
 
 
@@ -28,45 +27,29 @@ def export_live_reasoning_ledger_snapshot(
     *,
     project_id_hex: str,
 ) -> dict[str, Any]:
-    root = Path(project_root).resolve()
-    config_path = root / PROJECT_LEDGER_CONFIG_RELATIVE_PATH
     try:
-        raw, _identity = read_regular_file(
-            config_path,
-            allowed_root=root,
-            label="reasoning ledger project configuration",
-            max_bytes=1024 * 1024,
-        )
-        config_data = json.loads(raw.decode("utf-8", errors="strict"))
-    except (PathSecurityError, UnicodeError, json.JSONDecodeError) as error:
+        config = ProjectLedgerConfig.load(project_root)
+    except (OSError, KeyError, TypeError, ValueError) as error:
         raise ReasoningLedgerProvenanceError(
-            f"cannot load reasoning ledger project configuration: {error}"
+            f"reasoning ledger project configuration is invalid: {error}"
         ) from error
-    try:
-        ledger_data = config_data["ledger"]
-        configured_id = str(config_data["project_id"])
-        dsn_env = str(ledger_data["dsn_env"])
-        schema = str(ledger_data["schema"])
-        dimensions = int(ledger_data["embedding_dimensions"])
-    except (KeyError, TypeError, ValueError) as error:
-        raise ReasoningLedgerProvenanceError(
-            "reasoning ledger project configuration is invalid"
-        ) from error
-    if configured_id != project_id_hex:
+    if config.project_id != project_id_hex:
         raise ReasoningLedgerProvenanceError(
             "reasoning ledger project identity differs from the project Seal"
         )
-    dsn = os.environ.get(dsn_env)
+    dsn = os.environ.get(config.dsn_env)
     if not dsn:
         raise ReasoningLedgerProvenanceError(
-            f"reasoning ledger DSN environment variable is missing: {dsn_env}"
+            f"reasoning ledger DSN environment variable is missing: {config.dsn_env}"
         )
     try:
         ledger = ReasoningLedger(
             dsn,
             project_id=project_id_hex,
-            schema=schema,
-            embedding_dimensions=dimensions,
+            schema=config.schema,
+            embedding_dimensions=config.embedding_dimensions,
+            minimum_postgresql_major=config.minimum_postgresql_major,
+            minimum_pgvector_version=config.minimum_pgvector_version,
         )
         snapshot = ledger.export_snapshot()
     except BaseException as error:
@@ -81,8 +64,20 @@ def export_live_reasoning_ledger_snapshot(
 def verify_context_pack_against_live_snapshot(
     pack: Mapping[str, Any], snapshot: Mapping[str, Any]
 ) -> VerifiedLedgerSnapshot:
-    if set(snapshot) != {"items", "edges", "events"} or not all(
-        isinstance(snapshot[field], list) for field in ("items", "edges", "events")
+    required_sections = {
+        "schema",
+        "project_id",
+        "statements",
+        "revisions",
+        "evidence_descriptors",
+        "relations",
+        "events",
+        "current_projection",
+        "embedding_profiles",
+    }
+    if set(snapshot) != required_sections or snapshot.get("schema") != "aegis.reasoning_ledger.snapshot.v2" or not all(
+        isinstance(snapshot[field], list)
+        for field in required_sections - {"schema", "project_id"}
     ):
         raise ReasoningLedgerProvenanceError(
             "live reasoning ledger snapshot has invalid sections"
@@ -103,34 +98,74 @@ def verify_context_pack_against_live_snapshot(
             "context pack ledger hash differs from the Coordinator export"
         )
     event_ids = [
-        event.get("id")
+        event.get("event_id")
         for event in snapshot["events"]
-        if isinstance(event, Mapping) and isinstance(event.get("id"), int)
+        if isinstance(event, Mapping) and isinstance(event.get("event_id"), int)
     ]
     revision = max(event_ids, default=0)
     if ledger_binding.get("revision") != revision:
         raise ReasoningLedgerProvenanceError(
             "context pack ledger revision differs from the Coordinator export"
         )
-    live_items = {
-        item.get("id"): item
-        for item in snapshot["items"]
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    live_revisions = {
+        (item.get("statement_id"), item.get("revision")): item
+        for item in snapshot["revisions"]
+        if isinstance(item, dict)
+        and isinstance(item.get("statement_id"), str)
+        and isinstance(item.get("revision"), int)
     }
-    for item in [*pack.get("items", []), *pack.get("cause_items", [])]:
-        if not isinstance(item, dict) or live_items.get(item.get("id")) != item:
+    candidate_revisions = [
+        item.get("revision")
+        for item in pack.get("candidates", [])
+        if isinstance(item, Mapping)
+    ]
+    for item in [*candidate_revisions, *pack.get("causal_revisions", [])]:
+        key = (
+            item.get("statement_id") if isinstance(item, Mapping) else None,
+            item.get("revision") if isinstance(item, Mapping) else None,
+        )
+        if not isinstance(item, dict) or live_revisions.get(key) != item:
             raise ReasoningLedgerProvenanceError(
-                f"context pack item is absent or differs from the live ledger: {item.get('id') if isinstance(item, dict) else '<invalid>'}"
+                "context pack revision is absent or differs from the live ledger: "
+                + (
+                    f"{key[0]}@{key[1]}"
+                    if isinstance(item, dict)
+                    else "<invalid>"
+                )
             )
-    live_edges = {
-        edge.get("id"): edge
-        for edge in snapshot["edges"]
-        if isinstance(edge, dict) and isinstance(edge.get("id"), int)
+    live_relations = {
+        edge.get("relation_id"): edge
+        for edge in snapshot["relations"]
+        if isinstance(edge, dict) and isinstance(edge.get("relation_id"), str)
     }
-    for edge in pack.get("edges", []):
-        if not isinstance(edge, dict) or live_edges.get(edge.get("id")) != edge:
+    for edge in [*pack.get("relations", []), *pack.get("conflicts", [])]:
+        if not isinstance(edge, dict) or live_relations.get(edge.get("relation_id")) != edge:
             raise ReasoningLedgerProvenanceError(
-                f"context pack edge is absent or differs from the live ledger: {edge.get('id') if isinstance(edge, dict) else '<invalid>'}"
+                "context pack relation is absent or differs from the live ledger: "
+                + (
+                    str(edge.get("relation_id"))
+                    if isinstance(edge, dict)
+                    else "<invalid>"
+                )
+            )
+    live_evidence = {
+        descriptor.get("evidence_id"): descriptor
+        for descriptor in snapshot["evidence_descriptors"]
+        if isinstance(descriptor, dict)
+        and isinstance(descriptor.get("evidence_id"), str)
+    }
+    for descriptor in pack.get("evidence_descriptors", []):
+        if (
+            not isinstance(descriptor, dict)
+            or live_evidence.get(descriptor.get("evidence_id")) != descriptor
+        ):
+            raise ReasoningLedgerProvenanceError(
+                "context pack evidence is absent or differs from the live ledger: "
+                + (
+                    str(descriptor.get("evidence_id"))
+                    if isinstance(descriptor, dict)
+                    else "<invalid>"
+                )
             )
     return VerifiedLedgerSnapshot(
         encoded=canonical_snapshot,

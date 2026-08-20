@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -11,18 +12,23 @@ from uuid import uuid4
 
 import psycopg
 
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from reasoning_ledger import (  # noqa: E402
-    CreateItem,
-    EdgeRelation,
-    ItemType,
-    LinkItems,
+    EmbeddingProfile,
+    EvidenceDescriptor,
     ProjectLedgerConfig,
     ReasoningLedger,
+    RelationType,
+    RevisionValidity,
+    StatementRelation,
+    StatementRevision,
+    StatementType,
     bootstrap_project_ledger,
     build_init_sql,
+    render_statement_embedding_input,
 )
 
 
@@ -30,7 +36,8 @@ TEST_DSN = os.environ.get(
     "AEGIS_LEDGER_DSN",
     "postgresql://aegis:aegis@127.0.0.1:5432/aegis_ledger?connect_timeout=3",
 )
-TEST_SCHEMA = "aegis_test_ledger"
+TEST_SCHEMA = "aegis_test_ledger_v2"
+CAPTURED_AT = "2026-08-20T00:00:00Z"
 
 
 def require_test_database() -> None:
@@ -65,7 +72,68 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
         )
         self.ledger.migrate()
 
-    def test_schema_is_real_postgresql_pgvector_schema(self) -> None:
+    def evidence(self, evidence_id: str, content: bytes = b"evidence") -> str:
+        self.ledger.register_evidence(
+            EvidenceDescriptor(
+                evidence_id=evidence_id,
+                path=f".aegis/reasoning_ledger/artifacts/evidence/{evidence_id}.bin",
+                size=len(content),
+                sha256=hashlib.sha256(content).hexdigest(),
+                source_identity={"kind": "test_fixture", "id": evidence_id},
+                captured_at=CAPTURED_AT,
+                scope={"test": True},
+                created_by="test",
+            )
+        )
+        return evidence_id
+
+    def statement(
+        self,
+        statement_id: str,
+        content: str,
+        *,
+        statement_type: StatementType = StatementType.FACT,
+    ) -> None:
+        evidence_id = self.evidence(f"evidence.{statement_id}", content.encode())
+        self.ledger.create_statement(
+            StatementRevision(
+                statement_id=statement_id,
+                revision=1,
+                statement_type=statement_type,
+                content=content,
+                structured_conditions={},
+                validity=RevisionValidity.ACTIVE,
+                scope={"module": "ledger"},
+                confidence=1.0,
+                created_by="test",
+                evidence_ids=(evidence_id,),
+            )
+        )
+
+    def relation(
+        self,
+        relation_id: str,
+        from_id: str,
+        to_id: str,
+        relation_type: RelationType = RelationType.SUPPORTS,
+    ) -> None:
+        evidence_id = self.evidence(f"evidence.{relation_id}", relation_id.encode())
+        self.ledger.create_relation(
+            StatementRelation(
+                relation_id=relation_id,
+                from_statement_id=from_id,
+                from_revision=1,
+                to_statement_id=to_id,
+                to_revision=1,
+                relation_type=relation_type,
+                applicable_conditions={},
+                reason=f"{from_id} {relation_type.value} {to_id}",
+                created_by="test",
+                evidence_ids=(evidence_id,),
+            )
+        )
+
+    def test_schema_is_v2_postgresql_pgvector_authority(self) -> None:
         with self.ledger.connect() as conn:
             extension = conn.execute(
                 "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
@@ -79,152 +147,201 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
                 """,
                 (TEST_SCHEMA,),
             ).fetchall()
-
         self.assertIsNotNone(extension)
-        self.assertEqual(extension["extversion"], "0.6.0")
         self.assertEqual(
-            [row["table_name"] for row in tables],
-            ["reasoning_edge", "reasoning_event", "reasoning_item", "schema_metadata"],
+            {row["table_name"] for row in tables},
+            {
+                "current_projection",
+                "embedding_profile",
+                "evidence_descriptor",
+                "ledger_event",
+                "relation",
+                "relation_evidence",
+                "schema_metadata",
+                "statement",
+                "statement_embedding",
+                "statement_revision",
+                "statement_revision_evidence",
+            },
         )
 
-    def test_items_edges_tracing_impact_invalidation_search_and_export(self) -> None:
-        self.ledger.add_item(
-            CreateItem(
-                id="input.req.initial",
-                type=ItemType.INPUT,
-                scope={"module": "global", "task": "initial"},
-                content="Use PostgreSQL and pgvector as the project reasoning ledger.",
-                artifact_path=".aegis/reasoning_ledger/artifacts/requirements/initial/README.md",
-                confidence=1.0,
-                embedding=[1, 0, 0],
-                created_by="master_pm",
-            )
+    def test_hybrid_retrieval_preserves_candidate_sources_and_causal_evidence(self) -> None:
+        self.statement("fact.pg", "PostgreSQL stores immutable authority facts.")
+        self.statement("constraint.vector", "Vector similarity is candidate generation only.", statement_type=StatementType.CONSTRAINT)
+        self.statement("claim.ledger", "The ledger separates authority from indexes.", statement_type=StatementType.CLAIM)
+        self.relation("relation.pg.claim", "fact.pg", "claim.ledger")
+        self.relation(
+            "relation.vector.claim",
+            "constraint.vector",
+            "claim.ledger",
+            RelationType.REQUIRES,
         )
-        self.ledger.add_item(
-            CreateItem(
-                id="fact.db.pgvector.enabled",
-                type=ItemType.FACT,
-                scope={"module": "ledger", "task": "bootstrap"},
-                content="The aegis_ledger database has pgvector enabled.",
-                confidence=1.0,
-                embedding=[0.9, 0.1, 0],
-                created_by="test_executor",
-            )
+        profile = EmbeddingProfile(
+            profile_id="test.profile.v1",
+            provider="test",
+            model="fixture",
+            model_version="1",
+            dimensions=3,
+            normalization="L2",
+            input_template_version="statement-v1",
+            created_by="test",
         )
-        self.ledger.add_item(
-            CreateItem(
-                id="claim.ledger.real_backend",
-                type=ItemType.CLAIM,
-                scope={"module": "ledger", "task": "implementation"},
-                content="The reasoning ledger persists to a real PostgreSQL pgvector backend.",
-                artifact_path=".aegis/reasoning_ledger/artifacts/claims/real_backend/README.md",
-                confidence=0.95,
-                embedding=[0.95, 0.05, 0],
-                created_by="execution_implementer",
-            )
+        self.ledger.register_embedding_profile(profile)
+        embedded_text = render_statement_embedding_input(
+            self.ledger.get_current_revision("claim.ledger"),
+            template_version=profile.input_template_version,
         )
-        edge_a = self.ledger.link_items(
-            LinkItems(
-                from_id="input.req.initial",
-                to_id="claim.ledger.real_backend",
-                relation=EdgeRelation.SUPPORTS,
-                reason="user requirement selects PostgreSQL + pgvector",
-                created_by="execution_implementer",
-            )
+        self.ledger.store_embedding(
+            statement_id="claim.ledger",
+            revision=1,
+            profile_id=profile.profile_id,
+            embedding=[1, 0, 0],
+            embedded_text_sha256=hashlib.sha256(
+                embedded_text.encode("utf-8")
+            ).hexdigest(),
         )
-        self.ledger.link_items(
-            LinkItems(
-                from_id="fact.db.pgvector.enabled",
-                to_id="claim.ledger.real_backend",
-                relation=EdgeRelation.SUPPORTS,
-                reason="database extension proves real vector backend is available",
-                created_by="test_executor",
-            )
+        lexical = self.ledger.lexical_search("authority indexes")
+        semantic = self.ledger.semantic_search(
+            [1, 0, 0], profile_id=profile.profile_id
         )
-
-        claim = self.ledger.get_item("claim.ledger.real_backend")
-        self.assertEqual(claim.level, 1)
-        self.assertEqual(edge_a.relation, "supports")
-
-        cause_items, cause_edges = self.ledger.trace_causes("claim.ledger.real_backend")
-        self.assertEqual(
-            {item.id for item in cause_items},
-            {"input.req.initial", "fact.db.pgvector.enabled"},
-        )
-        self.assertEqual(len(cause_edges), 2)
-
-        impact_items, impact_edges = self.ledger.analyze_impact("input.req.initial")
-        self.assertEqual([item.id for item in impact_items], ["claim.ledger.real_backend"])
-        self.assertEqual(len(impact_edges), 1)
-
-        search_results = self.ledger.semantic_search([1, 0, 0], limit=2)
-        self.assertEqual(search_results[0].item.id, "input.req.initial")
-        self.assertLess(search_results[0].distance, search_results[1].distance)
+        self.assertEqual(lexical[0].revision.statement_id, "claim.ledger")
+        self.assertEqual(semantic[0].revision.statement_id, "claim.ledger")
 
         pack = self.ledger.retrieve_context_pack(
-            task_id="task.ledger.implementation",
-            agent_role="execution_implementer",
-            query="real PostgreSQL ledger backend",
-            query_embedding=[0.95, 0.05, 0],
+            task_id="task.ledger",
+            agent_role="engineering",
+            query="authority indexes",
+            query_embedding=[1, 0, 0],
+            embedding_profile_id=profile.profile_id,
             scope={"module": "ledger"},
             limit=3,
         )
-        payload = pack.to_agent_payload()
-        self.assertEqual(payload["project_id"], self.project_id)
-        self.assertIn(
-            ".aegis/reasoning_ledger/artifacts/claims/real_backend/README.md",
-            payload["required_artifact_paths"],
+        claim = next(
+            value
+            for value in pack.candidates
+            if value.revision.statement_id == "claim.ledger"
         )
-
-        stale_items = self.ledger.invalidate_item(
-            "input.req.initial",
-            reason="requirement changed",
-            created_by="master_pm",
+        self.assertEqual(set(claim.sources), {"LEXICAL", "SEMANTIC"})
+        self.assertEqual(
+            {value.statement_id for value in pack.causal_revisions},
+            {"fact.pg", "constraint.vector"},
         )
-        self.assertEqual([item.id for item in stale_items], ["claim.ledger.real_backend"])
-        self.assertEqual(self.ledger.get_item("input.req.initial").status, "invalid")
-        self.assertEqual(self.ledger.get_item("claim.ledger.real_backend").status, "stale")
+        self.assertTrue(pack.evidence_descriptors)
+        self.assertIn("lexical_candidates", pack.retrieval_trace)
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "snapshot.jsonl"
-            snapshot = self.ledger.export_snapshot(output_path)
-            self.assertEqual(len(snapshot["items"]), 3)
-            self.assertEqual(len(snapshot["edges"]), 2)
-            self.assertGreaterEqual(len(snapshot["events"]), 6)
-            self.assertTrue(output_path.read_text(encoding="utf-8").strip())
-
-    def test_supersede_and_index_rebuild_are_persisted(self) -> None:
-        self.ledger.add_item(
-            CreateItem(
-                id="claim.old",
-                type="claim",
+    def test_supersede_is_atomic_and_does_not_mutate_old_revision(self) -> None:
+        self.statement("claim.versioned", "Old statement.", statement_type=StatementType.CLAIM)
+        evidence_id = self.evidence("evidence.claim.versioned.2", b"new")
+        result = self.ledger.supersede_statement(
+            StatementRevision(
+                statement_id="claim.versioned",
+                revision=2,
+                statement_type=StatementType.CLAIM,
+                content="New statement.",
+                structured_conditions={},
+                validity=RevisionValidity.ACTIVE,
                 scope={"module": "ledger"},
-                content="Old claim.",
-                embedding=[0, 1, 0],
+                confidence=1.0,
                 created_by="reviewer",
+                evidence_ids=(evidence_id,),
+            ),
+            reason="new evidence replaced the old claim",
+        )
+        self.assertEqual(result.revision, 2)
+        self.assertEqual(self.ledger.get_current_revision("claim.versioned").revision, 2)
+        snapshot = self.ledger.export_snapshot()
+        old = next(
+            row
+            for row in snapshot["revisions"]
+            if row["statement_id"] == "claim.versioned" and row["revision"] == 1
+        )
+        self.assertEqual(old["content"], "Old statement.")
+        self.assertTrue(
+            any(row["relation_type"] == "SUPERSEDES" for row in snapshot["relations"])
+        )
+
+    def test_relation_cycle_and_cross_project_reference_are_rejected(self) -> None:
+        for statement_id in ("fact.a", "fact.b", "fact.c"):
+            self.statement(statement_id, statement_id)
+        self.relation("relation.a.b", "fact.a", "fact.b")
+        self.relation("relation.b.c", "fact.b", "fact.c")
+        evidence_id = self.evidence("evidence.relation.c.a", b"cycle")
+        with self.assertRaisesRegex(ValueError, "cycle"):
+            self.ledger.create_relation(
+                StatementRelation(
+                    relation_id="relation.c.a",
+                    from_statement_id="fact.c",
+                    from_revision=1,
+                    to_statement_id="fact.a",
+                    to_revision=1,
+                    relation_type=RelationType.SUPPORTS,
+                    applicable_conditions={},
+                    reason="illegal circular support",
+                    created_by="test",
+                    evidence_ids=(evidence_id,),
+                )
+            )
+
+        other = ReasoningLedger(
+            TEST_DSN,
+            project_id=f"other_{uuid4().hex}",
+            schema=TEST_SCHEMA,
+            embedding_dimensions=3,
+        )
+        other_evidence = EvidenceDescriptor(
+            evidence_id="evidence.other",
+            path=".aegis/reasoning_ledger/artifacts/evidence/other.bin",
+            size=1,
+            sha256=hashlib.sha256(b"x").hexdigest(),
+            source_identity={"kind": "test_fixture"},
+            captured_at=CAPTURED_AT,
+            scope={},
+            created_by="test",
+        )
+        other.register_evidence(other_evidence)
+        other.create_statement(
+            StatementRevision(
+                statement_id="fact.other",
+                revision=1,
+                statement_type=StatementType.FACT,
+                content="Other project.",
+                structured_conditions={},
+                validity=RevisionValidity.ACTIVE,
+                scope={},
+                confidence=1.0,
+                created_by="test",
+                evidence_ids=(other_evidence.evidence_id,),
             )
         )
-        new_item = self.ledger.supersede_item(
-            "claim.old",
-            CreateItem(
-                id="claim.new",
-                type="claim",
-                scope={"module": "ledger"},
-                content="New claim.",
-                embedding=[0, 0.9, 0.1],
-                created_by="reviewer",
-            ),
-            reason="new evidence replaced old claim",
-        )
-        indexed_count = self.ledger.rebuild_index(created_by="test_executor")
+        with self.assertRaisesRegex(KeyError, "missing revision"):
+            self.ledger.create_relation(
+                StatementRelation(
+                    relation_id="relation.cross-project",
+                    from_statement_id="fact.a",
+                    from_revision=1,
+                    to_statement_id="fact.other",
+                    to_revision=1,
+                    relation_type=RelationType.SUPPORTS,
+                    applicable_conditions={},
+                    reason="cross project link",
+                    created_by="test",
+                    evidence_ids=(evidence_id,),
+                )
+            )
 
-        self.assertEqual(new_item.id, "claim.new")
-        self.assertEqual(self.ledger.get_item("claim.old").status, "superseded")
-        self.assertEqual(indexed_count, 2)
+    def test_authority_revision_update_is_rejected_by_database(self) -> None:
+        self.statement("fact.immutable", "Immutable.")
+        with self.assertRaises(psycopg.errors.RaiseException):
+            with self.ledger.connect() as conn:
+                conn.execute(
+                    f"UPDATE {TEST_SCHEMA}.statement_revision SET content = 'changed' "
+                    "WHERE project_id = %s AND statement_id = %s",
+                    (self.project_id, "fact.immutable"),
+                )
 
 
 class ReasoningLedgerProjectFileTests(unittest.TestCase):
-    def test_bootstrap_creates_project_owned_files(self) -> None:
+    def test_bootstrap_creates_project_owned_v2_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             result = bootstrap_project_ledger(
@@ -234,24 +351,72 @@ class ReasoningLedgerProjectFileTests(unittest.TestCase):
                 embedding_dimensions=3,
             )
             config = ProjectLedgerConfig.load(project_root)
-
             self.assertEqual(config.project_id, "demo_project")
-            self.assertEqual(
-                config.config_path,
-                project_root / "config" / "reasoning_ledger.json",
-            )
-            self.assertTrue(config.config_path.exists())
-            self.assertFalse((project_root / ".aegis" / "project.json").exists())
+            self.assertEqual(config.authority_schema_version, 2)
+            self.assertFalse(config.approximate_vector_index)
             self.assertTrue(config.migration_path.exists())
             self.assertIn("embedding vector(3)", result.migration_sql)
-            self.assertTrue(
-                (
-                    project_root
-                    / ".aegis"
-                    / "reasoning_ledger"
-                    / "artifacts"
-                    / "claims"
-                ).is_dir()
+            self.assertNotIn("USING hnsw", result.migration_sql)
+
+    def test_project_config_rejects_unsupported_authority_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            bootstrap_project_ledger(
+                project_root,
+                project_id="demo_project",
+                schema="demo_ledger",
+                embedding_dimensions=3,
+            )
+            config_path = project_root / "config" / "reasoning_ledger.json"
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+
+            invalid_values = (
+                ("backend", "sqlite"),
+                ("authority_schema_version", 1),
+                ("approximate_vector_index", True),
+                ("approximate_vector_index", "false"),
+            )
+            for field_name, invalid_value in invalid_values:
+                with self.subTest(field_name=field_name):
+                    invalid_data = json.loads(json.dumps(data))
+                    invalid_data["ledger"][field_name] = invalid_value
+                    config_path.write_text(
+                        json.dumps(invalid_data),
+                        encoding="utf-8",
+                    )
+                    with self.assertRaises(ValueError):
+                        ProjectLedgerConfig.load(project_root)
+
+            missing_data = json.loads(json.dumps(data))
+            del missing_data["ledger"]["authority_schema_version"]
+            config_path.write_text(json.dumps(missing_data), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                ProjectLedgerConfig.load(project_root)
+
+            extra_data = json.loads(json.dumps(data))
+            extra_data["ledger"]["unrecognized_contract"] = True
+            config_path.write_text(json.dumps(extra_data), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                ProjectLedgerConfig.load(project_root)
+
+    def test_project_config_rejects_invalid_operational_bounds(self) -> None:
+        with self.assertRaises(ValueError):
+            ProjectLedgerConfig(
+                project_id="demo_project",
+                project_root=Path.cwd(),
+                embedding_dimensions=0,
+            )
+        with self.assertRaises(ValueError):
+            ProjectLedgerConfig(
+                project_id="demo_project",
+                project_root=Path.cwd(),
+                minimum_postgresql_major=15,
+            )
+        with self.assertRaises(ValueError):
+            ProjectLedgerConfig(
+                project_id="demo_project",
+                project_root=Path.cwd(),
+                minimum_pgvector_version="0.7.4",
             )
 
     def test_build_init_sql_rejects_unsafe_schema_name(self) -> None:
@@ -291,7 +456,6 @@ class MainCliSmokeTests(unittest.TestCase):
                     check=False,
                 )
                 self.assertEqual(migrate.returncode, 0, migrate.stderr)
-
                 probe = subprocess.run(
                     [
                         sys.executable,
@@ -309,9 +473,7 @@ class MainCliSmokeTests(unittest.TestCase):
                 )
                 self.assertEqual(probe.returncode, 0, probe.stderr)
                 payload = json.loads(probe.stdout)
-                self.assertEqual(payload["database"], "aegis_ledger")
-                self.assertEqual(payload["user"], "aegis")
-                self.assertEqual(payload["vector"], "0.6.0")
+                self.assertIsNotNone(payload["vector"])
             finally:
                 with psycopg.connect(TEST_DSN, autocommit=True) as conn:
                     conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")

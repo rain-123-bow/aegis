@@ -5,6 +5,10 @@
     "dsn_env": "AEGIS_LEDGER_DSN",
     "schema": "reasoning_ledger",
     "artifact_root": ".aegis/reasoning_ledger/artifacts",
-    "embedding_dimensions": 1536
+    "embedding_dimensions": 1536,
+    "authority_schema_version": 2,
+    "approximate_vector_index": false,
+    "minimum_postgresql_major": 16,
+    "minimum_pgvector_version": "0.8.0"
   }
 }

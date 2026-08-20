@@ -135,21 +135,21 @@ reasoning ledger 是项目特化知识库，优先级高于通用实践。
 
 使用规则：
 
-1. `active` item 可以作为有效依据。
-2. `stale` item 只能作为风险提示或待确认事项。
-3. `invalid` / `superseded` item 不得作为有效依据。
-4. 如果 active ledger item 与需求文档冲突，必须停下并让用户确认。
-5. 如果 active ledger item 与候选方案冲突，必须淘汰该方案或说明冲突解决方式。
-6. 如果 stale item 影响实现风险，必须写入风险项。
+1. `current_validity=ACTIVE` 的 statement revision 可以作为有效依据。
+2. `current_validity=STALE` 的 statement revision 只能作为风险提示或待确认事项。
+3. `current_validity=INVALID|SUPERSEDED` 的 statement revision 不得作为有效依据。
+4. 如果 ACTIVE statement revision 与需求文档冲突，必须停下并让用户确认。
+5. 如果 ACTIVE statement revision 与候选方案冲突，必须淘汰该方案或说明冲突解决方式。
+6. 如果 STALE statement revision 影响实现风险，必须写入风险项。
 7. 如果 ledger 不可用，不得声称实现方案完成项目级一致性校验。
-8. 如果 ledger 可用但无相关 active item，可以继续，但必须在实现方案中声明。
+8. 如果 ledger 可用但无相关 ACTIVE statement revision，可以继续，但必须在实现方案中声明。
 
 最终实现方案必须列出：
 
 ```text
-- Used active ledger items
-- Relevant stale warnings
-- Ignored invalid / superseded items
+- Used ACTIVE statement revisions
+- Relevant STALE warnings
+- Ignored INVALID / SUPERSEDED revisions
 - Ledger conflicts and resolutions
 ```
 
@@ -523,7 +523,7 @@ If `User Decisions Required` is not empty, the final plan must not be generated.
 4. 用主流实践替代第一性原理推导。
 5. 用默认假设填补关键条件。
 6. 跳过 reasoning ledger。
-7. 把 stale / invalid / superseded ledger item 当有效依据。
+7. 把 STALE / INVALID / SUPERSEDED statement revision 当有效依据。
 8. 不看代码就声称方案适配代码库。
 9. 为了降低实现难度缩小需求。
 10. 为了让方案显得简单隐藏风险。

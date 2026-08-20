@@ -385,25 +385,75 @@ def write_test_reasoning_context_pack(
         raise ValueError("test context pack requires a runtime scope policy")
     evidence_bytes = evidence.read_bytes()
     relative_evidence = evidence.relative_to(project).as_posix()
-    item = {
-        "id": "fact.runtime.scope",
+    evidence_id = "evidence.runtime.scope"
+    evidence_descriptor = {
         "project_id": project_id_hex,
-        "type": "fact",
-        "status": "active",
+        "evidence_id": evidence_id,
+        "path": relative_evidence,
+        "size": len(evidence_bytes),
+        "sha256": hashlib.sha256(evidence_bytes).hexdigest(),
+        "source_identity": {"kind": "unit_test_fixture", "id": evidence_id},
+        "captured_at": "2026-08-17T00:00:00Z",
         "scope": {"task": task_id},
-        "content": "The runtime scope policy is frozen evidence.",
-        "artifact_path": relative_evidence,
-        "source": "runtime-scope-policy",
-        "evidence_path": relative_evidence,
-        "confidence": 1.0,
-        "level": 0,
-        "version": 1,
-        "metadata": {},
+        "content_sha256": "55" * 32,
         "created_by": "unit-test-fixture",
         "created_at": "2026-08-17T00:00:00Z",
-        "updated_at": "2026-08-17T00:00:00Z",
     }
-    live_snapshot = {"items": [item], "edges": [], "events": [{"id": 1}]}
+    revision = {
+        "project_id": project_id_hex,
+        "statement_id": "fact.runtime.scope",
+        "revision": 1,
+        "statement_type": "FACT",
+        "content": "The runtime scope policy is frozen evidence.",
+        "structured_conditions": {},
+        "validity": "ACTIVE",
+        "current_validity": "ACTIVE",
+        "scope": {"task": task_id},
+        "confidence": 1.0,
+        "content_sha256": "66" * 32,
+        "created_by": "unit-test-fixture",
+        "created_at": "2026-08-17T00:00:00Z",
+        "evidence_ids": [evidence_id],
+    }
+    live_snapshot = {
+        "schema": "aegis.reasoning_ledger.snapshot.v2",
+        "project_id": project_id_hex,
+        "statements": [
+            {
+                "project_id": project_id_hex,
+                "statement_id": "fact.runtime.scope",
+                "created_by": "unit-test-fixture",
+                "created_at": "2026-08-17T00:00:00Z",
+            }
+        ],
+        "revisions": [revision],
+        "evidence_descriptors": [evidence_descriptor],
+        "relations": [],
+        "events": [
+            {
+                "project_id": project_id_hex,
+                "event_id": 1,
+                "aggregate_kind": "REVISION",
+                "aggregate_id": "fact.runtime.scope@1",
+                "event_type": "REVISION_CREATED",
+                "reason": "unit test fixture",
+                "payload": {},
+                "created_by": "unit-test-fixture",
+                "created_at": "2026-08-17T00:00:00Z",
+            }
+        ],
+        "current_projection": [
+            {
+                "project_id": project_id_hex,
+                "statement_id": "fact.runtime.scope",
+                "revision": 1,
+                "validity": "ACTIVE",
+                "projection_event_id": 1,
+                "updated_at": "2026-08-17T00:00:00Z",
+            }
+        ],
+        "embedding_profiles": [],
+    }
     live_snapshot_bytes = json.dumps(
         live_snapshot,
         ensure_ascii=False,
@@ -417,7 +467,7 @@ def write_test_reasoning_context_pack(
     live_snapshot_path.parent.mkdir(parents=True, exist_ok=True)
     live_snapshot_path.write_bytes(live_snapshot_bytes)
     payload = {
-        "schema": "aegis.reasoning_context_pack.v1",
+        "schema": "aegis.reasoning_context_pack.v2",
         "project_id_hex": project_id_hex,
         "task_id": task_id,
         "agent_role": agent_role,
@@ -437,6 +487,29 @@ def write_test_reasoning_context_pack(
             "scope": {"task": task_id},
             "limit": 12,
             "include_causes": True,
+            "trace": {
+                "hard_filters": {
+                    "project_id": project_id_hex,
+                    "scope": {"task": task_id},
+                    "validities": ["ACTIVE", "STALE"],
+                    "statement_types": [],
+                    "created_after": None,
+                    "created_before": None,
+                    "permissions": [],
+                },
+                "lexical_candidates": ["fact.runtime.scope@1"],
+                "semantic_candidates": [],
+                "embedding_profile_id": None,
+                "causal_relations": [
+                    "SUPPORTS",
+                    "ASSUMES",
+                    "CAUSES",
+                    "ENABLES",
+                    "REQUIRES",
+                ],
+                "max_causal_depth": 8,
+                "limit": 12,
+            },
         },
         "coverage": {
             "requirements": True,
@@ -447,19 +520,38 @@ def write_test_reasoning_context_pack(
             "environment_facts": True,
             "pending_warnings": True,
         },
-        "items": [item],
-        "cause_items": [],
-        "edges": [],
+        "candidates": [
+            {
+                "revision": revision,
+                "sources": ["LEXICAL"],
+                "lexical_rank": 1.0,
+                "semantic_distance": None,
+            }
+        ],
+        "causal_revisions": [],
+        "relations": [],
+        "conflicts": [],
         "warnings": [],
-        "required_artifact_paths": [relative_evidence],
+        "evidence_descriptors": [evidence_descriptor],
         "evidence_index": [
             {
+                "evidence_id": evidence_id,
                 "path": str(evidence.resolve()),
                 "size": len(evidence_bytes),
                 "sha256": hashlib.sha256(evidence_bytes).hexdigest(),
+                "source_identity": {"kind": "unit_test_fixture", "id": evidence_id},
             }
         ],
     }
+    payload["canonical_payload_sha256"] = hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload), encoding="utf-8")
     return output_path

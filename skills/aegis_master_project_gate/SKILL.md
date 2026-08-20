@@ -23,7 +23,7 @@ description: Use when acting as Aegis MASTER_PROJECT_GATE to create or verify an
 
 ## 当前代码基线
 
-本 skill 面向当前 Aegis 代码形态：`v0.1.2-alpha-langgraph-reset`。
+本 skill 面向当前 Aegis 代码形态：不可变权威推理库 schema v2。
 
 当前代码中的 A-F 测试链路只交换共享 `artifact_path`。
 
@@ -80,7 +80,7 @@ description: Use when acting as Aegis MASTER_PROJECT_GATE to create or verify an
     reasoning_ledger/
       README.md
       migrations/
-        001_init.sql
+        002_immutable_authority.sql
       exports/
       artifacts/
         requirements/
@@ -95,7 +95,7 @@ description: Use when acting as Aegis MASTER_PROJECT_GATE to create or verify an
 
 `config/reasoning_ledger.json` 是当前 reasoning ledger 的受 Seal 覆盖项目配置入口。
 
-`.aegis/reasoning_ledger/migrations/001_init.sql` 是当前 PostgreSQL + pgvector schema 初始化 SQL。
+`.aegis/reasoning_ledger/migrations/002_immutable_authority.sql` 是当前 PostgreSQL + pgvector schema 初始化 SQL。
 
 `.aegis/reasoning_ledger/exports/` 用于存放 reasoning ledger context pack 或 snapshot。
 
@@ -192,12 +192,18 @@ bootstrap_project_ledger(project_root, project_id=project_id)
     "dsn_env": "AEGIS_LEDGER_DSN",
     "schema": "reasoning_ledger",
     "artifact_root": ".aegis/reasoning_ledger/artifacts",
-    "embedding_dimensions": 1536
+    "embedding_dimensions": 1536,
+    "authority_schema_version": 2,
+    "approximate_vector_index": false,
+    "minimum_postgresql_major": 16,
+    "minimum_pgvector_version": "0.8.0"
   }
 }
 ```
 
 `ledger.backend` 当前必须是 `postgresql_pgvector`。
+
+配置顶层字段和 `ledger` 字段集合必须与上述结构精确一致。缺字段、额外字段、错误类型、`authority_schema_version != 2`、`approximate_vector_index != false`、PostgreSQL 基线低于 16、pgvector 基线低于 0.8.0 时全部失败。
 
 `ledger.dsn_env` 指定的环境变量必须能解析到 PostgreSQL DSN，除非输入显式提供 `dsn`。
 
@@ -213,7 +219,7 @@ bootstrap_project_ledger(project_root, project_id=project_id)
 ```text
 <project_root>/.aegis/reasoning_ledger/
 <project_root>/.aegis/reasoning_ledger/README.md
-<project_root>/.aegis/reasoning_ledger/migrations/001_init.sql
+<project_root>/.aegis/reasoning_ledger/migrations/002_immutable_authority.sql
 <project_root>/.aegis/reasoning_ledger/exports/
 <project_root>/.aegis/reasoning_ledger/artifacts/requirements/
 <project_root>/.aegis/reasoning_ledger/artifacts/facts/
@@ -231,13 +237,18 @@ bootstrap_project_ledger(project_root, project_id=project_id)
 
 必要目录必须可读写。
 
-`001_init.sql` 必须非空，并且必须明显包含 PostgreSQL + pgvector 初始化内容，例如：
+`002_immutable_authority.sql` 必须非空，并且必须明显包含 PostgreSQL + pgvector 初始化内容，例如：
 
 ```text
 CREATE EXTENSION IF NOT EXISTS vector
-CREATE TABLE IF NOT EXISTS <schema>.reasoning_item
-CREATE TABLE IF NOT EXISTS <schema>.reasoning_edge
-CREATE TABLE IF NOT EXISTS <schema>.reasoning_event
+CREATE TABLE IF NOT EXISTS <schema>.statement
+CREATE TABLE IF NOT EXISTS <schema>.statement_revision
+CREATE TABLE IF NOT EXISTS <schema>.evidence_descriptor
+CREATE TABLE IF NOT EXISTS <schema>.relation
+CREATE TABLE IF NOT EXISTS <schema>.ledger_event
+CREATE TABLE IF NOT EXISTS <schema>.current_projection
+CREATE TABLE IF NOT EXISTS <schema>.embedding_profile
+CREATE TABLE IF NOT EXISTS <schema>.statement_embedding
 ```
 
 缺失或结构异常时：
@@ -307,7 +318,8 @@ PYTHONPATH=<aegis_repo>/src python -m reasoning_ledger probe \
 
 1. PostgreSQL 可连接。
 2. 当前用户可查询。
-3. pgvector extension 可用。
+3. PostgreSQL 主版本不低于配置基线，当前基线不得低于 16。
+4. pgvector extension 可用，版本不低于配置基线，当前基线不得低于 0.8.0。
 
 探针失败时，返回 `status=false`。
 
@@ -317,18 +329,14 @@ PYTHONPATH=<aegis_repo>/src python -m reasoning_ledger probe \
 
 `probe` 只能证明数据库和 pgvector 可用，不能单独证明 reasoning ledger schema 已可用。
 
-必须进一步执行 context-pack smoke test。
+必须进一步执行只读权威快照导出探针。
 
 推荐命令：
 
 ```bash
-PYTHONPATH=<aegis_repo>/src python -m reasoning_ledger context-pack \
+PYTHONPATH=<aegis_repo>/src python -m reasoning_ledger export \
   --project-root <project_root> \
-  --task-id aegis.project_gate.smoke \
-  --agent-role MASTER_PROJECT_GATE \
-  --query "Aegis project gate reasoning ledger smoke test" \
-  --artifact-path <temporary_probe_artifact_dir> \
-  --allow-hash-embedding
+  --output <temporary_probe_snapshot.json>
 ```
 
 如果输入提供 `dsn`，必须追加：
@@ -337,14 +345,14 @@ PYTHONPATH=<aegis_repo>/src python -m reasoning_ledger context-pack \
 --dsn <dsn>
 ```
 
-smoke test 成功时，必须删除临时 probe artifact。
+导出成功后必须验证：`schema == aegis.reasoning_ledger.snapshot.v2`、`project_id` 与配置一致、权威区段和投影区段完整；随后删除临时快照。
 
-smoke test 失败且错误指向缺失 schema/table/index 时：
+导出失败且错误指向缺失 schema/table/index 时：
 
-- 已授权数据库迁移：执行 `python -m reasoning_ledger migrate --project-root <project_root>`，然后重新执行 smoke test。
+- 已授权数据库迁移：执行 `python -m reasoning_ledger migrate --project-root <project_root>`，然后重新执行导出探针。
 - 未授权数据库迁移：返回 `status=false`，要求用户选择执行迁移、指定已迁移数据库、停止。
 
-smoke test 成功但无相关 active item，不是失败。
+快照为空不是失败。
 
 空推理库可以通过准入；坏推理库不能通过准入。
 
@@ -383,7 +391,7 @@ smoke test 成功但无相关 active item，不是失败。
 1. 文件结构完整。
 2. PostgreSQL + pgvector 可连接。
 3. schema 已迁移或已授权迁移并成功。
-4. context-pack smoke test 成功。
+4. 权威快照导出探针成功。
 
 坏推理库必须失败。
 
@@ -397,7 +405,7 @@ smoke test 成功但无相关 active item，不是失败。
 6. PostgreSQL 连接失败。
 7. pgvector 不可用。
 8. schema 未迁移且用户未授权迁移。
-9. context-pack smoke test 失败。
+9. 权威快照导出探针失败。
 10. 目录内已有结构与当前 Aegis reasoning ledger 约定冲突。
 
 ## 用户决策规则
@@ -453,7 +461,7 @@ smoke test 成功但无相关 active item，不是失败。
 4. `.aegis/reasoning_ledger/` 标准结构完整。
 5. 文件系统 probe 全部成功。
 6. PostgreSQL + pgvector probe 成功。
-7. context-pack smoke test 成功。
+7. 权威快照导出探针成功。
 8. 如果准备启动 LangGraph，`artifact_path` 存在、可读写、所有 agent 一致。
 9. 未发现需要用户决策但尚未决策的问题。
 

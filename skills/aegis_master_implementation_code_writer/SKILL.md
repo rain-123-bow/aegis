@@ -101,15 +101,15 @@ reasoning ledger 是项目特化事实库，优先级高于通用经验。
 
 使用规则：
 
-1. `active` item 可以作为有效依据。
-2. `stale` item 只能作为风险提示。
-3. `invalid` / `superseded` item 不得作为有效依据。
-4. active ledger 与实现方案冲突时，必须停止并让用户确认。
-5. active ledger 与代码事实冲突时，必须记录冲突并确认真实来源。
-6. stale item 影响实现风险时，必须写入风险与测试关注点。
+1. `current_validity=ACTIVE` 的 statement revision 可以作为有效依据。
+2. `current_validity=STALE` 的 statement revision 只能作为风险提示。
+3. `current_validity=INVALID|SUPERSEDED` 的 statement revision 不得作为有效依据。
+4. ACTIVE statement revision 与实现方案冲突时，必须停止并让用户确认。
+5. ACTIVE statement revision 与代码事实冲突时，必须记录冲突并确认真实来源。
+6. STALE statement revision 影响实现风险时，必须写入风险与测试关注点。
 7. 不得复活已被推翻的实现路径。
 
-实现报告必须列出本次使用的 ledger 条目或说明未发现相关 active item。
+实现报告必须列出本次使用的 statement revision 或说明未发现相关 ACTIVE statement revision。
 
 ### 4. 质量第一，速度第二
 
@@ -324,7 +324,7 @@ git checkout -- .
 
 1. `REQUIREMENT_DESIGN_FINAL.md`
 2. `IMPLEMENTATION_PLAN_FINAL.md`
-3. reasoning ledger 相关 active item
+3. reasoning ledger 相关 ACTIVE statement revision
 4. 当前代码相关文件
 5. 项目测试/构建配置
 
@@ -562,7 +562,7 @@ No implementation-time test failure was observed.
 2. 缺少确认后的实现方案。
 3. 代码库不可访问。
 4. 当前代码与实现方案严重不符。
-5. reasoning ledger active item 与方案冲突。
+5. reasoning ledger ACTIVE statement revision 与方案冲突。
 6. 需要破坏性改动但用户未授权。
 7. 需要新增依赖但用户未授权。
 8. 需要修改外部接口但用户未授权。

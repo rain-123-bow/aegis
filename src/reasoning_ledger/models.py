@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import math
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -7,40 +11,37 @@ from pathlib import PurePosixPath
 from typing import Any, Mapping, Sequence
 
 
-class ItemType(str, Enum):
-    INPUT = "input"
-    FACT = "fact"
-    RULE = "rule"
-    CLAIM = "claim"
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+SUPPORTED_EMBEDDING_INPUT_TEMPLATE_VERSION = "statement-v1"
 
 
-class ItemStatus(str, Enum):
-    ACTIVE = "active"
-    STALE = "stale"
-    INVALID = "invalid"
-    SUPERSEDED = "superseded"
+class StatementType(str, Enum):
+    OBSERVATION = "OBSERVATION"
+    FACT = "FACT"
+    CONSTRAINT = "CONSTRAINT"
+    REQUIREMENT = "REQUIREMENT"
+    DECISION = "DECISION"
+    RULE = "RULE"
+    HYPOTHESIS = "HYPOTHESIS"
+    CLAIM = "CLAIM"
 
 
-class EdgeRelation(str, Enum):
-    SUPPORTS = "supports"
-    REFUTES = "refutes"
-    ASSUMES = "assumes"
-    SUPERSEDES = "supersedes"
+class RevisionValidity(str, Enum):
+    ACTIVE = "ACTIVE"
+    STALE = "STALE"
+    INVALID = "INVALID"
+    SUPERSEDED = "SUPERSEDED"
 
 
-class EdgeStatus(str, Enum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-
-
-class EventType(str, Enum):
-    CREATED = "created"
-    LINKED = "linked"
-    INVALIDATED = "invalidated"
-    MARKED_STALE = "marked_stale"
-    REVALIDATED = "revalidated"
-    SUPERSEDED = "superseded"
-    INDEX_REBUILT = "index_rebuilt"
+class RelationType(str, Enum):
+    SUPPORTS = "SUPPORTS"
+    REFUTES = "REFUTES"
+    ASSUMES = "ASSUMES"
+    SUPERSEDES = "SUPERSEDES"
+    CAUSES = "CAUSES"
+    ENABLES = "ENABLES"
+    PREVENTS = "PREVENTS"
+    REQUIRES = "REQUIRES"
 
 
 def enum_value(value: str | Enum) -> str:
@@ -66,7 +67,15 @@ def normalize_relative_path(path: str | None) -> str | None:
 def validate_scope(scope: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(scope, Mapping):
         raise TypeError("scope must be a mapping")
-    return dict(scope)
+    normalized = dict(scope)
+    permissions = normalized.get("required_permissions")
+    if permissions is not None and (
+        not isinstance(permissions, list)
+        or any(not isinstance(value, str) or not value.strip() for value in permissions)
+        or len(permissions) != len(set(permissions))
+    ):
+        raise ValueError("scope required_permissions must be unique non-empty strings")
+    return normalized
 
 
 def validate_embedding(
@@ -81,12 +90,15 @@ def validate_embedding(
         raise ValueError(f"embedding dimension mismatch: expected {dimensions}, got {len(values)}")
     if not values:
         raise ValueError("embedding must not be empty")
+    if any(not math.isfinite(value) for value in values):
+        raise ValueError("embedding values must be finite")
     return values
 
 
 def json_ready(value: Any) -> Any:
     if isinstance(value, datetime):
-        return value.isoformat()
+        encoded = value.isoformat()
+        return encoded[:-6] + "Z" if encoded.endswith("+00:00") else encoded
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, list):
@@ -96,106 +108,254 @@ def json_ready(value: Any) -> Any:
     return value
 
 
+def canonical_content_sha256(value: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        json_ready(dict(value)),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 @dataclass(frozen=True)
-class CreateItem:
-    id: str
-    type: ItemType | str
+class EvidenceDescriptor:
+    evidence_id: str
+    path: str
+    size: int
+    sha256: str
+    source_identity: Mapping[str, Any]
+    captured_at: datetime | str
     scope: Mapping[str, Any]
-    content: str
     created_by: str
-    status: ItemStatus | str = ItemStatus.ACTIVE
-    artifact_path: str | None = None
-    source: str | None = None
-    evidence_path: str | None = None
-    confidence: float | None = None
-    level: int = 0
-    version: int = 1
-    embedding: Sequence[float] | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    content_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if not self.id:
-            raise ValueError("item id must not be empty")
-        if not self.content:
-            raise ValueError("item content must not be empty")
-        if not self.created_by:
+        if not self.evidence_id.strip():
+            raise ValueError("evidence_id must not be empty")
+        normalized_path = normalize_relative_path(self.path)
+        if normalized_path is None:
+            raise ValueError("evidence path must not be empty")
+        if (
+            isinstance(self.size, bool)
+            or not isinstance(self.size, int)
+            or self.size < 0
+        ):
+            raise ValueError("evidence size must be >= 0")
+        if _SHA256_PATTERN.fullmatch(self.sha256) is None:
+            raise ValueError("evidence sha256 must be 64 lowercase hex characters")
+        if not isinstance(self.source_identity, Mapping) or not self.source_identity:
+            raise ValueError("source_identity must be a non-empty mapping")
+        if not str(self.captured_at).strip():
+            raise ValueError("captured_at must not be empty")
+        if not self.created_by.strip():
             raise ValueError("created_by must not be empty")
-        if self.confidence is not None and not 0 <= self.confidence <= 1:
-            raise ValueError("confidence must be between 0 and 1")
-        if self.level < 0:
-            raise ValueError("level must be >= 0")
-        if self.version < 1:
-            raise ValueError("version must be >= 1")
-        enum_value(self.type)
-        enum_value(self.status)
-        normalize_relative_path(self.artifact_path)
-        normalize_relative_path(self.evidence_path)
-        validate_scope(self.scope)
-        validate_embedding(self.embedding)
+        normalized_scope = validate_scope(self.scope)
+        object.__setattr__(self, "path", normalized_path)
+        object.__setattr__(self, "source_identity", dict(self.source_identity))
+        object.__setattr__(self, "scope", normalized_scope)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            canonical_content_sha256(
+                {
+                    "path": normalized_path,
+                    "size": self.size,
+                    "sha256": self.sha256,
+                    "source_identity": dict(self.source_identity),
+                    "captured_at": self.captured_at,
+                    "scope": normalized_scope,
+                    "created_by": self.created_by,
+                }
+            ),
+        )
 
 
 @dataclass(frozen=True)
-class LinkItems:
-    from_id: str
-    to_id: str
-    relation: EdgeRelation | str
+class StatementRevision:
+    statement_id: str
+    revision: int
+    statement_type: StatementType | str
+    content: str
+    structured_conditions: Mapping[str, Any]
+    validity: RevisionValidity | str
+    scope: Mapping[str, Any]
+    confidence: float | None
+    created_by: str
+    evidence_ids: Sequence[str] = ()
+    content_sha256: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not self.statement_id.strip():
+            raise ValueError("statement_id must not be empty")
+        if isinstance(self.revision, bool) or not isinstance(self.revision, int) or self.revision < 1:
+            raise ValueError("revision must be >= 1")
+        if not self.content.strip():
+            raise ValueError("statement content must not be empty")
+        statement_type = enum_value(self.statement_type).upper()
+        validity = enum_value(self.validity).upper()
+        if statement_type not in {value.value for value in StatementType}:
+            raise ValueError("statement_type is invalid")
+        if validity not in {value.value for value in RevisionValidity}:
+            raise ValueError("validity is invalid")
+        if self.confidence is not None and (
+            not math.isfinite(self.confidence) or not 0 <= self.confidence <= 1
+        ):
+            raise ValueError("confidence must be finite and between 0 and 1")
+        if not self.created_by.strip():
+            raise ValueError("created_by must not be empty")
+        evidence_ids = tuple(str(value) for value in self.evidence_ids)
+        if not evidence_ids or any(not value.strip() for value in evidence_ids):
+            raise ValueError("evidence_ids must be non-empty")
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError("evidence_ids must be unique")
+        conditions = validate_scope(self.structured_conditions)
+        scope = validate_scope(self.scope)
+        object.__setattr__(self, "statement_type", statement_type)
+        object.__setattr__(self, "validity", validity)
+        object.__setattr__(self, "structured_conditions", conditions)
+        object.__setattr__(self, "scope", scope)
+        object.__setattr__(self, "evidence_ids", evidence_ids)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            canonical_content_sha256(
+                {
+                    "statement_type": statement_type,
+                    "content": self.content,
+                    "structured_conditions": conditions,
+                    "validity": validity,
+                    "scope": scope,
+                    "confidence": self.confidence,
+                    "evidence_ids": list(evidence_ids),
+                }
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class EmbeddingProfile:
+    profile_id: str
+    provider: str
+    model: str
+    model_version: str
+    dimensions: int
+    normalization: str
+    input_template_version: str
+    created_by: str
+    content_sha256: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        identity_values = {
+            "provider": self.provider,
+            "model": self.model,
+            "model_version": self.model_version,
+            "normalization": self.normalization,
+            "input_template_version": self.input_template_version,
+        }
+        if any(not value.strip() for value in identity_values.values()) or not self.created_by.strip():
+            raise ValueError("embedding profile string fields must not be empty")
+        if self.dimensions <= 0:
+            raise ValueError("embedding profile dimensions must be > 0")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            canonical_content_sha256(
+                {**identity_values, "dimensions": self.dimensions}
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class StatementRelation:
+    relation_id: str
+    from_statement_id: str
+    from_revision: int
+    to_statement_id: str
+    to_revision: int
+    relation_type: RelationType | str
+    applicable_conditions: Mapping[str, Any]
     reason: str
     created_by: str
-    confidence: float | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    evidence_ids: Sequence[str]
+    content_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if not self.from_id or not self.to_id:
-            raise ValueError("edge endpoints must not be empty")
-        if self.from_id == self.to_id:
-            raise ValueError("edge endpoints must be different")
-        if not self.reason:
-            raise ValueError("edge reason must not be empty")
-        if not self.created_by:
-            raise ValueError("created_by must not be empty")
-        if self.confidence is not None and not 0 <= self.confidence <= 1:
-            raise ValueError("confidence must be between 0 and 1")
-        enum_value(self.relation)
+        for field_name in (
+            "relation_id",
+            "from_statement_id",
+            "to_statement_id",
+            "reason",
+            "created_by",
+        ):
+            if not str(getattr(self, field_name)).strip():
+                raise ValueError(f"{field_name} must not be empty")
+        if self.from_revision < 1 or self.to_revision < 1:
+            raise ValueError("relation revisions must be >= 1")
+        if (
+            self.from_statement_id == self.to_statement_id
+            and self.from_revision == self.to_revision
+        ):
+            raise ValueError("relation endpoints must be different")
+        relation_type = enum_value(self.relation_type).upper()
+        if relation_type not in {value.value for value in RelationType}:
+            raise ValueError("relation_type is invalid")
+        evidence_ids = tuple(str(value) for value in self.evidence_ids)
+        if not evidence_ids or any(not value.strip() for value in evidence_ids):
+            raise ValueError("relation evidence_ids must be non-empty")
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError("relation evidence_ids must be unique")
+        conditions = validate_scope(self.applicable_conditions)
+        object.__setattr__(self, "relation_type", relation_type)
+        object.__setattr__(self, "applicable_conditions", conditions)
+        object.__setattr__(self, "evidence_ids", evidence_ids)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            canonical_content_sha256(
+                {
+                    "from_statement_id": self.from_statement_id,
+                    "from_revision": self.from_revision,
+                    "to_statement_id": self.to_statement_id,
+                    "to_revision": self.to_revision,
+                    "relation_type": relation_type,
+                    "applicable_conditions": conditions,
+                    "reason": self.reason,
+                    "evidence_ids": list(evidence_ids),
+                }
+            ),
+        )
 
 
 @dataclass(frozen=True)
-class LedgerItem:
-    id: str
+class LedgerEvidence:
     project_id: str
-    type: ItemType | str
-    status: ItemStatus | str
+    evidence_id: str
+    path: str
+    size: int
+    sha256: str
+    source_identity: Mapping[str, Any]
+    captured_at: datetime | str
     scope: Mapping[str, Any]
-    content: str
-    artifact_path: str | None
-    source: str | None
-    evidence_path: str | None
-    confidence: float | None
-    level: int
-    version: int
-    metadata: Mapping[str, Any]
+    content_sha256: str
     created_by: str
     created_at: datetime | str
-    updated_at: datetime | str
 
     @classmethod
-    def from_row(cls, row: Mapping[str, Any]) -> "LedgerItem":
+    def from_row(cls, row: Mapping[str, Any]) -> "LedgerEvidence":
         return cls(
-            id=str(row["id"]),
             project_id=str(row["project_id"]),
-            type=str(row["type"]),
-            status=str(row["status"]),
+            evidence_id=str(row["evidence_id"]),
+            path=str(row["path"]),
+            size=int(row["size"]),
+            sha256=str(row["sha256"]),
+            source_identity=dict(row["source_identity"] or {}),
+            captured_at=row["captured_at"],
             scope=dict(row["scope"] or {}),
-            content=str(row["content"]),
-            artifact_path=row.get("artifact_path"),
-            source=row.get("source"),
-            evidence_path=row.get("evidence_path"),
-            confidence=row.get("confidence"),
-            level=int(row["level"]),
-            version=int(row["version"]),
-            metadata=dict(row["metadata"] or {}),
+            content_sha256=str(row["content_sha256"]),
             created_by=str(row["created_by"]),
             created_at=row["created_at"],
-            updated_at=row["updated_at"],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -203,58 +363,155 @@ class LedgerItem:
 
 
 @dataclass(frozen=True)
-class LedgerEdge:
-    id: int
+class LedgerStatementRevision:
     project_id: str
-    from_id: str
-    to_id: str
-    relation: EdgeRelation | str
-    status: EdgeStatus | str
-    reason: str
+    statement_id: str
+    revision: int
+    statement_type: str
+    content: str
+    structured_conditions: Mapping[str, Any]
+    validity: str
+    current_validity: str
+    scope: Mapping[str, Any]
     confidence: float | None
-    metadata: Mapping[str, Any]
+    content_sha256: str
     created_by: str
     created_at: datetime | str
+    evidence_ids: Sequence[str] = ()
 
     @classmethod
-    def from_row(cls, row: Mapping[str, Any]) -> "LedgerEdge":
+    def from_row(cls, row: Mapping[str, Any]) -> "LedgerStatementRevision":
+        raw_evidence = row.get("evidence_ids") or []
         return cls(
-            id=int(row["id"]),
             project_id=str(row["project_id"]),
-            from_id=str(row["from_id"]),
-            to_id=str(row["to_id"]),
-            relation=str(row["relation"]),
-            status=str(row["status"]),
-            reason=str(row["reason"]),
+            statement_id=str(row["statement_id"]),
+            revision=int(row["revision"]),
+            statement_type=str(row["statement_type"]),
+            content=str(row["content"]),
+            structured_conditions=dict(row["structured_conditions"] or {}),
+            validity=str(row["validity"]),
+            current_validity=str(row.get("current_validity") or row["validity"]),
+            scope=dict(row["scope"] or {}),
             confidence=row.get("confidence"),
-            metadata=dict(row["metadata"] or {}),
+            content_sha256=str(row["content_sha256"]),
             created_by=str(row["created_by"]),
             created_at=row["created_at"],
+            evidence_ids=tuple(str(value) for value in raw_evidence),
         )
+
+    @property
+    def id(self) -> str:
+        return self.statement_id
+
+    @property
+    def status(self) -> str:
+        return self.current_validity
+
+    @property
+    def type(self) -> str:
+        return self.statement_type
+
+    def to_dict(self) -> dict[str, Any]:
+        return json_ready(self.__dict__)
+
+
+def render_statement_embedding_input(
+    revision: LedgerStatementRevision,
+    *,
+    template_version: str,
+) -> str:
+    if template_version != SUPPORTED_EMBEDDING_INPUT_TEMPLATE_VERSION:
+        raise ValueError(
+            f"unsupported statement embedding input template: {template_version}"
+        )
+    return json.dumps(
+        {
+            "schema": SUPPORTED_EMBEDDING_INPUT_TEMPLATE_VERSION,
+            "statement_type": revision.statement_type,
+            "content": revision.content,
+            "structured_conditions": json_ready(dict(revision.structured_conditions)),
+            "scope": json_ready(dict(revision.scope)),
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+@dataclass(frozen=True)
+class LedgerRelation:
+    project_id: str
+    relation_id: str
+    from_statement_id: str
+    from_revision: int
+    to_statement_id: str
+    to_revision: int
+    relation_type: str
+    applicable_conditions: Mapping[str, Any]
+    reason: str
+    content_sha256: str
+    created_by: str
+    created_at: datetime | str
+    evidence_ids: Sequence[str] = ()
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> "LedgerRelation":
+        return cls(
+            project_id=str(row["project_id"]),
+            relation_id=str(row["relation_id"]),
+            from_statement_id=str(row["from_statement_id"]),
+            from_revision=int(row["from_revision"]),
+            to_statement_id=str(row["to_statement_id"]),
+            to_revision=int(row["to_revision"]),
+            relation_type=str(row["relation_type"]),
+            applicable_conditions=dict(row["applicable_conditions"] or {}),
+            reason=str(row["reason"]),
+            content_sha256=str(row["content_sha256"]),
+            created_by=str(row["created_by"]),
+            created_at=row["created_at"],
+            evidence_ids=tuple(str(value) for value in row.get("evidence_ids") or []),
+        )
+
+    @property
+    def id(self) -> str:
+        return self.relation_id
+
+    @property
+    def from_id(self) -> str:
+        return self.from_statement_id
+
+    @property
+    def to_id(self) -> str:
+        return self.to_statement_id
+
+    @property
+    def relation(self) -> str:
+        return self.relation_type
 
     def to_dict(self) -> dict[str, Any]:
         return json_ready(self.__dict__)
 
 
 @dataclass(frozen=True)
-class LedgerEvent:
-    id: int
+class LedgerAuthorityEvent:
     project_id: str
-    target_kind: str
-    target_id: str
-    event_type: EventType | str
+    event_id: int
+    aggregate_kind: str
+    aggregate_id: str
+    event_type: str
     reason: str
     payload: Mapping[str, Any]
     created_by: str
     created_at: datetime | str
 
     @classmethod
-    def from_row(cls, row: Mapping[str, Any]) -> "LedgerEvent":
+    def from_row(cls, row: Mapping[str, Any]) -> "LedgerAuthorityEvent":
         return cls(
-            id=int(row["id"]),
             project_id=str(row["project_id"]),
-            target_kind=str(row["target_kind"]),
-            target_id=str(row["target_id"]),
+            event_id=int(row["event_id"]),
+            aggregate_kind=str(row["aggregate_kind"]),
+            aggregate_id=str(row["aggregate_id"]),
             event_type=str(row["event_type"]),
             reason=str(row["reason"]),
             payload=dict(row["payload"] or {}),
@@ -262,30 +519,43 @@ class LedgerEvent:
             created_at=row["created_at"],
         )
 
+    @property
+    def id(self) -> int:
+        return self.event_id
+
     def to_dict(self) -> dict[str, Any]:
         return json_ready(self.__dict__)
 
 
 @dataclass(frozen=True)
-class SearchResult:
-    item: LedgerItem
-    distance: float
+class CandidateHit:
+    revision: LedgerStatementRevision
+    sources: Sequence[str]
+    lexical_rank: float | None = None
+    semantic_distance: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"item": self.item.to_dict(), "distance": self.distance}
+        return {
+            "revision": self.revision.to_dict(),
+            "sources": list(self.sources),
+            "lexical_rank": self.lexical_rank,
+            "semantic_distance": self.semantic_distance,
+        }
 
 
 @dataclass(frozen=True)
-class ContextPack:
+class AuthorityContextPack:
     project_id: str
     task_id: str
     agent_role: str
     query: str
-    items: Sequence[LedgerItem]
-    cause_items: Sequence[LedgerItem]
-    edges: Sequence[LedgerEdge]
+    candidates: Sequence[CandidateHit]
+    causal_revisions: Sequence[LedgerStatementRevision]
+    relations: Sequence[LedgerRelation]
+    conflicts: Sequence[LedgerRelation]
     warnings: Sequence[str]
-    artifact_paths: Sequence[str]
+    evidence_descriptors: Sequence[LedgerEvidence]
+    retrieval_trace: Mapping[str, Any]
 
     def to_agent_payload(self) -> dict[str, Any]:
         return {
@@ -293,9 +563,13 @@ class ContextPack:
             "task_id": self.task_id,
             "agent_role": self.agent_role,
             "query": self.query,
-            "items": [item.to_dict() for item in self.items],
-            "cause_items": [item.to_dict() for item in self.cause_items],
-            "edges": [edge.to_dict() for edge in self.edges],
+            "candidates": [value.to_dict() for value in self.candidates],
+            "causal_revisions": [value.to_dict() for value in self.causal_revisions],
+            "relations": [value.to_dict() for value in self.relations],
+            "conflicts": [value.to_dict() for value in self.conflicts],
             "warnings": list(self.warnings),
-            "required_artifact_paths": list(dict.fromkeys(self.artifact_paths)),
+            "evidence_descriptors": [
+                value.to_dict() for value in self.evidence_descriptors
+            ],
+            "retrieval_trace": json_ready(dict(self.retrieval_trace)),
         }

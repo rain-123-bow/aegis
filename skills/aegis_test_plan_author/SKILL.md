@@ -157,10 +157,10 @@ context pack 获取规则：
 
 reasoning ledger 状态规则：
 
-- `active` item：可作为有效判断依据。
-- `stale` item：只能作为风险提示或待确认项，不得直接作为确定结论依据。
-- `invalid` item：不得作为有效依据。
-- `superseded` item：不得作为有效依据；必须优先寻找其替代项。
+- `current_validity=ACTIVE` 的 statement revision：可作为有效判断依据。
+- `current_validity=STALE` 的 statement revision：只能作为风险提示或待确认项，不得直接作为确定结论依据。
+- `current_validity=INVALID` 的 statement revision：不得作为有效依据。
+- `current_validity=SUPERSEDED` 的 statement revision：不得作为有效依据；必须优先寻找其替代版本。
 
 edge 使用规则：
 
@@ -177,9 +177,9 @@ warning 处理规则：
 
 禁止行为：
 
-1. 不得复活已被 `invalid` 或 `superseded` 标记的旧假设。
-2. 不得忽略 `active refutes` 边。
-3. 不得把 `stale` 项写成确定事实。
+1. 不得复活 `current_validity=INVALID|SUPERSEDED` 的旧假设。
+2. 不得忽略来源版本为 ACTIVE 的 `REFUTES` relation。
+3. 不得把 STALE statement revision 写成确定事实。
 4. 不得用 reasoning ledger 私自重解释上游已经批准的测试矩阵。
 5. 不得用 reasoning ledger 为证据缺失、覆盖遗漏或测试跳过开脱。
 
@@ -296,7 +296,7 @@ TEST_CASE_INDEX.md
 10. 幂等性。
 11. 失败回滚。
 12. 上下游协议。
-13. reasoning ledger active knowledge 指出的历史风险。
+13. reasoning ledger ACTIVE statement revision 指出的历史风险。
 14. 需求、实现、代码、reasoning ledger 之间的冲突点。
 
 ## 生产有效缺陷规则
@@ -305,7 +305,7 @@ TEST_CASE_INDEX.md
 
 有效缺陷必须同时满足：
 
-1. 来源可追溯：需求文档、实现方案文档、代码行为、接口契约、部署约束、reasoning ledger active item 之一。
+1. 来源可追溯：需求文档、实现方案文档、代码行为、接口契约、部署约束、reasoning ledger ACTIVE statement revision 之一。
 2. 生产可发生：真实部署或真实调用路径中可能出现。
 3. 触发路径明确：前置状态、输入、操作步骤、系统状态清楚。
 4. 失败判据明确：期望行为、失败表现、影响结果清楚。
@@ -351,7 +351,7 @@ Bug 数量不直接加分；只有通过生产有效性校验的缺陷才计入�
 3. 场景来源。
 4. 覆盖需求。
 5. 覆盖实现机制。
-6. 覆盖 reasoning ledger item。
+6. 覆盖 reasoning ledger statement revision。
 7. 前置条件。
 8. 输入数据。
 9. 执行步骤。
