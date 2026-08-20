@@ -1,0 +1,667 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/codex_authority_event.v1.schema.json",
+  "title": "CodexAuthorityEvent.v1",
+  "description": "Normalized authority envelope over Codex CLI 0.145.0 app-server Thread, collabAgentToolCall, lifecycle notifications, and child AgentMessage records.",
+  "$comment": "Protocol compatibility is pinned to the JCS semantic SHA-256 of the generated app-server schema, not its serialization-sensitive raw hash. The Phase 0A evidence set separately records the frozen bundle path, byte size, and observed raw hash. Phase 0B must prove same-Desktop access and bind every projection below to the preserved raw records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "authority",
+    "codex_cli_version",
+    "app_server_protocol_canonicalization",
+    "app_server_protocol_semantic_sha256",
+    "protocol_bundle_evidence_record_id",
+    "authority_event_id",
+    "event_purpose",
+    "thread",
+    "collab_agent_tool_call",
+    "raw_records",
+    "child_result_binding",
+    "observed_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "CodexAuthorityEvent.v1"
+    },
+    "authority": {
+      "const": "CODEX_APP_SERVER"
+    },
+    "codex_cli_version": {
+      "const": "0.145.0"
+    },
+    "app_server_protocol_canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "app_server_protocol_semantic_sha256": {
+      "const": "1bc09dedc506075562d4d49b702ecab6d947dd5a8c2a9014a5cde592a0938efb"
+    },
+    "protocol_bundle_evidence_record_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "authority_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "event_purpose": {
+      "type": "string",
+      "enum": [
+        "PROVISION",
+        "DISPATCH",
+        "CHILD_RESULT",
+        "CAPABILITY",
+        "CLOSE"
+      ]
+    },
+    "thread": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/thread"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "collab_agent_tool_call": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/collabAgentToolCall"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "raw_records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/rawRecord"
+      }
+    },
+    "child_result_binding": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/childResultBinding"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observed_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event_purpose": {
+            "const": "PROVISION"
+          }
+        },
+        "required": [
+          "event_purpose"
+        ]
+      },
+      "then": {
+        "properties": {
+          "collab_agent_tool_call": {
+            "$ref": "#/$defs/collabAgentToolCall"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_purpose": {
+            "const": "CHILD_RESULT"
+          }
+        },
+        "required": [
+          "event_purpose"
+        ]
+      },
+      "then": {
+        "properties": {
+          "thread": {
+            "$ref": "#/$defs/thread"
+          },
+          "collab_agent_tool_call": {
+            "$ref": "#/$defs/collabAgentToolCall"
+          },
+          "child_result_binding": {
+            "$ref": "#/$defs/childResultBinding"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "child_result_binding": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "$comment": "The gate verifies unique raw-record path/hash pairs, raw byte hashes, thread/session/parent/source projections, sender/receiver membership, item/turn lifecycle IDs, and the child AgentMessage/outbox byte equality. Failed spawn may have thread=null and empty receiver/state collections."
+    }
+  ],
+  "$defs": {
+    "thread": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sessionId",
+        "parentThreadId",
+        "createdAt",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "sessionId": {
+          "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+        },
+        "parentThreadId": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source": {
+          "$ref": "#/$defs/subAgentSource"
+        }
+      }
+    },
+    "subAgentSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subAgent"
+      ],
+      "properties": {
+        "subAgent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "thread_spawn"
+          ],
+          "properties": {
+            "thread_spawn": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "parent_thread_id",
+                "depth"
+              ],
+              "properties": {
+                "parent_thread_id": {
+                  "$ref": "common.v1.schema.json#/$defs/uuidV7"
+                },
+                "depth": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "agent_role": {
+                  "anyOf": [
+                    {
+                      "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "agent_nickname": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "agent_path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1,
+                  "maxLength": 4096
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "collabAgentToolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "tool",
+        "senderThreadId",
+        "receiverThreadIds",
+        "status",
+        "agentsStates"
+      ],
+      "properties": {
+        "type": {
+          "const": "collabAgentToolCall"
+        },
+        "id": {
+          "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+        },
+        "tool": {
+          "type": "string",
+          "enum": [
+            "spawnAgent",
+            "sendInput",
+            "resumeAgent",
+            "wait",
+            "closeAgent"
+          ]
+        },
+        "senderThreadId": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "receiverThreadIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "inProgress",
+            "completed",
+            "failed"
+          ]
+        },
+        "agentsStates": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_./:@-]+$",
+            "maxLength": 256
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/collabAgentState"
+          }
+        },
+        "prompt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1048576
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "reasoningEffort": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra",
+            null
+          ]
+        }
+      }
+    },
+    "collabAgentState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "pendingInit",
+            "running",
+            "interrupted",
+            "completed",
+            "errored",
+            "shutdown",
+            "notFound"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 32768
+        }
+      }
+    },
+    "rawRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_kind",
+        "method",
+        "request_id",
+        "notification_seq",
+        "lifecycle_at_ms",
+        "thread_id",
+        "turn_id",
+        "item_id",
+        "runtime_path",
+        "run_relative_path",
+        "canonical_casefold_key",
+        "byte_size",
+        "raw_sha256"
+      ],
+      "properties": {
+        "record_kind": {
+          "type": "string",
+          "enum": [
+            "REQUEST_RESPONSE",
+            "ITEM_STARTED",
+            "ITEM_COMPLETED",
+            "TURN_COMPLETED"
+          ]
+        },
+        "method": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notification_seq": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "lifecycle_at_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "thread_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime_path": {
+          "$ref": "common.v1.schema.json#/$defs/runtimeAbsolutePath"
+        },
+        "run_relative_path": {
+          "$ref": "common.v1.schema.json#/$defs/runRelativePath"
+        },
+        "canonical_casefold_key": {
+          "$ref": "common.v1.schema.json#/$defs/runtimeCanonicalPathKey"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "record_kind": {
+              "const": "REQUEST_RESPONSE"
+            },
+            "request_id": {
+              "anyOf": [
+                {
+                  "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "notification_seq": {
+              "type": "null"
+            },
+            "lifecycle_at_ms": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "record_kind": {
+              "const": "ITEM_STARTED"
+            },
+            "method": {
+              "const": "item/started"
+            },
+            "request_id": {
+              "type": "null"
+            },
+            "notification_seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lifecycle_at_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "thread_id": {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            "turn_id": {
+              "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+            },
+            "item_id": {
+              "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+            }
+          }
+        },
+        {
+          "properties": {
+            "record_kind": {
+              "const": "ITEM_COMPLETED"
+            },
+            "method": {
+              "const": "item/completed"
+            },
+            "request_id": {
+              "type": "null"
+            },
+            "notification_seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lifecycle_at_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "thread_id": {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            "turn_id": {
+              "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+            },
+            "item_id": {
+              "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+            }
+          }
+        },
+        {
+          "properties": {
+            "record_kind": {
+              "const": "TURN_COMPLETED"
+            },
+            "method": {
+              "const": "turn/completed"
+            },
+            "request_id": {
+              "type": "null"
+            },
+            "notification_seq": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lifecycle_at_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "thread_id": {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            "turn_id": {
+              "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+            },
+            "item_id": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "childResultBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "parent_tool_call_id",
+        "child_thread_id",
+        "child_turn_id",
+        "child_item_id",
+        "agent_message",
+        "agent_message_text_sha256",
+        "outbox_result_path",
+        "outbox_result_run_relative_path",
+        "outbox_result_canonical_casefold_key",
+        "outbox_result_sha256",
+        "item_completed_raw_sha256",
+        "turn_completed_raw_sha256"
+      ],
+      "properties": {
+        "parent_tool_call_id": {
+          "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+        },
+        "child_thread_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "child_turn_id": {
+          "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+        },
+        "child_item_id": {
+          "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+        },
+        "agent_message": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "text",
+            "type"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 4194304
+            },
+            "type": {
+              "const": "agentMessage"
+            }
+          }
+        },
+        "agent_message_text_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "outbox_result_path": {
+          "$ref": "common.v1.schema.json#/$defs/runtimeAbsolutePath"
+        },
+        "outbox_result_run_relative_path": {
+          "$ref": "common.v1.schema.json#/$defs/runRelativePath"
+        },
+        "outbox_result_canonical_casefold_key": {
+          "$ref": "common.v1.schema.json#/$defs/runtimeCanonicalPathKey"
+        },
+        "outbox_result_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "item_completed_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "turn_completed_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      },
+      "$comment": "The program gate must prove IDs and hashes equal the matching ITEM_COMPLETED and TURN_COMPLETED raw records, the AgentMessage text names or hashes the exact outbox result, and the outbox path is contained in the target attempt directory."
+    }
+  }
+}

@@ -33,7 +33,7 @@ GRAPH_STATE_SNAPSHOT.json
 
 ```text
 non-pure node JSON response -> fail closed
-review score < 90 -> fail
+review score < 95 -> fail
 open_blockers.length > 0 -> fail
 effective score for open P0 blocker -> 0
 status=true + open_blockers -> status ignored

@@ -58,7 +58,7 @@ A reviewer pass requires:
 
 ```text
 status == true
-score >= 90
+score >= 95
 open_blockers.length == 0
 previous open blockers closed by reviewer closure file
 ```

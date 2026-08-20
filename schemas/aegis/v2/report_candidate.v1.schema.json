@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/report_candidate.v1.schema.json",
+  "title": "ReportCandidate.v1",
+  "description": "Content-addressed E report candidate bound to one exact D review snapshot.",
+  "$comment": "report_candidate_id is sha256:<SHA-256(UTF-8 JCS RFC8785 bytes of this object with report_candidate_id omitted)>. The gate verifies the E producer against registry_snapshot_id, loads d_review_snapshot_id, requires reported_fact_ids to equal that snapshot's normalized_fact_ids exactly, validates every reported evidence ID, and verifies report_artifact bytes. E cannot add, omit, or relabel facts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "report_candidate_id",
+    "canonicalization",
+    "campaign_id",
+    "run_id",
+    "source_baseline_id",
+    "registry_snapshot_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "state_seq",
+    "d_review_snapshot_id",
+    "producer_identity",
+    "candidate_conclusion",
+    "reported_fact_ids",
+    "reported_evidence_ids",
+    "unexecuted_case_ids",
+    "report_artifact",
+    "produced_attempt_id",
+    "produced_event_id",
+    "produced_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ReportCandidate.v1"
+    },
+    "report_candidate_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "campaign_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "registry_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "execution_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "state_seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "d_review_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "producer_identity": {
+      "allOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role_slot_id": {
+              "const": "E"
+            },
+            "role": {
+              "const": "TEST_REPORT_WRITER"
+            }
+          }
+        }
+      ]
+    },
+    "candidate_conclusion": {
+      "type": "string",
+      "enum": [
+        "PASS_CANDIDATE",
+        "FAIL_PRODUCT_CANDIDATE",
+        "BLOCKED_ENVIRONMENT_CANDIDATE",
+        "NEEDS_DISCUSSION_CANDIDATE",
+        "CANCELLATION_CANDIDATE",
+        "INTEGRITY_ERROR_CANDIDATE"
+      ]
+    },
+    "reported_fact_ids": {
+      "$ref": "#/$defs/stableIdSet"
+    },
+    "reported_evidence_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/evidenceId"
+      }
+    },
+    "unexecuted_case_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/caseId"
+      }
+    },
+    "report_artifact": {
+      "$ref": "common.v1.schema.json#/$defs/artifactReference"
+    },
+    "produced_attempt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "produced_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "produced_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "$defs": {
+    "stableIdSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/stableId"
+      }
+    }
+  }
+}

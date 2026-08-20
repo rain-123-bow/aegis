@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/certification_trust_anchor.v1.schema.json",
+  "title": "CertificationTrustAnchor.v1",
+  "description": "Versioned, content-addressed Ed25519 trust anchor independently authorized for evaluation-isolation certification.",
+  "$comment": "trust_anchor_id is sha256:<SHA-256(UTF-8 JCS RFC 8785 bytes of this object with trust_anchor_id omitted)>. A program gate must load this exact preauthorized anchor by trust_anchor_id before evaluating any backend certificate; verify public-key base64/raw bytes/hash, authorization artifact bytes and authoritative event origin, issuer/policy/platform scope, validity interval, and the current append-only revocation registry; then verify the backend certificate signature. An evaluator process, SUT, test author, or certificate presenter cannot create, register, authorize, replace, or revoke its own trust anchor. Schema validity alone never establishes trust.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "trust_anchor_id",
+    "anchor_version",
+    "issuer_id",
+    "public_key",
+    "scope",
+    "authorization",
+    "valid_from_utc",
+    "valid_until_utc",
+    "revocation_policy",
+    "trust_anchor_state"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "CertificationTrustAnchor.v1"
+    },
+    "trust_anchor_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "anchor_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "issuer_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "public_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "encoding",
+        "raw_byte_size",
+        "raw_base64",
+        "raw_sha256"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "ED25519"
+        },
+        "encoding": {
+          "const": "RAW-32-BYTE-PUBLIC-KEY"
+        },
+        "raw_byte_size": {
+          "const": 32
+        },
+        "raw_base64": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]{43}=$"
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy_schema_version",
+        "isolation_policy_sha256_allowlist",
+        "backend_id_allowlist",
+        "platform_descriptor_id_allowlist",
+        "validation_suite_sha256_allowlist"
+      ],
+      "properties": {
+        "policy_schema_version": {
+          "const": "EvaluationIsolationPolicy.v1"
+        },
+        "isolation_policy_sha256_allowlist": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/sha256"
+          }
+        },
+        "backend_id_allowlist": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        },
+        "platform_descriptor_id_allowlist": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          }
+        },
+        "validation_suite_sha256_allowlist": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/sha256"
+          }
+        }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_kind",
+        "authority_id",
+        "preauthorized_authority_registry_snapshot_id",
+        "authorization_event_id",
+        "authorization_artifact",
+        "authorization_record_raw_sha256",
+        "independent_from_evaluator_and_sut",
+        "authorized_at_utc"
+      ],
+      "properties": {
+        "authority_kind": {
+          "type": "string",
+          "enum": [
+            "USER_PLATFORM_EVENT",
+            "EXTERNAL_SECURITY_AUTHORITY"
+          ]
+        },
+        "authority_id": {
+          "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+        },
+        "preauthorized_authority_registry_snapshot_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "authorization_event_id": {
+          "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+        },
+        "authorization_artifact": {
+          "$ref": "common.v1.schema.json#/$defs/artifactReference"
+        },
+        "authorization_record_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "independent_from_evaluator_and_sut": {
+          "const": true
+        },
+        "authorized_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        }
+      }
+    },
+    "valid_from_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "valid_until_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "revocation_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registry_id",
+        "authoritative_locator",
+        "check_before_every_use",
+        "fail_closed_when_unavailable"
+      ],
+      "properties": {
+        "registry_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "authoritative_locator": {
+          "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+        },
+        "check_before_every_use": {
+          "const": true
+        },
+        "fail_closed_when_unavailable": {
+          "const": true
+        }
+      }
+    },
+    "trust_anchor_state": {
+      "const": "AUTHORIZED_AT_ISSUANCE_RUNTIME_REVOCATION_CHECK_REQUIRED"
+    }
+  }
+}

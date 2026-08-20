@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/capacity_certification_binding.v1.schema.json",
+  "title": "CapacityCertificationBinding.v1",
+  "description": "Portable reference to a complete CapacityCertification.v1 artifact.",
+  "$comment": "The gate loads repository_path, requires artifact_sha256 to match exact repository bytes, validates the loaded object against capacity_certification.v1.schema.json, recomputes certification_id from its contract-defined JCS preimage, and rejects any inline simplified object. This binding deliberately does not use schema_version CapacityCertification.v1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "certification_id",
+    "certification_schema_id",
+    "repository_path",
+    "artifact_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "CapacityCertificationBinding.v1"
+    },
+    "certification_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "certification_schema_id": {
+      "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/capacity_certification.v1.schema.json"
+    },
+    "repository_path": {
+      "$ref": "common.v1.schema.json#/$defs/repositoryRelativePath"
+    },
+    "artifact_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    }
+  }
+}

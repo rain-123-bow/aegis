@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+AGENT_REGISTRY_PATH = REPO_ROOT / "config" / "agent_registry.json"
+AGENT_MANIFEST_PATH = REPO_ROOT / ".aegis" / "master" / "subagents" / "MASTER_SUBAGENTS_MANIFEST.json"
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from langgraph_contract import (  # noqa: E402
@@ -31,6 +33,17 @@ def write_json(path: Path, payload: object) -> None:
 
 
 class LangGraphContractTests(unittest.TestCase):
+    def test_agent_configs_have_no_prebound_threads(self) -> None:
+        registry = json.loads(AGENT_REGISTRY_PATH.read_text(encoding="utf-8"))
+        manifest = json.loads(AGENT_MANIFEST_PATH.read_text(encoding="utf-8"))
+        graph_agents = [agent for agent in manifest["subagents"] if agent["graph_node"] is not None]
+
+        self.assertTrue(registry["agents"])
+        self.assertTrue(all(agent["thread_id"] is None for agent in registry["agents"]))
+        self.assertEqual(len(graph_agents), len(registry["agents"]))
+        self.assertTrue(all(agent["thread_id"] is None for agent in graph_agents))
+        self.assertTrue(all(agent["status"] == "pending_creation" for agent in graph_agents))
+
     def test_strict_json_rejects_extra_text(self) -> None:
         self.assertEqual(strict_json_object('{"status": true}', source="x"), {"status": True})
         with self.assertRaises(ContractViolation):
@@ -131,6 +144,22 @@ class LangGraphContractTests(unittest.TestCase):
             )
             self.assertEqual(result["gate_route"], "C")
             self.assertTrue(result["gate_status"])
+
+    def test_reviewer_score_below_95_cannot_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_json(root / TEST_PLAN_REVIEW_RESULT, {"status": True, "score": 94, "open_blockers": []})
+            write_json(root / TEST_PLAN_REVIEW_BLOCKERS, {"open_blockers": []})
+
+            result = gate_reviewer(
+                {"artifact_path": temp_dir, "status": True},
+                {"artifact_path": temp_dir, "status": True},
+                node_name=NODE_B,
+            )
+
+            self.assertEqual(result["gate_route"], ROUTE_END)
+            self.assertFalse(result["gate_status"])
+            self.assertIn("score 94 below threshold 95", result["stop_reason"])
 
 
 if __name__ == "__main__":

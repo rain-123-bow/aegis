@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/agent_registry.v1.schema.json",
+  "title": "AgentRegistry.v1",
+  "description": "Mutable runtime-root registry; never a portable repository configuration file.",
+  "$comment": "The registry transaction gate must prove each active pointer resolves to exactly one ACTIVE identity, exactly one pointer exists for every A-F role, all six pointers share source_generation_id, each pointer is the highest committed revision for its role, and every physical instance is counted until an authoritative close receipt proves it no longer consumes capacity. Pointer replacement is atomic. This file is runtime state and must not be committed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "registry_id",
+    "registry_cas",
+    "parent_task_id",
+    "capacity_contract",
+    "current_source_baseline_id",
+    "current_source_generation_id",
+    "current_registry_snapshot_id",
+    "active_role_pointers",
+    "identities",
+    "provision_batch_ids",
+    "replacement_batch_ids",
+    "platform_close_receipt_ids",
+    "last_event_id",
+    "updated_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "AgentRegistry.v1"
+    },
+    "registry_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "registry_cas": {
+      "$ref": "#/$defs/registryCas"
+    },
+    "parent_task_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "capacity_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_retained_source_generations",
+        "replacement_reserve",
+        "physical_instance_budget",
+        "capacity_certification_id"
+      ],
+      "properties": {
+        "max_retained_source_generations": {
+          "type": "integer",
+          "const": 2
+        },
+        "replacement_reserve": {
+          "type": "integer",
+          "const": 6
+        },
+        "physical_instance_budget": {
+          "type": "integer",
+          "const": 18
+        },
+        "capacity_certification_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      }
+    },
+    "current_source_baseline_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "current_source_generation_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "current_registry_snapshot_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "active_role_pointers": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+      }
+    },
+    "identities": {
+      "type": "array",
+      "items": {
+        "$ref": "agent_identity.v1.schema.json"
+      }
+    },
+    "provision_batch_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "replacement_batch_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "platform_close_receipt_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "last_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "updated_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "current_source_generation_id": {
+            "type": "null"
+          }
+        },
+        "required": [
+          "current_source_generation_id"
+        ]
+      },
+      "then": {
+        "properties": {
+          "current_source_baseline_id": {
+            "type": "null"
+          },
+          "current_registry_snapshot_id": {
+            "type": "null"
+          },
+          "active_role_pointers": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "current_source_baseline_id": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          },
+          "current_registry_snapshot_id": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          },
+          "active_role_pointers": {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6
+          }
+        }
+      }
+    },
+    {
+      "$comment": "A committed transaction must compare-and-swap registry_cas.previous_state_sha256 and revision, then atomically persist the next revision. Replacement batches bind both old and new immutable snapshot IDs. Only CLOSE receipts with PLATFORM_CLOSED status may appear in platform_close_receipt_ids or release a physical capacity slot."
+    }
+  ],
+  "$defs": {
+    "registryCas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "previous_state_preimage_id",
+        "previous_state_sha256",
+        "committed_state_preimage_id",
+        "committed_state_sha256"
+      ],
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "previous_state_preimage_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/contentId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "previous_state_sha256": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "committed_state_preimage_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "committed_state_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "revision": {
+                "const": 0
+              }
+            },
+            "required": [
+              "revision"
+            ]
+          },
+          "then": {
+            "properties": {
+              "previous_state_preimage_id": {
+                "type": "null"
+              },
+              "previous_state_sha256": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "previous_state_preimage_id": {
+                "$ref": "common.v1.schema.json#/$defs/contentId"
+              },
+              "previous_state_sha256": {
+                "$ref": "common.v1.schema.json#/$defs/sha256"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "Each *_state_preimage_id resolves to RegistryStatePreimage.v1; its content-ID suffix must equal the adjacent *_state_sha256 and its normalized fields must reproduce the exact committed database snapshot. revision 0 requires both previous fields null; later revisions require the immediately prior preimage/hash. A free-form hash over a caller-selected registry object is invalid."
+    }
+  }
+}

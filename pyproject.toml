@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools==83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegis-quality-kernel"
+version = "0.2.0a0"
+description = "Adversarial, evidence-bound multi-agent quality control."
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "jsonschema[format-nongpl]==4.26.0",
+  "langgraph==1.2.9",
+  "langgraph-checkpoint-sqlite==3.1.0",
+  "rfc8785==0.1.4",
+]
+
+[project.scripts]
+aegis-v2 = "aegis.cli:main"
+
+[project.optional-dependencies]
+legacy = [
+  "psycopg[binary]==3.3.4",
+]
+test = [
+  "pytest==9.1.1",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["aegis*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+minversion = "9.1"
+testpaths = ["test/phase0a", "test/phase0b"]
+python_files = ["test_*.py"]
+addopts = [
+  "--import-mode=importlib",
+  "--strict-config",
+  "--strict-markers",
+  "-ra",
+  "-m",
+  "not live_codex and not destructive_postgres",
+]
+xfail_strict = true
+markers = [
+  "live_codex: requires separate user authorization",
+  "destructive_postgres: may drop isolated PostgreSQL schemas",
+  "exhaustive: mandatory exhaustive release suite",
+]

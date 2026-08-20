@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/final_review_basis.v1.schema.json",
+  "title": "FinalReviewBasis.v1",
+  "description": "Content-addressed kernel basis proving whether one F review is current and terminal-eligible.",
+  "$comment": "final_review_basis_id is sha256:<SHA-256(UTF-8 JCS RFC8785 bytes of this object with final_review_basis_id omitted)>. The kernel loads DReviewSnapshot, ReportCandidate, ReportCandidateBasis, and FinalReview, verifies identical run/source/plan/execution identities and exact normalized facts, then derives basis_state. CURRENT_APPROVED is legal only for an APPROVED F review over a MATCH candidate basis at the current state sequence. Any changed fact, candidate, report, review, or execution contract produces STALE or a new basis.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "final_review_basis_id",
+    "canonicalization",
+    "run_id",
+    "source_baseline_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "state_seq",
+    "d_review_snapshot_id",
+    "report_candidate_id",
+    "report_candidate_basis_id",
+    "final_review_id",
+    "review_decision",
+    "normalized_fact_ids",
+    "basis_state",
+    "kernel_instance_id",
+    "produced_event_id",
+    "produced_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "FinalReviewBasis.v1"
+    },
+    "final_review_basis_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "execution_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "state_seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "d_review_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "report_candidate_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "report_candidate_basis_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "final_review_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "review_decision": {
+      "type": "string",
+      "enum": [
+        "APPROVED",
+        "REJECTED"
+      ]
+    },
+    "normalized_fact_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/stableId"
+      }
+    },
+    "basis_state": {
+      "type": "string",
+      "enum": [
+        "CURRENT_APPROVED",
+        "REJECTED",
+        "STALE"
+      ]
+    },
+    "kernel_instance_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "produced_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "produced_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "basis_state": {
+            "const": "CURRENT_APPROVED"
+          }
+        },
+        "required": [
+          "basis_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "review_decision": {
+            "const": "APPROVED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "basis_state": {
+            "const": "REJECTED"
+          }
+        },
+        "required": [
+          "basis_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "review_decision": {
+            "const": "REJECTED"
+          }
+        }
+      }
+    }
+  ]
+}

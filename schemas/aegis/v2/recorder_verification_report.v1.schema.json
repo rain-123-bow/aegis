@@ -1,0 +1,3026 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/recorder_verification_report.v1.schema.json",
+  "title": "AegisRecorderVerificationReport.v1",
+  "description": "Read-only verification result for one Aegis Recorder session directory containing fixed journal and supervision-sidecar members.",
+  "$comment": "Structural contract artifact. The production standard-library fixed-v1 validator enforces this shape plus cross-field arithmetic; it does not interpret an arbitrary runtime schema. Evidence truth still requires verify ABSOLUTE_SESSION_DIRECTORY. A local PASS proves only Recorder-owned app-server stdio transport. A supervision-only row proves no transport claim. Authority flags are permanently false in v1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "journal_format",
+    "journal_path",
+    "journal_present",
+    "evidence_platform_profile",
+    "file_size",
+    "local_verdict",
+    "format_valid",
+    "canonical_metadata_valid",
+    "hash_chain_valid",
+    "semantic_valid",
+    "file_complete",
+    "clean_shutdown",
+    "transport_complete",
+    "child_return_code",
+    "committed_entry_count",
+    "last_committed_sequence",
+    "header_digest_sha256",
+    "final_entry_sha256",
+    "partial_tail_byte_count",
+    "partial_tail_start_offset",
+    "partial_tail_component",
+    "partial_tail_expected_total_bytes",
+    "partial_tail_missing_byte_count",
+    "observation_count",
+    "forward_succeeded_count",
+    "forward_failed_count",
+    "forward_not_attempted_count",
+    "unresolved_forward_outcome_count",
+    "unresolved_observation_sequences",
+    "failed_observation_sequences",
+    "sequence_lists_truncated",
+    "issue_count",
+    "issues_truncated",
+    "issues",
+    "assurance_level",
+    "evidence_scope",
+    "ordering_scope",
+    "authority_verified",
+    "release_authority_eligible",
+    "boundary_ids",
+    "reason_ids",
+    "reason_counts",
+    "supervision_sidecar_path",
+    "supervision_sidecar_file_size",
+    "supervision_sidecar_sha256",
+    "supervision_sidecar_valid",
+    "supervision_journal_bound",
+    "supervision_journal_binding_valid",
+    "supervision_last_committed_sequence",
+    "supervision_partial_tail_byte_count",
+    "guard_terminal_state",
+    "guard_termination_requested",
+    "guard_termination_reason",
+    "guard_trigger_value",
+    "guard_trigger_win32_error",
+    "guard_termination_call_returned",
+    "guard_termination_call_succeeded",
+    "guard_termination_win32_error",
+    "guard_reclamation_state",
+    "guard_reclamation_active_process_count",
+    "exit_code"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "AegisRecorderVerificationReport.v1"
+    },
+    "journal_format": {
+      "const": "AEGISREC-1.0"
+    },
+    "journal_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "journal_present": {
+      "type": "boolean"
+    },
+    "evidence_platform_profile": {
+      "enum": [
+        "WINDOWS_CPTHON_3_13",
+        "WINDOWS_SUPERVISION_ONLY",
+        "POSIX_CPTHON_3_12_VALIDATION",
+        "UNDETERMINED"
+      ]
+    },
+    "file_size": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "External JSON-integer semantics remain the nonnegative signed-64 range 0..9223372036854775807. The upper bound is intentionally absent here because that literal is outside the RFC 8785 exact integer domain used to freeze this schema. The fixed-v1 report validation implementation used by validate-report and by verify before emission must reject values above 9223372036854775807."
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "local_verdict": {
+      "enum": [
+        "PASS",
+        "INCOMPLETE",
+        "INVALID",
+        "ERROR"
+      ]
+    },
+    "format_valid": {
+      "type": "boolean"
+    },
+    "canonical_metadata_valid": {
+      "type": "boolean"
+    },
+    "hash_chain_valid": {
+      "type": "boolean"
+    },
+    "semantic_valid": {
+      "type": "boolean"
+    },
+    "file_complete": {
+      "type": "boolean"
+    },
+    "clean_shutdown": {
+      "type": "boolean"
+    },
+    "transport_complete": {
+      "type": "boolean"
+    },
+    "child_return_code": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "$comment": "External JSON-integer semantics remain the signed-64 range -9223372036854775808..9223372036854775807. Those endpoint literals are intentionally absent here because they are outside the RFC 8785 exact integer domain used to freeze this schema. The fixed-v1 report validation implementation used by validate-report and by verify before emission must reject values outside that range; the Windows-profile allOf additionally retains its exact unsigned-DWORD range."
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "committed_entry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000000
+    },
+    "last_committed_sequence": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 99999999
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "header_digest_sha256": {
+      "$ref": "#/$defs/nullableSha256"
+    },
+    "final_entry_sha256": {
+      "$ref": "#/$defs/nullableSha256"
+    },
+    "partial_tail_byte_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1099511627776
+    },
+    "partial_tail_start_offset": {
+      "$ref": "#/$defs/nullableOffset"
+    },
+    "partial_tail_component": {
+      "anyOf": [
+        {
+          "enum": [
+            "HEADER",
+            "PREFIX",
+            "METADATA",
+            "PAYLOAD",
+            "DIGEST",
+            "COMMIT_MARKER"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "partial_tail_expected_total_bytes": {
+      "$ref": "#/$defs/nullableOffset"
+    },
+    "partial_tail_missing_byte_count": {
+      "$ref": "#/$defs/nullableOffset"
+    },
+    "observation_count": {
+      "$ref": "#/$defs/count"
+    },
+    "forward_succeeded_count": {
+      "$ref": "#/$defs/count"
+    },
+    "forward_failed_count": {
+      "$ref": "#/$defs/count"
+    },
+    "forward_not_attempted_count": {
+      "$ref": "#/$defs/count"
+    },
+    "unresolved_forward_outcome_count": {
+      "$ref": "#/$defs/count"
+    },
+    "unresolved_observation_sequences": {
+      "$ref": "#/$defs/sequenceList"
+    },
+    "failed_observation_sequences": {
+      "$ref": "#/$defs/sequenceList"
+    },
+    "sequence_lists_truncated": {
+      "type": "boolean"
+    },
+    "issue_count": {
+      "$ref": "#/$defs/issueCount"
+    },
+    "issues_truncated": {
+      "type": "boolean"
+    },
+    "issues": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/issue"
+      }
+    },
+    "assurance_level": {
+      "enum": [
+        "LOCAL_TRANSPORT_INTEGRITY",
+        "LOCAL_SUPERVISION_INTEGRITY",
+        "NONE"
+      ]
+    },
+    "evidence_scope": {
+      "enum": [
+        "RECORDER_OWNED_APP_SERVER_STDIO",
+        "WINDOWS_GUARD_SUPERVISION_ONLY",
+        "NONE"
+      ]
+    },
+    "ordering_scope": {
+      "enum": [
+        "RECORDER_JOURNAL_APPEND_ORDER_ACROSS_PIPES",
+        "SUPERVISION_SIDECAR_APPEND_ORDER",
+        "NONE"
+      ]
+    },
+    "authority_verified": {
+      "const": false
+    },
+    "release_authority_eligible": {
+      "const": false
+    },
+    "boundary_ids": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "prefixItems": [
+        {
+          "const": "AUTHORITY_UNVERIFIED"
+        },
+        {
+          "const": "LOCAL_STORAGE_REWRITABLE_BY_SAME_USER"
+        },
+        {
+          "const": "OS_FLUSH_RETURN_ONLY"
+        }
+      ],
+      "items": false
+    },
+    "reason_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/reasonId"
+      }
+    },
+    "reason_counts": {
+      "$ref": "#/$defs/reasonCounts"
+    },
+    "supervision_sidecar_path": {
+      "$ref": "#/$defs/nullablePath"
+    },
+    "supervision_sidecar_file_size": {
+      "$ref": "#/$defs/nullableSignedSize"
+    },
+    "supervision_sidecar_sha256": {
+      "$ref": "#/$defs/nullableSha256"
+    },
+    "supervision_sidecar_valid": {
+      "$ref": "#/$defs/nullableBoolean"
+    },
+    "supervision_journal_bound": {
+      "$ref": "#/$defs/nullableBoolean"
+    },
+    "supervision_journal_binding_valid": {
+      "$ref": "#/$defs/nullableBoolean"
+    },
+    "supervision_last_committed_sequence": {
+      "$ref": "#/$defs/nullableIssueCount"
+    },
+    "supervision_partial_tail_byte_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "guard_terminal_state": {
+      "anyOf": [
+        {
+          "enum": [
+            "NORMAL_SUPERVISION_COMPLETED",
+            "RECLAMATION_CONFIRMED",
+            "RECLAMATION_UNCONFIRMED",
+            "MISSING",
+            "NOT_APPLICABLE",
+            "UNDETERMINED"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "guard_termination_requested": {
+      "$ref": "#/$defs/nullableBoolean"
+    },
+    "guard_termination_reason": {
+      "anyOf": [
+        {
+          "enum": [
+            "STARTUP_DEADLINE",
+            "RUNTIME_FATAL_DEADLINE",
+            "OUTPUT_DRAIN_DEADLINE",
+            "ENGINE_EXITED_FIRST",
+            "SHUTDOWN_EVENT",
+            "HANDSHAKE_PROTOCOL_FAILURE",
+            "SIDECAR_FAILURE",
+            "GUARD_INTERNAL_FAILURE",
+            "ENGINE_RESUME_STATE_FAILURE",
+            "TARGET_RESUME_STATE_FAILURE"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "guard_trigger_value": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "guard_trigger_win32_error": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "guard_termination_call_returned": {
+      "$ref": "#/$defs/nullableBoolean"
+    },
+    "guard_termination_call_succeeded": {
+      "$ref": "#/$defs/nullableBoolean"
+    },
+    "guard_termination_win32_error": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "guard_reclamation_state": {
+      "anyOf": [
+        {
+          "enum": [
+            "NOT_REQUESTED",
+            "CONFIRMED",
+            "UNCONFIRMED"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "guard_reclamation_active_process_count": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "exit_code": {
+      "type": "integer",
+      "enum": [
+        0,
+        1,
+        2,
+        66,
+        70
+      ]
+    }
+  },
+  "$defs": {
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000000
+    },
+    "issueCount": {
+      "type": "integer",
+      "minimum": 0,
+      "$comment": "External JSON-integer semantics remain the nonnegative signed-64 range 0..9223372036854775807 for issue_count, each reason_counts value, and nullableIssueCount users. The upper bound is intentionally absent here because that literal is outside the RFC 8785 exact integer domain used to freeze this schema. The fixed-v1 report validation implementation used by validate-report and by verify before emission must reject larger values."
+    },
+    "nullableIssueCount": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/issueCount"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableSignedSize": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "External JSON-integer semantics remain the nonnegative signed-64 range 0..9223372036854775807 for nullableSignedSize users. The upper bound is intentionally absent here because that literal is outside the RFC 8785 exact integer domain used to freeze this schema. The fixed-v1 report validation implementation used by validate-report and by verify before emission must reject larger values."
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableBoolean": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullablePath": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32768
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reasonCounts": {
+      "type": "object",
+      "minProperties": 57,
+      "maxProperties": 57,
+      "propertyNames": {
+        "enum": [
+          "INVALID_FILE_HEADER",
+          "UNSUPPORTED_FORMAT_VERSION",
+          "INVALID_RECORD_PREFIX",
+          "INVALID_RECORD_LENGTH",
+          "RESOURCE_LIMIT_EXCEEDED",
+          "PARTIAL_TAIL",
+          "INVALID_METADATA_UTF8",
+          "DUPLICATE_METADATA_KEY",
+          "NONCANONICAL_METADATA",
+          "ENTRY_SCHEMA_INVALID",
+          "PAYLOAD_SIZE_MISMATCH",
+          "PAYLOAD_HASH_MISMATCH",
+          "ENTRY_HASH_MISMATCH",
+          "COMMIT_MARKER_INVALID",
+          "SEQUENCE_GAP_OR_DUPLICATE",
+          "PREVIOUS_DIGEST_MISMATCH",
+          "MONOTONIC_TIME_REGRESSION",
+          "WALL_CLOCK_FLAG_MISMATCH",
+          "INVALID_ENTRY_STATE",
+          "INVALID_REFERENCE",
+          "UNSUPPORTED_ENTRY_KIND",
+          "OBSERVATION_NOT_FORWARDED",
+          "SEND_OUTCOME_UNKNOWN",
+          "FORWARD_FAILED",
+          "PARTIAL_FORWARD",
+          "CLOSE_NOT_ATTEMPTED",
+          "CLOSE_OUTCOME_UNKNOWN",
+          "CLOSE_FAILED",
+          "SIGNAL_NOT_ATTEMPTED",
+          "SIGNAL_OUTCOME_UNKNOWN",
+          "SIGNAL_FAILED",
+          "RESUME_NOT_ATTEMPTED",
+          "RESUME_OUTCOME_UNKNOWN",
+          "RESUME_FAILED",
+          "TERMINATION_REQUESTED",
+          "KILL_REQUESTED",
+          "SOURCE_READ_FAILED",
+          "SOURCE_CANCELLED",
+          "INCOMPLETE_FRAME",
+          "FRAME_LIMIT_EXCEEDED",
+          "CHILD_SPAWN_FAILED",
+          "CHILD_NONZERO",
+          "STREAM_TERMINAL_MISSING",
+          "SESSION_END_MISSING",
+          "SESSION_END_NOT_LAST",
+          "SESSION_COUNTER_MISMATCH",
+          "SUPERVISION_FAILED",
+          "JOURNAL_MISSING",
+          "SUPERVISION_SIDECAR_MISSING",
+          "SUPERVISION_SIDECAR_INVALID",
+          "SUPERVISION_JOURNAL_BINDING_MISMATCH",
+          "GUARD_TERMINAL_STATE_MISSING",
+          "GUARD_TERMINATION_REQUESTED",
+          "RECLAMATION_UNCONFIRMED",
+          "SUPERVISION_STATE_CONTRADICTION",
+          "INPUT_ERROR",
+          "INTERNAL_VERIFIER_ERROR"
+        ]
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/issueCount"
+      }
+    },
+    "nullableOffset": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1099511627776
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableSha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sequenceList": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 99999999
+      }
+    },
+    "reasonId": {
+      "type": "string",
+      "enum": [
+        "OK_LOCAL_TRANSPORT_INTEGRITY",
+        "INVALID_FILE_HEADER",
+        "UNSUPPORTED_FORMAT_VERSION",
+        "INVALID_RECORD_PREFIX",
+        "INVALID_RECORD_LENGTH",
+        "RESOURCE_LIMIT_EXCEEDED",
+        "PARTIAL_TAIL",
+        "INVALID_METADATA_UTF8",
+        "DUPLICATE_METADATA_KEY",
+        "NONCANONICAL_METADATA",
+        "ENTRY_SCHEMA_INVALID",
+        "PAYLOAD_SIZE_MISMATCH",
+        "PAYLOAD_HASH_MISMATCH",
+        "ENTRY_HASH_MISMATCH",
+        "COMMIT_MARKER_INVALID",
+        "SEQUENCE_GAP_OR_DUPLICATE",
+        "PREVIOUS_DIGEST_MISMATCH",
+        "MONOTONIC_TIME_REGRESSION",
+        "WALL_CLOCK_FLAG_MISMATCH",
+        "INVALID_ENTRY_STATE",
+        "INVALID_REFERENCE",
+        "UNSUPPORTED_ENTRY_KIND",
+        "OBSERVATION_NOT_FORWARDED",
+        "SEND_OUTCOME_UNKNOWN",
+        "FORWARD_FAILED",
+        "PARTIAL_FORWARD",
+        "CLOSE_NOT_ATTEMPTED",
+        "CLOSE_OUTCOME_UNKNOWN",
+        "CLOSE_FAILED",
+        "SIGNAL_NOT_ATTEMPTED",
+        "SIGNAL_OUTCOME_UNKNOWN",
+        "SIGNAL_FAILED",
+        "RESUME_NOT_ATTEMPTED",
+        "RESUME_OUTCOME_UNKNOWN",
+        "RESUME_FAILED",
+        "TERMINATION_REQUESTED",
+        "KILL_REQUESTED",
+        "SOURCE_READ_FAILED",
+        "SOURCE_CANCELLED",
+        "INCOMPLETE_FRAME",
+        "FRAME_LIMIT_EXCEEDED",
+        "CHILD_SPAWN_FAILED",
+        "CHILD_NONZERO",
+        "STREAM_TERMINAL_MISSING",
+        "SESSION_END_MISSING",
+        "SESSION_END_NOT_LAST",
+        "SESSION_COUNTER_MISMATCH",
+        "SUPERVISION_FAILED",
+        "JOURNAL_MISSING",
+        "SUPERVISION_SIDECAR_MISSING",
+        "SUPERVISION_SIDECAR_INVALID",
+        "SUPERVISION_JOURNAL_BINDING_MISMATCH",
+        "GUARD_TERMINAL_STATE_MISSING",
+        "GUARD_TERMINATION_REQUESTED",
+        "RECLAMATION_UNCONFIRMED",
+        "SUPERVISION_STATE_CONTRADICTION",
+        "INPUT_ERROR",
+        "INTERNAL_VERIFIER_ERROR"
+      ]
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason_id",
+        "sequence",
+        "byte_offset",
+        "detail"
+      ],
+      "properties": {
+        "reason_id": {
+          "$ref": "#/$defs/reasonId"
+        },
+        "sequence": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 99999999
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "byte_offset": {
+          "$ref": "#/$defs/nullableOffset"
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "not": {
+        "properties": {
+          "reason_id": {
+            "const": "OK_LOCAL_TRANSPORT_INTEGRITY"
+          }
+        },
+        "required": [
+          "reason_id"
+        ]
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "const": 0
+          }
+        },
+        "required": [
+          "exit_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "journal_present": {
+            "const": true
+          },
+          "evidence_platform_profile": {
+            "enum": [
+              "WINDOWS_CPTHON_3_13",
+              "POSIX_CPTHON_3_12_VALIDATION"
+            ]
+          },
+          "local_verdict": {
+            "const": "PASS"
+          },
+          "assurance_level": {
+            "const": "LOCAL_TRANSPORT_INTEGRITY"
+          },
+          "evidence_scope": {
+            "const": "RECORDER_OWNED_APP_SERVER_STDIO"
+          },
+          "ordering_scope": {
+            "const": "RECORDER_JOURNAL_APPEND_ORDER_ACROSS_PIPES"
+          },
+          "format_valid": {
+            "const": true
+          },
+          "canonical_metadata_valid": {
+            "const": true
+          },
+          "hash_chain_valid": {
+            "const": true
+          },
+          "semantic_valid": {
+            "const": true
+          },
+          "file_complete": {
+            "const": true
+          },
+          "clean_shutdown": {
+            "const": true
+          },
+          "transport_complete": {
+            "const": true
+          },
+          "child_return_code": {
+            "const": 0
+          },
+          "committed_entry_count": {
+            "minimum": 1
+          },
+          "last_committed_sequence": {
+            "type": "integer"
+          },
+          "header_digest_sha256": {
+            "type": "string"
+          },
+          "final_entry_sha256": {
+            "type": "string"
+          },
+          "partial_tail_byte_count": {
+            "const": 0
+          },
+          "forward_failed_count": {
+            "const": 0
+          },
+          "forward_not_attempted_count": {
+            "const": 0
+          },
+          "unresolved_forward_outcome_count": {
+            "const": 0
+          },
+          "unresolved_observation_sequences": {
+            "maxItems": 0
+          },
+          "failed_observation_sequences": {
+            "maxItems": 0
+          },
+          "sequence_lists_truncated": {
+            "const": false
+          },
+          "issue_count": {
+            "const": 0
+          },
+          "issues_truncated": {
+            "const": false
+          },
+          "issues": {
+            "maxItems": 0
+          },
+          "reason_ids": {
+            "maxItems": 1,
+            "contains": {
+              "const": "OK_LOCAL_TRANSPORT_INTEGRITY"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "const": 1
+          }
+        },
+        "required": [
+          "exit_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "local_verdict": {
+            "const": "INCOMPLETE"
+          },
+          "clean_shutdown": {
+            "const": false
+          },
+          "issue_count": {
+            "minimum": 1
+          },
+          "issues": {
+            "minItems": 1
+          },
+          "reason_ids": {
+            "not": {
+              "contains": {
+                "const": "OK_LOCAL_TRANSPORT_INTEGRITY"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "const": 2
+          }
+        },
+        "required": [
+          "exit_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "local_verdict": {
+            "const": "INVALID"
+          },
+          "clean_shutdown": {
+            "const": false
+          },
+          "transport_complete": {
+            "const": false
+          },
+          "issue_count": {
+            "minimum": 1
+          },
+          "issues": {
+            "minItems": 1
+          },
+          "reason_ids": {
+            "not": {
+              "contains": {
+                "const": "OK_LOCAL_TRANSPORT_INTEGRITY"
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "not": {
+              "properties": {
+                "format_valid": {
+                  "const": true
+                },
+                "canonical_metadata_valid": {
+                  "const": true
+                },
+                "hash_chain_valid": {
+                  "const": true
+                },
+                "semantic_valid": {
+                  "const": true
+                }
+              },
+              "required": [
+                "format_valid",
+                "canonical_metadata_valid",
+                "hash_chain_valid",
+                "semantic_valid"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "enum": [
+              66,
+              70
+            ]
+          }
+        },
+        "required": [
+          "exit_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "UNDETERMINED"
+          },
+          "local_verdict": {
+            "const": "ERROR"
+          },
+          "assurance_level": {
+            "const": "NONE"
+          },
+          "evidence_scope": {
+            "const": "NONE"
+          },
+          "ordering_scope": {
+            "const": "NONE"
+          },
+          "supervision_sidecar_path": {
+            "type": "null"
+          },
+          "supervision_sidecar_file_size": {
+            "type": "null"
+          },
+          "supervision_sidecar_sha256": {
+            "type": "null"
+          },
+          "supervision_sidecar_valid": {
+            "type": "null"
+          },
+          "supervision_journal_bound": {
+            "type": "null"
+          },
+          "supervision_journal_binding_valid": {
+            "type": "null"
+          },
+          "supervision_last_committed_sequence": {
+            "type": "null"
+          },
+          "supervision_partial_tail_byte_count": {
+            "const": 0
+          },
+          "guard_terminal_state": {
+            "type": "null"
+          },
+          "guard_termination_requested": {
+            "type": "null"
+          },
+          "guard_termination_reason": {
+            "type": "null"
+          },
+          "guard_trigger_value": {
+            "type": "null"
+          },
+          "guard_trigger_win32_error": {
+            "type": "null"
+          },
+          "guard_termination_call_returned": {
+            "type": "null"
+          },
+          "guard_termination_call_succeeded": {
+            "type": "null"
+          },
+          "guard_termination_win32_error": {
+            "type": "null"
+          },
+          "guard_reclamation_state": {
+            "type": "null"
+          },
+          "guard_reclamation_active_process_count": {
+            "type": "null"
+          },
+          "reason_counts": {
+            "properties": {
+              "JOURNAL_MISSING": {
+                "const": 0
+              }
+            }
+          },
+          "reason_ids": {
+            "not": {
+              "contains": {
+                "const": "OK_LOCAL_TRANSPORT_INTEGRITY"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "const": 66
+          }
+        },
+        "required": [
+          "exit_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "journal_present": {
+            "const": false
+          },
+          "file_size": {
+            "type": "null"
+          },
+          "format_valid": {
+            "const": false
+          },
+          "canonical_metadata_valid": {
+            "const": false
+          },
+          "hash_chain_valid": {
+            "const": false
+          },
+          "semantic_valid": {
+            "const": false
+          },
+          "file_complete": {
+            "const": false
+          },
+          "clean_shutdown": {
+            "const": false
+          },
+          "transport_complete": {
+            "const": false
+          },
+          "child_return_code": {
+            "type": "null"
+          },
+          "committed_entry_count": {
+            "const": 0
+          },
+          "last_committed_sequence": {
+            "type": "null"
+          },
+          "header_digest_sha256": {
+            "type": "null"
+          },
+          "final_entry_sha256": {
+            "type": "null"
+          },
+          "partial_tail_byte_count": {
+            "const": 0
+          },
+          "partial_tail_start_offset": {
+            "type": "null"
+          },
+          "partial_tail_component": {
+            "type": "null"
+          },
+          "partial_tail_expected_total_bytes": {
+            "type": "null"
+          },
+          "partial_tail_missing_byte_count": {
+            "type": "null"
+          },
+          "observation_count": {
+            "const": 0
+          },
+          "forward_succeeded_count": {
+            "const": 0
+          },
+          "forward_failed_count": {
+            "const": 0
+          },
+          "forward_not_attempted_count": {
+            "const": 0
+          },
+          "unresolved_forward_outcome_count": {
+            "const": 0
+          },
+          "unresolved_observation_sequences": {
+            "maxItems": 0
+          },
+          "failed_observation_sequences": {
+            "maxItems": 0
+          },
+          "sequence_lists_truncated": {
+            "const": false
+          },
+          "issue_count": {
+            "const": 1
+          },
+          "issues_truncated": {
+            "const": false
+          },
+          "issues": {
+            "minItems": 1,
+            "maxItems": 1,
+            "contains": {
+              "properties": {
+                "reason_id": {
+                  "const": "INPUT_ERROR"
+                },
+                "sequence": {
+                  "type": "null"
+                },
+                "byte_offset": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "reason_id",
+                "sequence",
+                "byte_offset"
+              ]
+            }
+          },
+          "reason_ids": {
+            "maxItems": 1,
+            "contains": {
+              "const": "INPUT_ERROR"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "const": 70
+          }
+        },
+        "required": [
+          "exit_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "format_valid": {
+            "const": false
+          },
+          "canonical_metadata_valid": {
+            "const": false
+          },
+          "hash_chain_valid": {
+            "const": false
+          },
+          "semantic_valid": {
+            "const": false
+          },
+          "file_complete": {
+            "const": false
+          },
+          "clean_shutdown": {
+            "const": false
+          },
+          "transport_complete": {
+            "const": false
+          },
+          "child_return_code": {
+            "type": "null"
+          },
+          "committed_entry_count": {
+            "const": 0
+          },
+          "last_committed_sequence": {
+            "type": "null"
+          },
+          "header_digest_sha256": {
+            "type": "null"
+          },
+          "final_entry_sha256": {
+            "type": "null"
+          },
+          "partial_tail_byte_count": {
+            "const": 0
+          },
+          "partial_tail_start_offset": {
+            "type": "null"
+          },
+          "partial_tail_component": {
+            "type": "null"
+          },
+          "partial_tail_expected_total_bytes": {
+            "type": "null"
+          },
+          "partial_tail_missing_byte_count": {
+            "type": "null"
+          },
+          "observation_count": {
+            "const": 0
+          },
+          "forward_succeeded_count": {
+            "const": 0
+          },
+          "forward_failed_count": {
+            "const": 0
+          },
+          "forward_not_attempted_count": {
+            "const": 0
+          },
+          "unresolved_forward_outcome_count": {
+            "const": 0
+          },
+          "unresolved_observation_sequences": {
+            "maxItems": 0
+          },
+          "failed_observation_sequences": {
+            "maxItems": 0
+          },
+          "sequence_lists_truncated": {
+            "const": false
+          },
+          "issue_count": {
+            "const": 1
+          },
+          "issues_truncated": {
+            "const": false
+          },
+          "issues": {
+            "minItems": 1,
+            "maxItems": 1,
+            "contains": {
+              "properties": {
+                "reason_id": {
+                  "const": "INTERNAL_VERIFIER_ERROR"
+                },
+                "sequence": {
+                  "type": "null"
+                },
+                "byte_offset": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "reason_id",
+                "sequence",
+                "byte_offset"
+              ]
+            }
+          },
+          "reason_ids": {
+            "maxItems": 1,
+            "contains": {
+              "const": "INTERNAL_VERIFIER_ERROR"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "enum": [
+              0,
+              1,
+              2
+            ]
+          },
+          "journal_present": {
+            "const": true
+          }
+        },
+        "required": [
+          "exit_code",
+          "journal_present"
+        ]
+      },
+      "then": {
+        "properties": {
+          "file_size": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "file_size": {
+            "type": "null"
+          }
+        },
+        "required": [
+          "file_size"
+        ]
+      },
+      "then": {
+        "properties": {
+          "exit_code": {
+            "enum": [
+              1,
+              2,
+              66,
+              70
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "file_size": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_size"
+        ]
+      },
+      "then": {
+        "properties": {
+          "journal_present": {
+            "const": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "journal_present": {
+            "const": false
+          }
+        },
+        "required": [
+          "journal_present"
+        ]
+      },
+      "then": {
+        "properties": {
+          "file_size": {
+            "type": "null"
+          },
+          "file_complete": {
+            "const": false
+          },
+          "transport_complete": {
+            "const": false
+          },
+          "child_return_code": {
+            "type": "null"
+          },
+          "committed_entry_count": {
+            "const": 0
+          },
+          "last_committed_sequence": {
+            "type": "null"
+          },
+          "header_digest_sha256": {
+            "type": "null"
+          },
+          "final_entry_sha256": {
+            "type": "null"
+          },
+          "partial_tail_byte_count": {
+            "const": 0
+          },
+          "partial_tail_start_offset": {
+            "type": "null"
+          },
+          "partial_tail_component": {
+            "type": "null"
+          },
+          "partial_tail_expected_total_bytes": {
+            "type": "null"
+          },
+          "partial_tail_missing_byte_count": {
+            "type": "null"
+          },
+          "observation_count": {
+            "const": 0
+          },
+          "forward_succeeded_count": {
+            "const": 0
+          },
+          "forward_failed_count": {
+            "const": 0
+          },
+          "forward_not_attempted_count": {
+            "const": 0
+          },
+          "unresolved_forward_outcome_count": {
+            "const": 0
+          },
+          "unresolved_observation_sequences": {
+            "maxItems": 0
+          },
+          "failed_observation_sequences": {
+            "maxItems": 0
+          },
+          "sequence_lists_truncated": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "journal_present": {
+            "const": true
+          },
+          "exit_code": {
+            "enum": [
+              0,
+              1,
+              2
+            ]
+          }
+        },
+        "required": [
+          "journal_present",
+          "exit_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_platform_profile": {
+            "enum": [
+              "WINDOWS_CPTHON_3_13",
+              "POSIX_CPTHON_3_12_VALIDATION",
+              "UNDETERMINED"
+            ]
+          },
+          "assurance_level": {
+            "const": "LOCAL_TRANSPORT_INTEGRITY"
+          },
+          "evidence_scope": {
+            "const": "RECORDER_OWNED_APP_SERVER_STDIO"
+          },
+          "ordering_scope": {
+            "const": "RECORDER_JOURNAL_APPEND_ORDER_ACROSS_PIPES"
+          },
+          "reason_counts": {
+            "properties": {
+              "JOURNAL_MISSING": {
+                "const": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "journal_present": {
+            "const": false
+          },
+          "exit_code": {
+            "const": 1
+          }
+        },
+        "required": [
+          "journal_present",
+          "exit_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "WINDOWS_SUPERVISION_ONLY"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "WINDOWS_SUPERVISION_ONLY"
+          }
+        },
+        "required": [
+          "evidence_platform_profile"
+        ]
+      },
+      "then": {
+        "properties": {
+          "journal_present": {
+            "const": false
+          },
+          "exit_code": {
+            "const": 1
+          },
+          "assurance_level": {
+            "const": "LOCAL_SUPERVISION_INTEGRITY"
+          },
+          "evidence_scope": {
+            "const": "WINDOWS_GUARD_SUPERVISION_ONLY"
+          },
+          "ordering_scope": {
+            "const": "SUPERVISION_SIDECAR_APPEND_ORDER"
+          },
+          "supervision_sidecar_path": {
+            "type": "string"
+          },
+          "supervision_sidecar_file_size": {
+            "type": "integer"
+          },
+          "supervision_sidecar_sha256": {
+            "type": "string"
+          },
+          "supervision_sidecar_valid": {
+            "const": true
+          },
+          "supervision_journal_binding_valid": {
+            "const": false
+          },
+          "reason_ids": {
+            "contains": {
+              "const": "JOURNAL_MISSING"
+            }
+          },
+          "reason_counts": {
+            "properties": {
+              "JOURNAL_MISSING": {
+                "const": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "WINDOWS_SUPERVISION_ONLY"
+          },
+          "supervision_sidecar_valid": {
+            "const": true
+          }
+        },
+        "required": [
+          "evidence_platform_profile",
+          "supervision_sidecar_valid"
+        ]
+      },
+      "then": {
+        "properties": {
+          "exit_code": {
+            "const": 1
+          },
+          "format_valid": {
+            "const": true
+          },
+          "canonical_metadata_valid": {
+            "const": true
+          },
+          "hash_chain_valid": {
+            "const": false
+          },
+          "semantic_valid": {
+            "const": true
+          },
+          "supervision_journal_bound": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "journal_present": {
+            "const": false
+          },
+          "exit_code": {
+            "const": 2
+          }
+        },
+        "required": [
+          "journal_present",
+          "exit_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "UNDETERMINED"
+          },
+          "assurance_level": {
+            "const": "NONE"
+          },
+          "evidence_scope": {
+            "const": "NONE"
+          },
+          "ordering_scope": {
+            "const": "NONE"
+          },
+          "supervision_sidecar_path": {
+            "type": "string"
+          },
+          "supervision_sidecar_file_size": {
+            "type": "integer"
+          },
+          "supervision_sidecar_sha256": {
+            "type": "string"
+          },
+          "supervision_sidecar_valid": {
+            "const": false
+          },
+          "supervision_journal_binding_valid": {
+            "const": false
+          },
+          "hash_chain_valid": {
+            "const": false
+          },
+          "reason_ids": {
+            "allOf": [
+              {
+                "contains": {
+                  "const": "JOURNAL_MISSING"
+                }
+              },
+              {
+                "contains": {
+                  "const": "SUPERVISION_SIDECAR_INVALID"
+                }
+              }
+            ]
+          },
+          "reason_counts": {
+            "properties": {
+              "JOURNAL_MISSING": {
+                "const": 1
+              },
+              "SUPERVISION_SIDECAR_INVALID": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "file_size": {
+            "type": "integer",
+            "maximum": 15
+          }
+        },
+        "required": [
+          "file_size"
+        ]
+      },
+      "then": {
+        "properties": {
+          "header_digest_sha256": {
+            "type": "null"
+          },
+          "committed_entry_count": {
+            "const": 0
+          },
+          "last_committed_sequence": {
+            "type": "null"
+          },
+          "final_entry_sha256": {
+            "type": "null"
+          },
+          "file_complete": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "enum": [
+              0,
+              1,
+              2
+            ]
+          },
+          "file_size": {
+            "type": "integer",
+            "minimum": 16
+          }
+        },
+        "required": [
+          "exit_code",
+          "file_size"
+        ]
+      },
+      "then": {
+        "properties": {
+          "header_digest_sha256": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "header_digest_sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "header_digest_sha256"
+        ]
+      },
+      "then": {
+        "properties": {
+          "file_size": {
+            "type": "integer",
+            "minimum": 16
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "committed_entry_count": {
+            "const": 0
+          }
+        },
+        "required": [
+          "committed_entry_count"
+        ]
+      },
+      "then": {
+        "properties": {
+          "last_committed_sequence": {
+            "type": "null"
+          },
+          "final_entry_sha256": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "committed_entry_count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "committed_entry_count"
+        ]
+      },
+      "then": {
+        "properties": {
+          "last_committed_sequence": {
+            "type": "integer"
+          },
+          "header_digest_sha256": {
+            "type": "string"
+          },
+          "final_entry_sha256": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "partial_tail_component": {
+            "type": "null"
+          }
+        },
+        "required": [
+          "partial_tail_component"
+        ]
+      },
+      "then": {
+        "properties": {
+          "partial_tail_byte_count": {
+            "const": 0
+          },
+          "partial_tail_start_offset": {
+            "type": "null"
+          },
+          "partial_tail_expected_total_bytes": {
+            "type": "null"
+          },
+          "partial_tail_missing_byte_count": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "partial_tail_component": {
+            "const": "HEADER"
+          }
+        },
+        "required": [
+          "partial_tail_component"
+        ]
+      },
+      "then": {
+        "properties": {
+          "file_size": {
+            "type": "integer",
+            "maximum": 15
+          },
+          "file_complete": {
+            "const": false
+          },
+          "header_digest_sha256": {
+            "type": "null"
+          },
+          "partial_tail_byte_count": {
+            "maximum": 15
+          },
+          "partial_tail_start_offset": {
+            "const": 0
+          },
+          "partial_tail_expected_total_bytes": {
+            "const": 16
+          },
+          "partial_tail_missing_byte_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "partial_tail_component": {
+            "const": "PREFIX"
+          }
+        },
+        "required": [
+          "partial_tail_component"
+        ]
+      },
+      "then": {
+        "properties": {
+          "file_complete": {
+            "const": false
+          },
+          "header_digest_sha256": {
+            "type": "string"
+          },
+          "partial_tail_byte_count": {
+            "minimum": 1,
+            "maximum": 19
+          },
+          "partial_tail_start_offset": {
+            "type": "integer"
+          },
+          "partial_tail_expected_total_bytes": {
+            "type": "null"
+          },
+          "partial_tail_missing_byte_count": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "partial_tail_component": {
+            "enum": [
+              "METADATA",
+              "PAYLOAD",
+              "DIGEST",
+              "COMMIT_MARKER"
+            ]
+          }
+        },
+        "required": [
+          "partial_tail_component"
+        ]
+      },
+      "then": {
+        "properties": {
+          "file_complete": {
+            "const": false
+          },
+          "header_digest_sha256": {
+            "type": "string"
+          },
+          "partial_tail_byte_count": {
+            "minimum": 20
+          },
+          "partial_tail_start_offset": {
+            "type": "integer"
+          },
+          "partial_tail_expected_total_bytes": {
+            "type": "integer"
+          },
+          "partial_tail_missing_byte_count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "UNDETERMINED"
+          }
+        },
+        "required": [
+          "evidence_platform_profile"
+        ]
+      },
+      "then": {
+        "properties": {
+          "exit_code": {
+            "enum": [
+              1,
+              2,
+              66,
+              70
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "POSIX_CPTHON_3_12_VALIDATION"
+          }
+        },
+        "required": [
+          "evidence_platform_profile"
+        ]
+      },
+      "then": {
+        "properties": {
+          "journal_present": {
+            "const": true
+          },
+          "supervision_sidecar_path": {
+            "type": "null"
+          },
+          "supervision_sidecar_file_size": {
+            "type": "null"
+          },
+          "supervision_sidecar_sha256": {
+            "type": "null"
+          },
+          "supervision_sidecar_valid": {
+            "type": "null"
+          },
+          "supervision_journal_bound": {
+            "type": "null"
+          },
+          "supervision_journal_binding_valid": {
+            "type": "null"
+          },
+          "supervision_last_committed_sequence": {
+            "type": "null"
+          },
+          "supervision_partial_tail_byte_count": {
+            "const": 0
+          },
+          "guard_terminal_state": {
+            "const": "NOT_APPLICABLE"
+          },
+          "guard_termination_requested": {
+            "type": "null"
+          },
+          "guard_termination_reason": {
+            "type": "null"
+          },
+          "guard_trigger_value": {
+            "type": "null"
+          },
+          "guard_trigger_win32_error": {
+            "type": "null"
+          },
+          "guard_termination_call_returned": {
+            "type": "null"
+          },
+          "guard_termination_call_succeeded": {
+            "type": "null"
+          },
+          "guard_termination_win32_error": {
+            "type": "null"
+          },
+          "guard_reclamation_state": {
+            "type": "null"
+          },
+          "guard_reclamation_active_process_count": {
+            "type": "null"
+          },
+          "reason_counts": {
+            "properties": {
+              "SUPERVISION_SIDECAR_MISSING": {
+                "const": 0
+              },
+              "SUPERVISION_SIDECAR_INVALID": {
+                "const": 0
+              },
+              "SUPERVISION_JOURNAL_BINDING_MISMATCH": {
+                "const": 0
+              },
+              "GUARD_TERMINAL_STATE_MISSING": {
+                "const": 0
+              },
+              "GUARD_TERMINATION_REQUESTED": {
+                "const": 0
+              },
+              "RECLAMATION_UNCONFIRMED": {
+                "const": 0
+              },
+              "SUPERVISION_STATE_CONTRADICTION": {
+                "const": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_terminal_state": {
+            "const": "NOT_APPLICABLE"
+          }
+        },
+        "required": [
+          "guard_terminal_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "POSIX_CPTHON_3_12_VALIDATION"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_terminal_state": {
+            "const": "UNDETERMINED"
+          }
+        },
+        "required": [
+          "guard_terminal_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "UNDETERMINED"
+          },
+          "journal_present": {
+            "const": true
+          },
+          "exit_code": {
+            "enum": [
+              1,
+              2
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_terminal_state": {
+            "const": "MISSING"
+          }
+        },
+        "required": [
+          "guard_terminal_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_platform_profile": {
+            "enum": [
+              "WINDOWS_CPTHON_3_13",
+              "WINDOWS_SUPERVISION_ONLY",
+              "UNDETERMINED"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "WINDOWS_CPTHON_3_13"
+          }
+        },
+        "required": [
+          "evidence_platform_profile"
+        ]
+      },
+      "then": {
+        "properties": {
+          "journal_present": {
+            "const": true
+          },
+          "supervision_sidecar_path": {
+            "type": "string"
+          },
+          "supervision_journal_binding_valid": {
+            "type": "boolean"
+          },
+          "guard_terminal_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "NORMAL_SUPERVISION_COMPLETED",
+                  "RECLAMATION_CONFIRMED",
+                  "RECLAMATION_UNCONFIRMED",
+                  "MISSING"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "UNDETERMINED"
+          },
+          "journal_present": {
+            "const": true
+          },
+          "exit_code": {
+            "enum": [
+              1,
+              2
+            ]
+          }
+        },
+        "required": [
+          "evidence_platform_profile",
+          "journal_present",
+          "exit_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "journal_present": {
+            "const": true
+          },
+          "supervision_sidecar_valid": {
+            "type": "null"
+          },
+          "supervision_journal_bound": {
+            "type": "null"
+          },
+          "supervision_journal_binding_valid": {
+            "const": false
+          },
+          "supervision_last_committed_sequence": {
+            "type": "null"
+          },
+          "supervision_partial_tail_byte_count": {
+            "const": 0
+          },
+          "guard_terminal_state": {
+            "const": "UNDETERMINED"
+          },
+          "guard_termination_requested": {
+            "type": "null"
+          },
+          "guard_termination_reason": {
+            "type": "null"
+          },
+          "guard_trigger_value": {
+            "type": "null"
+          },
+          "guard_trigger_win32_error": {
+            "type": "null"
+          },
+          "guard_termination_call_returned": {
+            "type": "null"
+          },
+          "guard_termination_call_succeeded": {
+            "type": "null"
+          },
+          "guard_termination_win32_error": {
+            "type": "null"
+          },
+          "guard_reclamation_state": {
+            "type": "null"
+          },
+          "guard_reclamation_active_process_count": {
+            "type": "null"
+          },
+          "reason_counts": {
+            "properties": {
+              "SUPERVISION_SIDECAR_MISSING": {
+                "const": 0
+              },
+              "SUPERVISION_SIDECAR_INVALID": {
+                "const": 0
+              },
+              "SUPERVISION_JOURNAL_BINDING_MISMATCH": {
+                "const": 0
+              },
+              "GUARD_TERMINAL_STATE_MISSING": {
+                "const": 0
+              },
+              "GUARD_TERMINATION_REQUESTED": {
+                "const": 0
+              },
+              "RECLAMATION_UNCONFIRMED": {
+                "const": 0
+              },
+              "SUPERVISION_STATE_CONTRADICTION": {
+                "const": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "supervision_sidecar_file_size": {
+            "type": "null"
+          }
+        },
+        "required": [
+          "supervision_sidecar_file_size"
+        ]
+      },
+      "then": {
+        "properties": {
+          "supervision_sidecar_sha256": {
+            "type": "null"
+          },
+          "supervision_sidecar_valid": {
+            "type": "null"
+          },
+          "supervision_journal_bound": {
+            "type": "null"
+          },
+          "supervision_last_committed_sequence": {
+            "type": "null"
+          },
+          "supervision_partial_tail_byte_count": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "supervision_sidecar_file_size": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "supervision_sidecar_file_size"
+        ]
+      },
+      "then": {
+        "properties": {
+          "supervision_sidecar_path": {
+            "type": "string"
+          },
+          "supervision_sidecar_sha256": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "supervision_sidecar_valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "supervision_sidecar_valid"
+        ]
+      },
+      "then": {
+        "properties": {
+          "supervision_sidecar_file_size": {
+            "type": "integer"
+          },
+          "supervision_sidecar_sha256": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "supervision_sidecar_valid": {
+            "const": true
+          }
+        },
+        "required": [
+          "supervision_sidecar_valid"
+        ]
+      },
+      "then": {
+        "properties": {
+          "supervision_sidecar_file_size": {
+            "type": "integer"
+          },
+          "supervision_sidecar_sha256": {
+            "type": "string"
+          },
+          "supervision_partial_tail_byte_count": {
+            "const": 0
+          },
+          "supervision_journal_bound": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "supervision_journal_binding_valid": {
+            "const": true
+          }
+        },
+        "required": [
+          "supervision_journal_binding_valid"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "WINDOWS_CPTHON_3_13"
+          },
+          "supervision_sidecar_valid": {
+            "const": true
+          },
+          "supervision_journal_bound": {
+            "const": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "supervision_sidecar_valid": {
+            "const": true
+          },
+          "supervision_sidecar_file_size": {
+            "const": 128
+          }
+        },
+        "required": [
+          "supervision_sidecar_valid",
+          "supervision_sidecar_file_size"
+        ]
+      },
+      "then": {
+        "properties": {
+          "supervision_last_committed_sequence": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "supervision_sidecar_valid": {
+            "const": true
+          },
+          "supervision_last_committed_sequence": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "supervision_sidecar_valid",
+          "supervision_last_committed_sequence"
+        ]
+      },
+      "then": {
+        "properties": {
+          "supervision_sidecar_file_size": {
+            "type": "integer",
+            "minimum": 384
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "const": 0
+          },
+          "evidence_platform_profile": {
+            "const": "WINDOWS_CPTHON_3_13"
+          }
+        },
+        "required": [
+          "exit_code",
+          "evidence_platform_profile"
+        ]
+      },
+      "then": {
+        "properties": {
+          "supervision_sidecar_valid": {
+            "const": true
+          },
+          "supervision_journal_bound": {
+            "const": true
+          },
+          "supervision_journal_binding_valid": {
+            "const": true
+          },
+          "guard_terminal_state": {
+            "const": "NORMAL_SUPERVISION_COMPLETED"
+          },
+          "guard_termination_requested": {
+            "const": false
+          },
+          "guard_termination_reason": {
+            "type": "null"
+          },
+          "guard_trigger_value": {
+            "type": "null"
+          },
+          "guard_trigger_win32_error": {
+            "type": "null"
+          },
+          "guard_termination_call_returned": {
+            "const": false
+          },
+          "guard_termination_call_succeeded": {
+            "type": "null"
+          },
+          "guard_termination_win32_error": {
+            "type": "null"
+          },
+          "guard_reclamation_state": {
+            "const": "NOT_REQUESTED"
+          },
+          "guard_reclamation_active_process_count": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_termination_requested": {
+            "const": false
+          }
+        },
+        "required": [
+          "guard_termination_requested"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_termination_reason": {
+            "type": "null"
+          },
+          "guard_trigger_value": {
+            "type": "null"
+          },
+          "guard_trigger_win32_error": {
+            "type": "null"
+          },
+          "guard_termination_call_returned": {
+            "const": false
+          },
+          "guard_termination_call_succeeded": {
+            "type": "null"
+          },
+          "guard_termination_win32_error": {
+            "type": "null"
+          },
+          "guard_reclamation_state": {
+            "const": "NOT_REQUESTED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_termination_requested": {
+            "const": true
+          }
+        },
+        "required": [
+          "guard_termination_requested"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_termination_reason": {
+            "enum": [
+              "STARTUP_DEADLINE",
+              "RUNTIME_FATAL_DEADLINE",
+              "OUTPUT_DRAIN_DEADLINE",
+              "ENGINE_EXITED_FIRST",
+              "SHUTDOWN_EVENT",
+              "HANDSHAKE_PROTOCOL_FAILURE",
+              "SIDECAR_FAILURE",
+              "GUARD_INTERNAL_FAILURE",
+              "ENGINE_RESUME_STATE_FAILURE",
+              "TARGET_RESUME_STATE_FAILURE"
+            ]
+          },
+          "guard_reclamation_state": {
+            "enum": [
+              "CONFIRMED",
+              "UNCONFIRMED"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_termination_reason": {
+            "enum": [
+              "ENGINE_RESUME_STATE_FAILURE",
+              "TARGET_RESUME_STATE_FAILURE"
+            ]
+          }
+        },
+        "required": [
+          "guard_termination_reason"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_trigger_value": {
+            "type": "integer"
+          },
+          "guard_trigger_win32_error": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_termination_reason": {
+            "not": {
+              "enum": [
+                "ENGINE_RESUME_STATE_FAILURE",
+                "TARGET_RESUME_STATE_FAILURE"
+              ]
+            }
+          }
+        },
+        "required": [
+          "guard_termination_reason"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_trigger_value": {
+            "type": "null"
+          },
+          "guard_trigger_win32_error": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_trigger_value": {
+            "const": 4294967295
+          }
+        },
+        "required": [
+          "guard_trigger_value"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_trigger_win32_error": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_trigger_value": {
+            "type": "integer",
+            "maximum": 4294967294
+          }
+        },
+        "required": [
+          "guard_trigger_value"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_trigger_win32_error": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_termination_call_returned": {
+            "const": false
+          }
+        },
+        "required": [
+          "guard_termination_call_returned"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_termination_call_succeeded": {
+            "type": "null"
+          },
+          "guard_termination_win32_error": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_termination_call_returned": {
+            "const": true
+          }
+        },
+        "required": [
+          "guard_termination_call_returned"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_termination_call_succeeded": {
+            "type": "boolean"
+          },
+          "guard_termination_win32_error": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_termination_call_succeeded": {
+            "const": true
+          }
+        },
+        "required": [
+          "guard_termination_call_succeeded"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_termination_call_returned": {
+            "const": true
+          },
+          "guard_termination_win32_error": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_termination_call_succeeded": {
+            "const": false
+          }
+        },
+        "required": [
+          "guard_termination_call_succeeded"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_termination_call_returned": {
+            "const": true
+          },
+          "guard_termination_win32_error": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_reclamation_state": {
+            "const": "CONFIRMED"
+          }
+        },
+        "required": [
+          "guard_reclamation_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_termination_requested": {
+            "const": true
+          },
+          "guard_terminal_state": {
+            "const": "RECLAMATION_CONFIRMED"
+          },
+          "guard_termination_call_returned": {
+            "const": true
+          },
+          "guard_reclamation_active_process_count": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_reclamation_state": {
+            "const": "UNCONFIRMED"
+          }
+        },
+        "required": [
+          "guard_reclamation_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_termination_requested": {
+            "const": true
+          },
+          "guard_terminal_state": {
+            "enum": [
+              "RECLAMATION_UNCONFIRMED",
+              "MISSING"
+            ]
+          },
+          "guard_reclamation_active_process_count": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_terminal_state": {
+            "const": "NORMAL_SUPERVISION_COMPLETED"
+          }
+        },
+        "required": [
+          "guard_terminal_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_termination_requested": {
+            "const": false
+          },
+          "guard_reclamation_state": {
+            "const": "NOT_REQUESTED"
+          },
+          "guard_reclamation_active_process_count": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_terminal_state": {
+            "const": "RECLAMATION_CONFIRMED"
+          }
+        },
+        "required": [
+          "guard_terminal_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_reclamation_state": {
+            "const": "CONFIRMED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "guard_terminal_state": {
+            "const": "RECLAMATION_UNCONFIRMED"
+          }
+        },
+        "required": [
+          "guard_terminal_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "guard_reclamation_state": {
+            "const": "UNCONFIRMED"
+          },
+          "guard_termination_call_returned": {
+            "const": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "WINDOWS_CPTHON_3_13"
+          },
+          "child_return_code": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "evidence_platform_profile",
+          "child_return_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "child_return_code": {
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evidence_platform_profile": {
+            "const": "UNDETERMINED"
+          },
+          "exit_code": {
+            "enum": [
+              1,
+              2
+            ]
+          }
+        },
+        "required": [
+          "evidence_platform_profile",
+          "exit_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "child_return_code": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "clean_shutdown": {
+            "const": true
+          }
+        },
+        "required": [
+          "clean_shutdown"
+        ]
+      },
+      "then": {
+        "properties": {
+          "exit_code": {
+            "const": 0
+          },
+          "local_verdict": {
+            "const": "PASS"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "file_complete": {
+            "const": true
+          }
+        },
+        "required": [
+          "file_complete"
+        ]
+      },
+      "then": {
+        "properties": {
+          "file_size": {
+            "type": "integer",
+            "minimum": 16
+          },
+          "header_digest_sha256": {
+            "type": "string"
+          },
+          "partial_tail_byte_count": {
+            "const": 0
+          },
+          "partial_tail_start_offset": {
+            "type": "null"
+          },
+          "partial_tail_component": {
+            "type": "null"
+          },
+          "partial_tail_expected_total_bytes": {
+            "type": "null"
+          },
+          "partial_tail_missing_byte_count": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "enum": [
+              0,
+              1,
+              2
+            ]
+          },
+          "file_size": {
+            "type": "integer",
+            "minimum": 16
+          },
+          "partial_tail_component": {
+            "type": "null"
+          }
+        },
+        "required": [
+          "exit_code",
+          "file_size",
+          "partial_tail_component"
+        ]
+      },
+      "then": {
+        "properties": {
+          "file_complete": {
+            "const": true
+          }
+        }
+      }
+    }
+  ]
+}

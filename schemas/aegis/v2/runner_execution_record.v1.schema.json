@@ -1,0 +1,851 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/runner_execution_record.v1.schema.json",
+  "title": "RunnerExecutionRecord.v1",
+  "description": "Machine-specific, content-addressed evidence for one certified, isolated direct SUT process invocation.",
+  "$comment": "execution_record_id is sha256:<SHA-256(UTF-8 JCS RFC 8785 bytes of this object with execution_record_id omitted)>. This record exists only after a VERIFIED_RELEASE_GRADE isolation binding authorizes process creation. It binds the repository-external virtual environment, installed wheel/import origins, certified sandbox backend, exact mount/deny/network evidence, isolated cwd, seven-item argv, two-item non-inherited environment, stdin, process, times, return code, stdout, and stderr. It is never part of SUT stdin, argv, environment, fixtures, or observed_state. The evaluator must verify every declared byte size/hash, JCS hash, signature, mirror binding, timestamp order, duration, runtime/isolation revalidation, and SutDecision self-hash; JSON Schema cannot perform those cross-field computations.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "execution_record_id",
+    "evaluation_execution_id",
+    "invocation_id",
+    "runner_contract_id",
+    "case_id",
+    "input_binding_id",
+    "runner_input_jcs_sha256",
+    "sut_stdin",
+    "exact_argv",
+    "exact_argv_jcs_sha256",
+    "resolved_working_directory",
+    "working_directory_utf8_sha256",
+    "exact_environment",
+    "environment_inheritance",
+    "exact_environment_jcs_sha256",
+    "process",
+    "started_at_utc",
+    "ended_at_utc",
+    "duration_ns",
+    "return_code",
+    "stdout",
+    "stderr",
+    "stdout_decoding",
+    "python_executable_binding",
+    "runtime_revalidation",
+    "isolation_binding_id",
+    "isolation_binding",
+    "isolation_revalidation"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "RunnerExecutionRecord.v1"
+    },
+    "execution_record_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "evaluation_execution_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "invocation_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "runner_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "case_id": {
+      "$ref": "common.v1.schema.json#/$defs/caseId"
+    },
+    "input_binding_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "runner_input_jcs_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "sut_stdin": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/byteCapture"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "encoding": {
+              "const": "UTF-8"
+            },
+            "serialization": {
+              "const": "JCS-RFC8785"
+            }
+          }
+        }
+      ]
+    },
+    "exact_argv": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/portableAbsolutePath"
+        },
+        {
+          "const": "-I"
+        },
+        {
+          "const": "-X"
+        },
+        {
+          "const": "utf8"
+        },
+        {
+          "const": "-m"
+        },
+        {
+          "const": "aegis.sut"
+        },
+        {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        }
+      ],
+      "minItems": 7,
+      "maxItems": 7
+    },
+    "exact_argv_jcs_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "resolved_working_directory": {
+      "$ref": "#/$defs/portableAbsolutePath"
+    },
+    "working_directory_utf8_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "exact_environment": {
+      "const": [
+        {
+          "name": "AEGIS_RUNNER_MODE",
+          "value": "FROZEN_EVALUATION"
+        },
+        {
+          "name": "LANGGRAPH_STRICT_MSGPACK",
+          "value": "true"
+        }
+      ]
+    },
+    "environment_inheritance": {
+      "const": "NONE"
+    },
+    "exact_environment_jcs_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "process_id",
+        "spawn_method",
+        "shell",
+        "path_lookup",
+        "network_access",
+        "termination_kind"
+      ],
+      "properties": {
+        "process_id": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "spawn_method": {
+          "const": "DIRECT_OS_PROCESS_ARGV"
+        },
+        "shell": {
+          "const": false
+        },
+        "path_lookup": {
+          "const": false
+        },
+        "network_access": {
+          "const": "DENIED"
+        },
+        "termination_kind": {
+          "type": "string",
+          "enum": [
+            "EXITED",
+            "TIMED_OUT_AND_TERMINATED",
+            "SIGNALLED_OR_FORCIBLY_TERMINATED",
+            "SPAWN_FAILED"
+          ]
+        }
+      }
+    },
+    "started_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "ended_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "duration_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "return_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "stdout": {
+      "$ref": "#/$defs/byteCapture"
+    },
+    "stderr": {
+      "$ref": "#/$defs/byteCapture"
+    },
+    "stdout_decoding": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/validatedDecision"
+        },
+        {
+          "$ref": "#/$defs/invalidDecision"
+        }
+      ]
+    },
+    "python_executable_binding": {
+      "$ref": "python_executable_binding.v1.schema.json"
+    },
+    "runtime_revalidation": {
+      "$ref": "#/$defs/runtimeRevalidation"
+    },
+    "isolation_binding_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "isolation_binding": {
+      "$ref": "evaluation_isolation_binding.v1.schema.json"
+    },
+    "isolation_revalidation": {
+      "$ref": "#/$defs/isolationRevalidation"
+    }
+  },
+  "allOf": [
+    {
+      "properties": {
+        "isolation_binding": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "VERIFIED_RELEASE_GRADE"
+            },
+            "execution_authorized": {
+              "const": true
+            }
+          },
+          "required": [
+            "state",
+            "execution_authorized"
+          ]
+        },
+        "isolation_revalidation": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "const": "EXACT_MATCH"
+            }
+          },
+          "required": [
+            "result"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stdout_decoding": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "VALID_SUT_DECISION"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          }
+        },
+        "required": [
+          "stdout_decoding"
+        ]
+      },
+      "then": {
+        "properties": {
+          "return_code": {
+            "const": 0
+          },
+          "process": {
+            "type": "object",
+            "properties": {
+              "termination_kind": {
+                "const": "EXITED"
+              }
+            },
+            "required": [
+              "termination_kind"
+            ]
+          },
+          "stdout": {
+            "type": "object",
+            "properties": {
+              "encoding": {
+                "const": "UTF-8"
+              },
+              "serialization": {
+                "const": "JCS-RFC8785"
+              }
+            },
+            "required": [
+              "encoding",
+              "serialization"
+            ]
+          },
+          "isolation_binding": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "VERIFIED_RELEASE_GRADE"
+              },
+              "execution_authorized": {
+                "const": true
+              }
+            },
+            "required": [
+              "state",
+              "execution_authorized"
+            ]
+          },
+          "isolation_revalidation": {
+            "type": "object",
+            "properties": {
+              "result": {
+                "const": "EXACT_MATCH"
+              }
+            },
+            "required": [
+              "result"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "process": {
+            "type": "object",
+            "properties": {
+              "termination_kind": {
+                "const": "SPAWN_FAILED"
+              }
+            },
+            "required": [
+              "termination_kind"
+            ]
+          }
+        },
+        "required": [
+          "process"
+        ]
+      },
+      "then": {
+        "properties": {
+          "return_code": {
+            "type": "null"
+          },
+          "process": {
+            "type": "object",
+            "properties": {
+              "process_id": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "process_id"
+            ]
+          },
+          "stdout_decoding": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "INVALID_OR_ABSENT_SUT_DECISION"
+              },
+              "failure_reason": {
+                "const": "SPAWN_FAILED"
+              }
+            },
+            "required": [
+              "state",
+              "failure_reason"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "process": {
+            "type": "object",
+            "properties": {
+              "termination_kind": {
+                "not": {
+                  "const": "SPAWN_FAILED"
+                }
+              }
+            },
+            "required": [
+              "termination_kind"
+            ]
+          }
+        },
+        "required": [
+          "process"
+        ]
+      },
+      "then": {
+        "properties": {
+          "process": {
+            "type": "object",
+            "properties": {
+              "process_id": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "process_id"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "process": {
+            "type": "object",
+            "properties": {
+              "termination_kind": {
+                "const": "TIMED_OUT_AND_TERMINATED"
+              }
+            },
+            "required": [
+              "termination_kind"
+            ]
+          }
+        },
+        "required": [
+          "process"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "stdout_decoding": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "INVALID_OR_ABSENT_SUT_DECISION"
+              },
+              "failure_reason": {
+                "const": "TIMEOUT"
+              }
+            },
+            "required": [
+              "state",
+              "failure_reason"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "process": {
+            "type": "object",
+            "properties": {
+              "termination_kind": {
+                "const": "SIGNALLED_OR_FORCIBLY_TERMINATED"
+              }
+            },
+            "required": [
+              "termination_kind"
+            ]
+          }
+        },
+        "required": [
+          "process"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "stdout_decoding": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "INVALID_OR_ABSENT_SUT_DECISION"
+              },
+              "failure_reason": {
+                "const": "PROCESS_SIGNALLED_OR_TERMINATED"
+              }
+            },
+            "required": [
+              "state",
+              "failure_reason"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "process": {
+            "type": "object",
+            "properties": {
+              "termination_kind": {
+                "const": "EXITED"
+              }
+            },
+            "required": [
+              "termination_kind"
+            ]
+          },
+          "return_code": {
+            "type": "integer",
+            "not": {
+              "const": 0
+            }
+          }
+        },
+        "required": [
+          "process",
+          "return_code"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "stdout_decoding": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "INVALID_OR_ABSENT_SUT_DECISION"
+              },
+              "failure_reason": {
+                "const": "PROCESS_DID_NOT_EXIT_ZERO"
+              }
+            },
+            "required": [
+              "state",
+              "failure_reason"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "portableAbsolutePath": {
+      "oneOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/sourceHostAbsolutePath"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32767,
+          "pattern": "^/(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*[\\u0000\\r\\n])(?:[^/]+(?:/[^/]+)*)?$"
+        }
+      ]
+    },
+    "byteCapture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "encoding",
+        "serialization",
+        "byte_size",
+        "raw_sha256",
+        "bytes_base64"
+      ],
+      "properties": {
+        "encoding": {
+          "type": "string",
+          "enum": [
+            "UTF-8",
+            "BINARY"
+          ]
+        },
+        "serialization": {
+          "type": "string",
+          "enum": [
+            "JCS-RFC8785",
+            "RAW-BYTES"
+          ]
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 67108864
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "bytes_base64": {
+          "type": "string",
+          "maxLength": 89478488,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      }
+    },
+    "validatedDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "text_encoding",
+        "json_document_mode",
+        "sut_output_schema_id",
+        "sut_decision_sha256"
+      ],
+      "properties": {
+        "state": {
+          "const": "VALID_SUT_DECISION"
+        },
+        "text_encoding": {
+          "const": "UTF-8-NO-BOM"
+        },
+        "json_document_mode": {
+          "const": "EXACTLY_ONE_JSON_DOCUMENT_NO_PREFIX_NO_SUFFIX"
+        },
+        "sut_output_schema_id": {
+          "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/sut_decision.v1.schema.json"
+        },
+        "sut_decision_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      }
+    },
+    "invalidDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "failure_reason"
+      ],
+      "properties": {
+        "state": {
+          "const": "INVALID_OR_ABSENT_SUT_DECISION"
+        },
+        "failure_reason": {
+          "type": "string",
+          "enum": [
+            "PROCESS_DID_NOT_EXIT_ZERO",
+            "STDOUT_NOT_UTF8",
+            "STDOUT_NOT_EXACT_SINGLE_JSON",
+            "SUT_DECISION_SCHEMA_INVALID",
+            "SUT_DECISION_SELF_HASH_INVALID",
+            "SPAWN_FAILED",
+            "TIMEOUT",
+            "PROCESS_SIGNALLED_OR_TERMINATED"
+          ]
+        }
+      }
+    },
+    "runtimeRevalidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_id",
+        "revalidated_at_utc",
+        "resolved_absolute_realpath",
+        "byte_size",
+        "raw_sha256",
+        "python_version",
+        "python_implementation",
+        "abi_cache_tag",
+        "platform_profile",
+        "dependency_lock_repository_path",
+        "dependency_lock_byte_size",
+        "dependency_lock_raw_sha256",
+        "installed_distribution_snapshot_id",
+        "virtual_environment_root",
+        "pyvenv_cfg_raw_sha256",
+        "project_wheel_raw_sha256",
+        "project_wheel_source_snapshot_id",
+        "sys_path_snapshot_id",
+        "module_origins_jcs_sha256",
+        "import_isolation_result",
+        "result"
+      ],
+      "properties": {
+        "binding_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "revalidated_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "resolved_absolute_realpath": {
+          "$ref": "#/$defs/portableAbsolutePath"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "python_version": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 128,
+          "pattern": "^3\\.13\\.[0-9]+(?:[-+._A-Za-z0-9]*)?$"
+        },
+        "python_implementation": {
+          "const": "CPython"
+        },
+        "abi_cache_tag": {
+          "const": "cpython-313"
+        },
+        "platform_profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operating_system",
+            "sys_platform",
+            "machine",
+            "python_implementation",
+            "python_major_minor",
+            "wheel_platform_tag"
+          ],
+          "properties": {
+            "operating_system": {
+              "const": "Windows"
+            },
+            "sys_platform": {
+              "const": "win32"
+            },
+            "machine": {
+              "const": "AMD64"
+            },
+            "python_implementation": {
+              "const": "CPython"
+            },
+            "python_major_minor": {
+              "const": "3.13"
+            },
+            "wheel_platform_tag": {
+              "const": "win_amd64"
+            }
+          }
+        },
+        "dependency_lock_repository_path": {
+          "const": "pylock.windows-py313.toml"
+        },
+        "dependency_lock_byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "dependency_lock_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "installed_distribution_snapshot_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "virtual_environment_root": {
+          "$ref": "#/$defs/portableAbsolutePath"
+        },
+        "pyvenv_cfg_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "project_wheel_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "project_wheel_source_snapshot_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "sys_path_snapshot_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "module_origins_jcs_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "import_isolation_result": {
+          "const": "EXACT_MATCH"
+        },
+        "result": {
+          "const": "EXACT_MATCH"
+        }
+      }
+    },
+    "isolationRevalidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_id",
+        "revalidated_at_utc",
+        "backend_binary_raw_sha256",
+        "certification_id",
+        "trust_anchor_id",
+        "trust_anchor_authorization_record_raw_sha256",
+        "trust_anchor_revocation_registry_snapshot_id",
+        "mounts_jcs_sha256",
+        "deny_evidence_jcs_sha256",
+        "network_evidence_jcs_sha256",
+        "result"
+      ],
+      "properties": {
+        "binding_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "revalidated_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "backend_binary_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "certification_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "trust_anchor_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "trust_anchor_authorization_record_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "trust_anchor_revocation_registry_snapshot_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "mounts_jcs_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "deny_evidence_jcs_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "network_evidence_jcs_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "result": {
+          "const": "EXACT_MATCH"
+        }
+      }
+    }
+  }
+}

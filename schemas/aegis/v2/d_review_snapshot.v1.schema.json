@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/d_review_snapshot.v1.schema.json",
+  "title": "DReviewSnapshot.v1",
+  "description": "Content-addressed kernel freeze of D-accepted evidence, coverage classifications, and normalized facts.",
+  "$comment": "d_review_snapshot_id is sha256:<SHA-256(UTF-8 JCS RFC8785 bytes of this object with d_review_snapshot_id omitted)>. The gate validates the current D producer against registry_snapshot_id, then loads every evidence_record_content_id and its historical registry preimage, action, COMPLETE/INGEST receipts, authority events, and physical producer revision. A later replacement does not invalidate an immutable evidence acceptance already committed here; missing, incomplete, or mismatched historical provenance does. accepted_evidence, fact_bindings, and every set array are duplicate-free and sorted by their stable key. The gate recomputes normalized_fact_ids and all coverage sets from production records; no agent boolean is accepted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "d_review_snapshot_id",
+    "canonicalization",
+    "campaign_id",
+    "run_id",
+    "source_baseline_id",
+    "registry_snapshot_id",
+    "test_plan_revision_id",
+    "execution_environment_snapshot_id",
+    "execution_contract_id",
+    "state_seq",
+    "producer_identity",
+    "approved_case_ids",
+    "accepted_required_case_ids",
+    "accepted_optional_case_ids",
+    "missing_required_case_ids",
+    "accepted_evidence",
+    "fact_bindings",
+    "normalized_fact_ids",
+    "produced_attempt_id",
+    "produced_event_id",
+    "produced_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "DReviewSnapshot.v1"
+    },
+    "d_review_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "campaign_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "registry_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "execution_environment_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "execution_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "state_seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "producer_identity": {
+      "allOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role_slot_id": {
+              "const": "D"
+            },
+            "role": {
+              "const": "TEST_RESULT_REVIEWER"
+            }
+          }
+        }
+      ]
+    },
+    "approved_case_ids": {
+      "$ref": "#/$defs/caseSet"
+    },
+    "accepted_required_case_ids": {
+      "$ref": "#/$defs/caseSet"
+    },
+    "accepted_optional_case_ids": {
+      "$ref": "#/$defs/caseSet"
+    },
+    "missing_required_case_ids": {
+      "$ref": "#/$defs/caseSet"
+    },
+    "accepted_evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidenceAcceptance"
+      }
+    },
+    "fact_bindings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/factBinding"
+      }
+    },
+    "normalized_fact_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/stableId"
+      }
+    },
+    "produced_attempt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "produced_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "produced_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "$defs": {
+    "caseSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/caseId"
+      }
+    },
+    "evidenceAcceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "evidence_record_content_id",
+        "case_ids",
+        "registry_snapshot_id",
+        "producer_identity",
+        "action_id",
+        "completion_receipt_id",
+        "ingest_receipt_id",
+        "accepted_event_id"
+      ],
+      "properties": {
+        "evidence_id": {
+          "$ref": "common.v1.schema.json#/$defs/evidenceId"
+        },
+        "evidence_record_content_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "case_ids": {
+          "$ref": "#/$defs/caseSet"
+        },
+        "registry_snapshot_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "producer_identity": {
+          "allOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "const": "C"
+                },
+                "role": {
+                  "const": "TEST_EXECUTOR"
+                }
+              }
+            }
+          ]
+        },
+        "action_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "completion_receipt_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "ingest_receipt_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "accepted_event_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        }
+      }
+    },
+    "factBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fact_id",
+        "fact_type",
+        "artifact_content_id"
+      ],
+      "properties": {
+        "fact_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "fact_type": {
+          "type": "string",
+          "enum": [
+            "PRODUCT_FINDING",
+            "PROCESS_BLOCKER",
+            "ENVIRONMENT_GAP",
+            "UPSTREAM_DEFECT",
+            "REPORT_DEFECT",
+            "EXTERNAL_JOB",
+            "UNKNOWN_SIDE_EFFECT",
+            "SAFETY_STOP",
+            "CANCELLATION"
+          ]
+        },
+        "artifact_content_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      }
+    }
+  }
+}

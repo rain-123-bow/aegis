@@ -1,0 +1,1277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/provision_batch.v1.schema.json",
+  "title": "ProvisionBatch.v1",
+  "description": "Durable provisional batch for atomic six-role generation creation or one-role replacement.",
+  "$comment": "batch_id is provision_batch_id for SOURCE_GENERATION and replacement_batch_id for REPLACEMENT. The gate must persist PREPARED and a certified capacity preflight before any spawn, append each observed identity immediately, issue zero test action while provisional, and CAS-commit the registry pointer(s) in one transaction only after authoritative identity/capability verification. registry_snapshot_before_id/revision must equal the preflight; COMMITTED produces the exact after snapshot and next revision. ABORTED identities become visible orphans and count against capacity until PLATFORM_CLOSED. Intentional create/validate fault experiments require batch-specific cleanup preauthorization before creation and record one exact role/stage; without it the experiment is refused before spawn.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "batch_id",
+    "batch_kind",
+    "batch_state",
+    "campaign_id",
+    "run_id",
+    "source_baseline_id",
+    "source_generation_id",
+    "parent_task_id",
+    "capacity_preflight",
+    "registry_snapshot_before_id",
+    "registry_snapshot_after_id",
+    "registry_revision_before",
+    "registry_revision_after",
+    "expected_role_slots",
+    "replacement_role_slot_id",
+    "old_identity",
+    "expected_instance_revision",
+    "provisional_identities",
+    "fault_experiment",
+    "orphan_cleanup_authorization",
+    "platform_close_receipt_ids",
+    "prepared_event_id",
+    "terminal_event_id",
+    "created_at_utc",
+    "updated_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ProvisionBatch.v1"
+    },
+    "batch_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "batch_kind": {
+      "type": "string",
+      "enum": [
+        "SOURCE_GENERATION",
+        "REPLACEMENT"
+      ]
+    },
+    "batch_state": {
+      "type": "string",
+      "enum": [
+        "PREPARED",
+        "PROVISIONING",
+        "COMMITTED",
+        "ABORTED",
+        "FAULT_EXPERIMENT_REFUSED_NO_CLEANUP_PREAUTH",
+        "CAPACITY_BLOCKED_BY_RETENTION",
+        "CAPACITY_BLOCKED_REPLACEMENT"
+      ]
+    },
+    "campaign_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "source_generation_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "parent_task_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "capacity_preflight": {
+      "$ref": "#/$defs/capacityPreflight"
+    },
+    "registry_snapshot_before_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "registry_snapshot_after_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "registry_revision_before": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "registry_revision_after": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "expected_role_slots": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/roleSlotId"
+      }
+    },
+    "replacement_role_slot_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/roleSlotId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "old_identity": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "expected_instance_revision": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "provisional_identities": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "$ref": "agent_identity.v1.schema.json"
+      }
+    },
+    "fault_experiment": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/faultExperiment"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "orphan_cleanup_authorization": {
+      "$ref": "#/$defs/orphanCleanupAuthorization"
+    },
+    "platform_close_receipt_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "prepared_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "terminal_event_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "created_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "updated_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "enum": [
+              "PREPARED",
+              "PROVISIONING",
+              "COMMITTED",
+              "ABORTED"
+            ]
+          }
+        },
+        "required": [
+          "batch_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "capacity_preflight": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "ALLOW"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "const": "COMMITTED"
+          }
+        },
+        "required": [
+          "batch_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "registry_snapshot_after_id": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          },
+          "registry_revision_after": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "registry_snapshot_after_id": {
+            "type": "null"
+          },
+          "registry_revision_after": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_kind": {
+            "const": "SOURCE_GENERATION"
+          }
+        },
+        "required": [
+          "batch_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "expected_role_slots": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "const": "A"
+              },
+              {
+                "const": "B"
+              },
+              {
+                "const": "C"
+              },
+              {
+                "const": "D"
+              },
+              {
+                "const": "E"
+              },
+              {
+                "const": "F"
+              }
+            ],
+            "minItems": 6,
+            "maxItems": 6
+          },
+          "replacement_role_slot_id": {
+            "type": "null"
+          },
+          "old_identity": {
+            "type": "null"
+          },
+          "expected_instance_revision": {
+            "type": "null"
+          },
+          "capacity_preflight": {
+            "type": "object",
+            "properties": {
+              "required_slots": {
+                "const": 6
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "expected_role_slots": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          },
+          "replacement_role_slot_id": {
+            "$ref": "common.v1.schema.json#/$defs/roleSlotId"
+          },
+          "old_identity": {
+            "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+          },
+          "expected_instance_revision": {
+            "type": "integer",
+            "minimum": 2
+          },
+          "provisional_identities": {
+            "type": "array",
+            "maxItems": 1
+          },
+          "capacity_preflight": {
+            "type": "object",
+            "properties": {
+              "required_slots": {
+                "const": 1
+              }
+            }
+          }
+        },
+        "$comment": "The gate requires expected_role_slots[0] == replacement_role_slot_id == old_identity.role_slot_id and expected_instance_revision == old_identity.instance_revision + 1."
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "const": "PREPARED"
+          }
+        },
+        "required": [
+          "batch_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provisional_identities": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "const": "PROVISIONING"
+          },
+          "batch_kind": {
+            "const": "SOURCE_GENERATION"
+          }
+        },
+        "required": [
+          "batch_state",
+          "batch_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provisional_identities": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "agent_identity.v1.schema.json"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "lifecycle_state": {
+                      "const": "PROVISIONAL"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "const": "PROVISIONING"
+          },
+          "batch_kind": {
+            "const": "REPLACEMENT"
+          }
+        },
+        "required": [
+          "batch_state",
+          "batch_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provisional_identities": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "agent_identity.v1.schema.json"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "lifecycle_state": {
+                      "const": "PROVISIONAL_REPLACEMENT"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "const": "ABORTED"
+          }
+        },
+        "required": [
+          "batch_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provisional_identities": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "agent_identity.v1.schema.json"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "lifecycle_state": {
+                      "const": "PROVISIONAL_ORPHAN"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "enum": [
+              "COMMITTED",
+              "ABORTED",
+              "FAULT_EXPERIMENT_REFUSED_NO_CLEANUP_PREAUTH",
+              "CAPACITY_BLOCKED_BY_RETENTION",
+              "CAPACITY_BLOCKED_REPLACEMENT"
+            ]
+          }
+        },
+        "required": [
+          "batch_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "terminal_event_id": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "terminal_event_id": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fault_experiment": {
+            "type": "object",
+            "properties": {
+              "authorization_state": {
+                "const": "REFUSED_NO_CLEANUP_PREAUTH"
+              }
+            },
+            "required": [
+              "authorization_state"
+            ]
+          }
+        },
+        "required": [
+          "fault_experiment"
+        ]
+      },
+      "then": {
+        "properties": {
+          "batch_state": {
+            "const": "FAULT_EXPERIMENT_REFUSED_NO_CLEANUP_PREAUTH"
+          },
+          "provisional_identities": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "orphan_cleanup_authorization": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "enum": [
+                  "NOT_REQUESTED",
+                  "DENIED"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "const": "FAULT_EXPERIMENT_REFUSED_NO_CLEANUP_PREAUTH"
+          }
+        },
+        "required": [
+          "batch_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "fault_experiment": {
+            "type": "object",
+            "properties": {
+              "authorization_state": {
+                "const": "REFUSED_NO_CLEANUP_PREAUTH"
+              }
+            },
+            "required": [
+              "authorization_state"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fault_experiment": {
+            "type": "object",
+            "properties": {
+              "authorization_state": {
+                "const": "AUTHORIZED"
+              }
+            },
+            "required": [
+              "authorization_state"
+            ]
+          }
+        },
+        "required": [
+          "fault_experiment"
+        ]
+      },
+      "then": {
+        "properties": {
+          "batch_state": {
+            "const": "ABORTED"
+          },
+          "orphan_cleanup_authorization": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "enum": [
+                  "AUTHORIZED",
+                  "CLOSE_REQUESTED",
+                  "CLOSE_TOOL_COMPLETED",
+                  "PLATFORM_CLOSED"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fault_experiment": {
+            "type": "object",
+            "properties": {
+              "authorization_state": {
+                "const": "AUTHORIZED"
+              },
+              "failure_stage": {
+                "const": "NATIVE_CREATE"
+              }
+            },
+            "required": [
+              "authorization_state",
+              "failure_stage"
+            ]
+          }
+        },
+        "required": [
+          "fault_experiment"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provisional_identities": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fault_experiment": {
+            "type": "object",
+            "properties": {
+              "authorization_state": {
+                "const": "AUTHORIZED"
+              },
+              "failure_stage": {
+                "enum": [
+                  "CREATE_EVENT_PROVISIONAL_PERSIST",
+                  "IDENTITY_VERIFY",
+                  "PARENT_BINDING",
+                  "PANEL_CAPABILITY_VERIFY",
+                  "PRE_ACTIVATION_REGISTRY_COMMIT"
+                ]
+              }
+            },
+            "required": [
+              "authorization_state",
+              "failure_stage"
+            ]
+          }
+        },
+        "required": [
+          "fault_experiment"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provisional_identities": {
+            "type": "array",
+            "minItems": 1
+          },
+          "orphan_cleanup_authorization": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "PLATFORM_CLOSED"
+              },
+              "platform_close_receipt_ids": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          },
+          "platform_close_receipt_ids": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "const": "CAPACITY_BLOCKED_BY_RETENTION"
+          }
+        },
+        "required": [
+          "batch_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "batch_kind": {
+            "const": "SOURCE_GENERATION"
+          },
+          "provisional_identities": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "capacity_preflight": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "CAPACITY_BLOCKED_BY_RETENTION"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "const": "CAPACITY_BLOCKED_REPLACEMENT"
+          }
+        },
+        "required": [
+          "batch_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "batch_kind": {
+            "const": "REPLACEMENT"
+          },
+          "provisional_identities": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "capacity_preflight": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "const": "CAPACITY_BLOCKED_REPLACEMENT"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "const": "COMMITTED"
+          },
+          "batch_kind": {
+            "const": "SOURCE_GENERATION"
+          }
+        },
+        "required": [
+          "batch_state",
+          "batch_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provisional_identities": {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "agent_identity.v1.schema.json"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "lifecycle_state": {
+                      "const": "ACTIVE"
+                    },
+                    "capability_state": {
+                      "const": "VERIFIED"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_state": {
+            "const": "COMMITTED"
+          },
+          "batch_kind": {
+            "const": "REPLACEMENT"
+          }
+        },
+        "required": [
+          "batch_state",
+          "batch_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provisional_identities": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "agent_identity.v1.schema.json"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "lifecycle_state": {
+                      "const": "ACTIVE"
+                    },
+                    "capability_state": {
+                      "const": "VERIFIED"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "faultExperiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experiment_id",
+        "target_role_slot_id",
+        "failure_stage",
+        "authorization_state",
+        "cleanup_preauthorization_event_id",
+        "creation_started",
+        "injected_event_id",
+        "dispatch_count",
+        "old_generation_unchanged_evidence_id",
+        "registry_unchanged_evidence_id"
+      ],
+      "properties": {
+        "experiment_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "target_role_slot_id": {
+          "$ref": "common.v1.schema.json#/$defs/roleSlotId"
+        },
+        "failure_stage": {
+          "type": "string",
+          "enum": [
+            "NATIVE_CREATE",
+            "CREATE_EVENT_PROVISIONAL_PERSIST",
+            "IDENTITY_VERIFY",
+            "PARENT_BINDING",
+            "PANEL_CAPABILITY_VERIFY",
+            "PRE_ACTIVATION_REGISTRY_COMMIT"
+          ]
+        },
+        "authorization_state": {
+          "type": "string",
+          "enum": [
+            "AUTHORIZED",
+            "REFUSED_NO_CLEANUP_PREAUTH"
+          ]
+        },
+        "cleanup_preauthorization_event_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "creation_started": {
+          "type": "boolean"
+        },
+        "injected_event_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dispatch_count": {
+          "const": 0
+        },
+        "old_generation_unchanged_evidence_id": {
+          "$ref": "common.v1.schema.json#/$defs/evidenceId"
+        },
+        "registry_unchanged_evidence_id": {
+          "$ref": "common.v1.schema.json#/$defs/evidenceId"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "authorization_state": {
+                "const": "AUTHORIZED"
+              }
+            },
+            "required": [
+              "authorization_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "creation_started": {
+                "const": true
+              },
+              "cleanup_preauthorization_event_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              },
+              "injected_event_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "creation_started": {
+                "const": false
+              },
+              "cleanup_preauthorization_event_id": {
+                "type": "null"
+              },
+              "injected_event_id": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "The six failure_stage values are the six normative boundaries: native create; create-event plus provisional persistence; thread/session/role identity; parent binding; combined panel/capability validation; and pre-activation registry commit. The program gate verifies A-F x six-stage corpus coverage, exact target role/stage authority events, and cleanup_preauthorization_event_id targeting this exact batch_id before creation_started. REFUSED_NO_CLEANUP_PREAUTH is a refusal record outside the provisioning state machine: zero native instance, zero provisional/batch/registry mutation, and zero dispatch. AUTHORIZED requires an ABORTED batch, visible provisional orphan records for every created instance, authoritative close receipts scoped to this batch, zero dispatch, and direct evidence that the prior generation and registry snapshot are unchanged."
+    },
+    "capacityPreflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capacity_certification_id",
+        "registry_state_sha256",
+        "registry_revision",
+        "registry_snapshot_id",
+        "occupied_identities",
+        "occupied_count",
+        "free_slots",
+        "retained_generation_count",
+        "replacement_reserve_used",
+        "required_slots",
+        "outcome",
+        "observed_event_id",
+        "observed_at_utc"
+      ],
+      "properties": {
+        "capacity_certification_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "registry_state_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "registry_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "registry_snapshot_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/contentId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "occupied_identities": {
+          "type": "array",
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+          }
+        },
+        "occupied_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18
+        },
+        "free_slots": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18
+        },
+        "retained_generation_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "replacement_reserve_used": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "required_slots": {
+          "type": "integer",
+          "enum": [
+            1,
+            6
+          ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "ALLOW",
+            "CAPACITY_BLOCKED_BY_RETENTION",
+            "CAPACITY_BLOCKED_REPLACEMENT"
+          ]
+        },
+        "observed_event_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "observed_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        }
+      },
+      "$comment": "The gate requires occupied_count to equal unique occupied_identities by thread_id+session_id; free_slots equals the certified physical budget minus occupied_count; no CLOSE_REQUESTED or CLOSE_TOOL_COMPLETED identity is excluded; and the registry revision/hash/snapshot still match immediately before the first spawn."
+    },
+    "orphanCleanupAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "decision_event_id",
+        "decided_at_utc",
+        "close_request_event_id",
+        "close_tool_receipt_ids",
+        "platform_close_receipt_ids"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "NOT_REQUESTED",
+            "DENIED",
+            "AUTHORIZED",
+            "CLOSE_REQUESTED",
+            "CLOSE_TOOL_COMPLETED",
+            "PLATFORM_CLOSED"
+          ]
+        },
+        "decision_event_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decided_at_utc": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "close_request_event_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "close_tool_receipt_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        },
+        "platform_close_receipt_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "NOT_REQUESTED"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "decision_event_id": {
+                "type": "null"
+              },
+              "decided_at_utc": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "decision_event_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              },
+              "decided_at_utc": {
+                "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+              }
+            }
+          }
+        }
+        ,
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "NOT_REQUESTED",
+                  "DENIED",
+                  "AUTHORIZED"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "close_request_event_id": {
+                "type": "null"
+              },
+              "close_tool_receipt_ids": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "platform_close_receipt_ids": {
+                "type": "array",
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "close_request_event_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "CLOSE_REQUESTED"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "close_tool_receipt_ids": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "platform_close_receipt_ids": {
+                "type": "array",
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "CLOSE_TOOL_COMPLETED"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "close_tool_receipt_ids": {
+                "type": "array",
+                "minItems": 1
+              },
+              "platform_close_receipt_ids": {
+                "type": "array",
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "PLATFORM_CLOSED"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "close_tool_receipt_ids": {
+                "type": "array",
+                "minItems": 1
+              },
+              "platform_close_receipt_ids": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "$comment": "The enclosing platform_close_receipt_ids must equal this object's platform_close_receipt_ids. Every PLATFORM_CLOSED receipt must identify one provisional orphan and contain authority evidence that the platform no longer reports that physical thread as consuming capacity."
+        }
+      ]
+    }
+  }
+}

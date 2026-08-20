@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/runner_conformance_invocation.v1.schema.json",
+  "title": "RunnerConformanceInvocation.v1",
+  "description": "Closed evaluator-only invocation for an outer-runner conformance case.",
+  "$comment": "This object is never a production EvaluationRunnerInput and is never projected to the SUT. invocation_jcs_sha256 is the lowercase SHA-256 of the UTF-8 RFC 8785 JCS bytes of this object with invocation_jcs_sha256 omitted. candidate_sha256 uses the same byte domain over input_variant.candidate. expected results, oracles, and assertions are structurally excluded.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_id",
+    "runner_contract_id",
+    "input_binding_id",
+    "input_variant",
+    "invocation_jcs_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "RunnerConformanceInvocation.v1"
+    },
+    "case_id": {
+      "$ref": "common.v1.schema.json#/$defs/caseId"
+    },
+    "runner_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "input_binding_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "input_variant": {
+      "$ref": "#/$defs/inputVariant"
+    },
+    "invocation_jcs_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    }
+  },
+  "$defs": {
+    "inputVariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "variant_kind",
+        "target_schema_ref",
+        "fixture_refs",
+        "mutation",
+        "candidate",
+        "candidate_sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "RunnerConformanceInputVariant.v1"
+        },
+        "variant_kind": {
+          "type": "string",
+          "enum": [
+            "ISOLATION_BINDING",
+            "CERTIFICATION_EVIDENCE",
+            "PYTHON_IMPORT_ORIGIN",
+            "RUNNER_CONTRACT",
+            "RUNNER_OUTPUT",
+            "SELF_REPORT"
+          ]
+        },
+        "target_schema_ref": {
+          "type": "string",
+          "format": "uri-reference"
+        },
+        "fixture_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        },
+        "mutation": {
+          "anyOf": [
+            {
+              "$ref": "evaluation_runner_input.v1.schema.json#/$defs/mutation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate": true,
+        "candidate_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,770 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/verdict_input.v1.schema.json",
+  "title": "VerdictInput.v1",
+  "description": "Complete, normalized, externally closed input to the deterministic Aegis v2 graph decision function.",
+  "$comment": "The aggregator accepts only exact UTF-8 JCS RFC 8785 bytes validated by this schema and performs no external read. Before constructing these bytes, the artifact gate must load and recompute the five content-addressed D/E/F preimages using d_review_snapshot.v1, report_candidate.v1, report_candidate_basis.v1, final_review.v1, and final_review_basis.v1; a merely well-formed or nonexistent ID is rejected. Kernel-only fields and set-like arrays must be recomputed in one transaction. Every set array is sorted by canonical string; every structured record array is sorted by stable record ID. If any semantic consistency check fails, the kernel sets workflow_integrity=INVALID before decision; it must not silently repair, omit, or reclassify facts. Once cancellation is REQUESTED, ordinary routing is suspended and the cancellation coordinator converges every dispatched action/job before any cancellation terminal.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "execution_contract_id",
+    "test_plan_revision_id",
+    "workflow_phase",
+    "current_node",
+    "d_review_snapshot_id",
+    "report_candidate_id",
+    "report_candidate_basis_id",
+    "final_review_id",
+    "final_review_basis_id",
+    "final_review_completed",
+    "safety_stop_policy",
+    "safety_stop_policy_hash",
+    "approved_case_ids",
+    "required_case_ids",
+    "optional_case_ids",
+    "d_accepted_required_case_ids",
+    "d_accepted_optional_case_ids",
+    "missing_required_case_ids",
+    "open_required_environment_gap_case_ids",
+    "required_process_blocked_case_ids",
+    "open_optional_environment_gap_case_ids",
+    "optional_process_issue_case_ids",
+    "safety_stopped_case_ids",
+    "cancelled_case_ids",
+    "unclassified_missing_case_ids",
+    "workflow_integrity",
+    "evidence_state",
+    "coverage_state",
+    "report_state",
+    "cancel_state",
+    "active_or_unverifiable_action_ids",
+    "active_or_unverifiable_actions",
+    "active_external_jobs",
+    "unknown_side_effects",
+    "open_process_blockers",
+    "open_upstream_defect_ids",
+    "stagnation_state",
+    "product_findings",
+    "environment_gaps"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "VerdictInput.v1"
+    },
+    "execution_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "workflow_phase": {
+      "type": "string",
+      "enum": [
+        "PLAN_AUTHOR",
+        "PLAN_REVIEW",
+        "TEST_EXECUTION",
+        "RESULT_REVIEW",
+        "REPORT_DRAFT",
+        "FINAL_REVIEW",
+        "TERMINAL_EVALUATION",
+        "CANCEL_CONTROL"
+      ]
+    },
+    "current_node": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/graphNode"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "d_review_snapshot_id": {
+      "$ref": "#/$defs/nullableContentId"
+    },
+    "report_candidate_id": {
+      "$ref": "#/$defs/nullableContentId"
+    },
+    "report_candidate_basis_id": {
+      "$ref": "#/$defs/nullableContentId"
+    },
+    "final_review_id": {
+      "$ref": "#/$defs/nullableContentId"
+    },
+    "final_review_basis_id": {
+      "$ref": "#/$defs/nullableContentId"
+    },
+    "final_review_completed": {
+      "type": "boolean"
+    },
+    "safety_stop_policy": {
+      "$ref": "#/$defs/safetyStopPolicy"
+    },
+    "safety_stop_policy_hash": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "approved_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "required_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "optional_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "d_accepted_required_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "d_accepted_optional_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "missing_required_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "open_required_environment_gap_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "required_process_blocked_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "open_optional_environment_gap_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "optional_process_issue_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "safety_stopped_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "cancelled_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "unclassified_missing_case_ids": {
+      "$ref": "#/$defs/caseIdSet"
+    },
+    "workflow_integrity": {
+      "type": "string",
+      "enum": [
+        "VALID",
+        "INVALID",
+        "UNKNOWN"
+      ]
+    },
+    "evidence_state": {
+      "type": "string",
+      "enum": [
+        "COMPLETE",
+        "PARTIAL",
+        "INVALID",
+        "STALE"
+      ]
+    },
+    "coverage_state": {
+      "type": "string",
+      "enum": [
+        "COMPLETE",
+        "PARTIAL_SAFETY_POLICY",
+        "INCOMPLETE"
+      ]
+    },
+    "report_state": {
+      "type": "string",
+      "enum": [
+        "NOT_READY",
+        "REWORK",
+        "APPROVED"
+      ]
+    },
+    "cancel_state": {
+      "type": "string",
+      "enum": [
+        "NOT_REQUESTED",
+        "REQUESTED",
+        "QUIESCING",
+        "QUIESCENT",
+        "TERMINATED_WITH_ACTIVE_WORK"
+      ]
+    },
+    "active_or_unverifiable_action_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "active_or_unverifiable_actions": {
+      "type": "array",
+      "items": {
+        "$ref": "cancel_control.v1.schema.json#/$defs/activeOrUnverifiableAction"
+      }
+    },
+    "active_external_jobs": {
+      "type": "array",
+      "items": {
+        "$ref": "cancel_control.v1.schema.json#/$defs/activeExternalJob"
+      }
+    },
+    "unknown_side_effects": {
+      "type": "array",
+      "items": {
+        "$ref": "cancel_control.v1.schema.json#/$defs/unknownSideEffect"
+      }
+    },
+    "open_process_blockers": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          {
+            "$ref": "blocker_record.v1.schema.json"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "OPEN"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "open_upstream_defect_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/stableId"
+      }
+    },
+    "stagnation_state": {
+      "type": "string",
+      "enum": [
+        "NONE",
+        "CONFIRMED"
+      ]
+    },
+    "product_findings": {
+      "type": "array",
+      "items": {
+        "$ref": "product_finding.v1.schema.json"
+      }
+    },
+    "environment_gaps": {
+      "type": "array",
+      "items": {
+        "$ref": "environment_gap.v1.schema.json"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "workflow_integrity": {
+            "const": "VALID"
+          }
+        },
+        "required": [
+          "workflow_integrity"
+        ]
+      },
+      "then": {
+        "properties": {
+          "unclassified_missing_case_ids": {
+            "type": "array",
+            "maxItems": 0
+          }
+        },
+        "allOf": [
+          {
+            "oneOf": [
+              {
+                "properties": {
+                  "workflow_phase": {
+                    "const": "PLAN_AUTHOR"
+                  },
+                  "current_node": {
+                    "const": "A"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "workflow_phase": {
+                    "const": "PLAN_REVIEW"
+                  },
+                  "current_node": {
+                    "const": "B"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "workflow_phase": {
+                    "const": "TEST_EXECUTION"
+                  },
+                  "current_node": {
+                    "const": "C"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "workflow_phase": {
+                    "const": "RESULT_REVIEW"
+                  },
+                  "current_node": {
+                    "const": "D"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "workflow_phase": {
+                    "const": "REPORT_DRAFT"
+                  },
+                  "current_node": {
+                    "const": "E"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "workflow_phase": {
+                    "const": "FINAL_REVIEW"
+                  },
+                  "current_node": {
+                    "const": "F"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "workflow_phase": {
+                    "const": "CANCEL_CONTROL"
+                  },
+                  "current_node": {
+                    "const": "KERNEL_CANCEL_COORDINATOR"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "workflow_phase": {
+                    "const": "TERMINAL_EVALUATION"
+                  },
+                  "current_node": {
+                    "type": "null"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "if": {
+              "properties": {
+                "workflow_phase": {
+                  "const": "TERMINAL_EVALUATION"
+                }
+              },
+              "required": [
+                "workflow_phase"
+              ]
+            },
+            "then": {
+              "properties": {
+                "d_review_snapshot_id": {
+                  "$ref": "common.v1.schema.json#/$defs/contentId"
+                },
+                "report_candidate_id": {
+                  "$ref": "common.v1.schema.json#/$defs/contentId"
+                },
+                "report_candidate_basis_id": {
+                  "$ref": "common.v1.schema.json#/$defs/contentId"
+                },
+                "final_review_id": {
+                  "$ref": "common.v1.schema.json#/$defs/contentId"
+                },
+                "final_review_basis_id": {
+                  "$ref": "common.v1.schema.json#/$defs/contentId"
+                },
+                "final_review_completed": {
+                  "const": true
+                },
+                "report_state": {
+                  "const": "APPROVED"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "cancel_state": {
+                  "const": "QUIESCENT"
+                }
+              },
+              "required": [
+                "cancel_state"
+              ]
+            },
+            "then": {
+              "properties": {
+                "active_external_jobs": {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                "active_or_unverifiable_action_ids": {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                "active_or_unverifiable_actions": {
+                  "type": "array",
+                  "maxItems": 0
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "cancel_state": {
+                  "const": "TERMINATED_WITH_ACTIVE_WORK"
+                }
+              },
+              "required": [
+                "cancel_state"
+              ]
+            },
+            "then": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "active_or_unverifiable_actions": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "active_external_jobs": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "workflow_phase": {
+                  "const": "CANCEL_CONTROL"
+                }
+              },
+              "required": [
+                "workflow_phase"
+              ]
+            },
+            "then": {
+              "properties": {
+                "cancel_state": {
+                  "enum": [
+                    "REQUESTED",
+                    "QUIESCING",
+                    "QUIESCENT",
+                    "TERMINATED_WITH_ACTIVE_WORK"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "cancel_state": {
+                  "const": "NOT_REQUESTED"
+                }
+              },
+              "required": [
+                "cancel_state"
+              ]
+            },
+            "then": {
+              "properties": {
+                "cancelled_case_ids": {
+                  "type": "array",
+                  "maxItems": 0
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "stagnation_state": {
+                  "const": "CONFIRMED"
+                }
+              },
+              "required": [
+                "stagnation_state"
+              ]
+            },
+            "then": {
+              "properties": {
+                "open_process_blockers": {
+                  "type": "array",
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "gate_effect": {
+                        "const": "BLOCKING"
+                      }
+                    },
+                    "required": [
+                      "gate_effect"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "workflow_phase": {
+                  "enum": [
+                    "PLAN_AUTHOR",
+                    "PLAN_REVIEW",
+                    "TEST_EXECUTION",
+                    "RESULT_REVIEW"
+                  ]
+                }
+              },
+              "required": [
+                "workflow_phase"
+              ]
+            },
+            "then": {
+              "properties": {
+                "d_review_snapshot_id": {
+                  "type": "null"
+                },
+                "report_candidate_id": {
+                  "type": "null"
+                },
+                "report_candidate_basis_id": {
+                  "type": "null"
+                },
+                "final_review_id": {
+                  "type": "null"
+                },
+                "final_review_basis_id": {
+                  "type": "null"
+                },
+                "final_review_completed": {
+                  "const": false
+                },
+                "report_state": {
+                  "const": "NOT_READY"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "workflow_phase": {
+                  "const": "REPORT_DRAFT"
+                }
+              },
+              "required": [
+                "workflow_phase"
+              ]
+            },
+            "then": {
+              "properties": {
+                "d_review_snapshot_id": {
+                  "$ref": "common.v1.schema.json#/$defs/contentId"
+                },
+                "report_candidate_id": {
+                  "type": "null"
+                },
+                "report_candidate_basis_id": {
+                  "type": "null"
+                },
+                "final_review_id": {
+                  "type": "null"
+                },
+                "final_review_basis_id": {
+                  "type": "null"
+                },
+                "final_review_completed": {
+                  "const": false
+                },
+                "report_state": {
+                  "enum": [
+                    "NOT_READY",
+                    "REWORK"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "workflow_phase": {
+                  "const": "FINAL_REVIEW"
+                }
+              },
+              "required": [
+                "workflow_phase"
+              ]
+            },
+            "then": {
+              "properties": {
+                "d_review_snapshot_id": {
+                  "$ref": "common.v1.schema.json#/$defs/contentId"
+                },
+                "report_candidate_id": {
+                  "$ref": "common.v1.schema.json#/$defs/contentId"
+                },
+                "report_candidate_basis_id": {
+                  "$ref": "common.v1.schema.json#/$defs/contentId"
+                },
+                "final_review_id": {
+                  "type": "null"
+                },
+                "final_review_basis_id": {
+                  "type": "null"
+                },
+                "final_review_completed": {
+                  "const": false
+                },
+                "report_state": {
+                  "const": "NOT_READY"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "report_state": {
+                  "const": "APPROVED"
+                }
+              },
+              "required": [
+                "report_state"
+              ]
+            },
+            "then": {
+              "properties": {
+                "workflow_phase": {
+                  "const": "TERMINAL_EVALUATION"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "final_review_completed": {
+                  "const": true
+                }
+              },
+              "required": [
+                "final_review_completed"
+              ]
+            },
+            "then": {
+              "properties": {
+                "workflow_phase": {
+                  "const": "TERMINAL_EVALUATION"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "$comment": "Program-set invariants: required and optional are disjoint and their union equals approved; accepted sets are subsets of their matching class; missing_required equals required minus accepted-required; environment/process/safety/cancel classes are pairwise disjoint missing subsets whose union equals missing; unclassified equals the residual; every set is sorted by case_id."
+    },
+    {
+      "$comment": "Record-set invariants: required/optional environment and process ID arrays exactly equal intersections recomputed from OPEN gap and CASE_PROCESS blocker records; CASE_PROCESS owner and gate_effect are kernel-derived; CONFIRMED findings reference D-accepted case/evidence; RESOLVED gaps reference later D-accepted evidence; open required gaps are not accepted."
+    },
+    {
+      "$comment": "State/basis invariants: execution_contract_id binds this exact source baseline, test_plan revision, and execution environment, but not the mutable registry. Each action/receipt/evidence/D-acceptance retains its own registry snapshot and producer revision; already D-accepted historical-snapshot evidence remains valid only through that complete chain. coverage_state is recomputed from case sets; COMPLETE evidence validates schema/hash/producer/environment/contract for every accepted required case; candidate basis binds the loaded D snapshot plus every normalized fact; final basis binds the loaded candidate, candidate basis, F review, and the same facts; approved report hash and fact sets are exact. active_or_unverifiable_action_ids exactly matches active_or_unverifiable_actions and cancellation terminals satisfy CancelControl.v1 set equalities."
+    },
+    {
+      "$comment": "Kernel ownership: A defines cases; B approves required and objective safety-stop policy; C emits only raw execution/finding/gap/job records; D atomically emits accepted/classified facts and evidence_state; E emits only a report candidate; F alone emits report/final-review state; kernel alone emits phase/node, case sets, missing classifications, coverage, gate_effect, workflow_integrity, and cancel_state."
+    }
+  ],
+  "$defs": {
+    "nullableContentId": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "caseIdSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/caseId"
+      },
+      "$comment": "The program gate requires Unicode code-point ascending order so the canonical bytes are stable; JSON Schema uniqueItems does not enforce ordering."
+    },
+    "safetyStopPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "source_test_plan_revision_id",
+        "case_policies"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "SafetyStopPolicy.v1"
+        },
+        "source_test_plan_revision_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "case_policies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "case_id",
+              "objective_stop_conditions"
+            ],
+            "properties": {
+              "case_id": {
+                "$ref": "common.v1.schema.json#/$defs/caseId"
+              },
+              "objective_stop_conditions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+                }
+              }
+            }
+          }
+        }
+      },
+      "$comment": "The gate requires source_test_plan_revision_id == the top-level test_plan_revision_id, unique sorted case IDs, exact equality with B-approved objective stop conditions, and safety_stop_policy_hash == sha256:<SHA-256(JCS bytes of this object)>."
+    }
+  }
+}

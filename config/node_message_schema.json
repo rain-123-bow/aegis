@@ -79,7 +79,7 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 100,
-      "description": "Minimum review score required for pass. Default 90."
+      "description": "Minimum review score required for pass. Default 95."
     },
     "control_files": {
       "type": "object",

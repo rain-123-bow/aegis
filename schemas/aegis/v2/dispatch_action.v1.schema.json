@@ -1,0 +1,355 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/dispatch_action.v1.schema.json",
+  "title": "DispatchAction.v1",
+  "description": "Durable, idempotent, generation-bound action envelope emitted before native Master relay.",
+  "$comment": "The dispatch gate must hold the run lease, persist this unique NODE_WORK action before send, verify every baseline layer and current registry pointer, require target role/thread/session/generation/revision equality, prove payload path containment and bytes, and enforce issued_at_utc < expires_at_utc. Cancellation uses CancelDispatch.v1 and never creates or mutates a second DispatchAction with the same action_id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "protocol_version",
+    "action_kind",
+    "campaign_id",
+    "run_id",
+    "source_baseline_id",
+    "registry_snapshot_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "node_id",
+    "attempt_id",
+    "action_id",
+    "target_role_slot_id",
+    "target_role",
+    "target_agent_handle",
+    "target_thread_id",
+    "target_session_id",
+    "target_generation",
+    "target_instance_revision",
+    "payload_path",
+    "payload_sha256",
+    "issued_at_utc",
+    "expires_at_utc",
+    "nonce",
+    "side_effect_policy",
+    "graph_transition",
+    "state_seq"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "DispatchAction.v1"
+    },
+    "protocol_version": {
+      "const": "aegis.native-master-relay.v1"
+    },
+    "action_kind": {
+      "const": "NODE_WORK"
+    },
+    "campaign_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "registry_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_contract_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "node_id": {
+      "$ref": "common.v1.schema.json#/$defs/graphNode"
+    },
+    "attempt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "action_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "target_role_slot_id": {
+      "$ref": "common.v1.schema.json#/$defs/roleSlotId"
+    },
+    "target_role": {
+      "$ref": "common.v1.schema.json#/$defs/roleName"
+    },
+    "target_agent_handle": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Optional locator only; never used as the physical target identity."
+    },
+    "target_thread_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "target_session_id": {
+      "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+    },
+    "target_generation": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "target_instance_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "payload_path": {
+      "$ref": "common.v1.schema.json#/$defs/runtimeAbsolutePath"
+    },
+    "payload_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "issued_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "expires_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 22,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "side_effect_policy": {
+      "$ref": "#/$defs/sideEffectPolicy"
+    },
+    "graph_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflow_phase",
+        "current_node"
+      ],
+      "properties": {
+        "workflow_phase": {
+          "type": "string",
+          "enum": [
+            "PLAN_AUTHOR",
+            "PLAN_REVIEW",
+            "TEST_EXECUTION",
+            "RESULT_REVIEW",
+            "REPORT_DRAFT",
+            "FINAL_REVIEW"
+          ]
+        },
+        "current_node": {
+          "$ref": "common.v1.schema.json#/$defs/graphNode"
+        }
+      }
+    },
+    "state_seq": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "node_id, target_role_slot_id, target_role, and graph_transition must match the fixed A-F role/phase map. test_plan_revision_id is null only before B approval; execution_contract_id is null only before C. target_thread_id + target_session_id is the physical target key and must equal the current registry pointer; target_agent_handle, if non-null, must equal that pointer's optional handle."
+    }
+  ],
+  "$defs": {
+    "sideEffectPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_class",
+        "operation_id",
+        "journal_ref",
+        "result_query_method",
+        "user_approval_event_id"
+      ],
+      "properties": {
+        "operation_class": {
+          "type": "string",
+          "enum": [
+            "PURE_READ",
+            "IDEMPOTENT_QUERYABLE",
+            "NON_IDEMPOTENT",
+            "NON_IDEMPOTENT_UNJOURNALED"
+          ]
+        },
+        "operation_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "journal_ref": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/artifactReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_query_method": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 32768
+        },
+        "user_approval_event_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation_class": {
+                "const": "PURE_READ"
+              }
+            },
+            "required": [
+              "operation_class"
+            ]
+          },
+          "then": {
+            "properties": {
+              "operation_id": {
+                "type": "null"
+              },
+              "journal_ref": {
+                "type": "null"
+              },
+              "result_query_method": {
+                "type": "null"
+              },
+              "user_approval_event_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation_class": {
+                "const": "IDEMPOTENT_QUERYABLE"
+              }
+            },
+            "required": [
+              "operation_class"
+            ]
+          },
+          "then": {
+            "properties": {
+              "operation_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              },
+              "journal_ref": {
+                "type": "null"
+              },
+              "result_query_method": {
+                "type": "string",
+                "minLength": 1
+              },
+              "user_approval_event_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation_class": {
+                "const": "NON_IDEMPOTENT"
+              }
+            },
+            "required": [
+              "operation_class"
+            ]
+          },
+          "then": {
+            "properties": {
+              "operation_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              },
+              "journal_ref": {
+                "$ref": "common.v1.schema.json#/$defs/artifactReference"
+              },
+              "result_query_method": {
+                "type": "string",
+                "minLength": 1
+              },
+              "user_approval_event_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation_class": {
+                "const": "NON_IDEMPOTENT_UNJOURNALED"
+              }
+            },
+            "required": [
+              "operation_class"
+            ]
+          },
+          "then": {
+            "properties": {
+              "operation_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              },
+              "journal_ref": {
+                "type": "null"
+              },
+              "result_query_method": {
+                "type": "null"
+              },
+              "user_approval_event_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "For every non-PURE action, operation_id must equal the enclosing action_id. NON_IDEMPOTENT_UNJOURNALED is never auto-replayed and its user approval must predate dispatch; JSON Schema cannot compare those values or times."
+        }
+      ]
+    }
+  }
+}

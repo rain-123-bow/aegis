@@ -1,0 +1,602 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/agent_receipt.v1.schema.json",
+  "title": "AgentReceipt.v1",
+  "description": "Append-only receipt for dispatch, claim, completion, ingest, close, or capability observation.",
+  "$comment": "The receipt gate must load the authority event directly, verify its raw hash, parent/child identity, senderThreadId, receiverThreadIds, exact prompt, tool-call ID, target generation/revision, action_id, payload hash, result hash, and unique action consumption. Every duplicated lookup field must exactly equal its embedded action field. Master-supplied prose is not provenance. Old-revision or post-cancel late receipts are audit-only and cannot drive a gate. Phase 0B must prove live same-Desktop access.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "receipt_kind",
+    "receipt_status",
+    "action",
+    "campaign_id",
+    "run_id",
+    "action_id",
+    "state_seq",
+    "source_baseline_id",
+    "registry_snapshot_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "observed_identity",
+    "payload_sha256",
+    "result",
+    "rejection_reason_id",
+    "failure_reason",
+    "authority_event",
+    "recorded_event_id",
+    "recorded_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "AgentReceipt.v1"
+    },
+    "receipt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "receipt_kind": {
+      "type": "string",
+      "enum": [
+        "DISPATCH",
+        "CLAIM",
+        "COMPLETE",
+        "INGEST",
+        "CLOSE",
+        "CAPABILITY"
+      ]
+    },
+    "receipt_status": {
+      "type": "string",
+      "enum": [
+        "DISPATCHED",
+        "FAILED_BEFORE_SEND",
+        "SEND_OUTCOME_UNKNOWN",
+        "CLAIMED",
+        "IN_PROGRESS",
+        "ALREADY_COMPLETED",
+        "COMPLETED",
+        "FAILED",
+        "ACCEPTED",
+        "DUPLICATE",
+        "LATE_AUDIT_ONLY",
+        "REJECTED",
+        "CLOSE_REQUESTED",
+        "CLOSE_TOOL_COMPLETED",
+        "PLATFORM_CLOSED",
+        "VERIFIED"
+      ]
+    },
+    "action": {
+      "anyOf": [
+        {
+          "$ref": "dispatch_action.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "campaign_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "action_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "state_seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "registry_snapshot_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "$comment": "Null is permitted only for pre-snapshot CAPABILITY/CLOSE receipts during provisional provisioning or orphan cleanup."
+    },
+    "test_plan_revision_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_contract_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observed_identity": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "payload_sha256": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/resultBinding"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "rejection_reason_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/receiptRejectionId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "failure_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "authority_event": {
+      "$ref": "codex_authority_event.v1.schema.json"
+    },
+    "recorded_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "recorded_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "receipt_kind": {
+            "enum": [
+              "DISPATCH",
+              "CLAIM",
+              "COMPLETE",
+              "INGEST"
+            ]
+          }
+        },
+        "required": [
+          "receipt_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "action_id": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          },
+          "action": {
+            "$ref": "dispatch_action.v1.schema.json"
+          },
+          "observed_identity": {
+            "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+          },
+          "registry_snapshot_id": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          },
+          "payload_sha256": {
+            "$ref": "common.v1.schema.json#/$defs/sha256"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "action_id": {
+            "type": "null"
+          },
+          "action": {
+            "type": "null"
+          },
+          "payload_sha256": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "receipt_kind": {
+            "const": "DISPATCH"
+          }
+        },
+        "required": [
+          "receipt_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "receipt_status": {
+            "enum": [
+              "DISPATCHED",
+              "FAILED_BEFORE_SEND",
+              "SEND_OUTCOME_UNKNOWN",
+              "REJECTED"
+            ]
+          },
+          "observed_identity": {
+            "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+          },
+          "result": {
+            "type": "null"
+          },
+          "authority_event": {
+            "type": "object",
+            "properties": {
+              "event_purpose": {
+                "const": "DISPATCH"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "receipt_kind": {
+            "const": "CLAIM"
+          },
+          "receipt_status": {
+            "enum": [
+              "CLAIMED",
+              "IN_PROGRESS",
+              "REJECTED"
+            ]
+          }
+        },
+        "required": [
+          "receipt_kind",
+          "receipt_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "receipt_kind": {
+            "const": "CLAIM"
+          }
+        },
+        "required": [
+          "receipt_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "receipt_status": {
+            "enum": [
+              "CLAIMED",
+              "IN_PROGRESS",
+              "ALREADY_COMPLETED",
+              "REJECTED"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "properties": {
+              "receipt_status": {
+                "const": "ALREADY_COMPLETED"
+              }
+            },
+            "required": [
+              "receipt_status"
+            ]
+          },
+          {
+            "properties": {
+              "receipt_kind": {
+                "const": "COMPLETE"
+              },
+              "receipt_status": {
+                "enum": [
+                  "COMPLETED",
+                  "FAILED"
+                ]
+              }
+            },
+            "required": [
+              "receipt_kind",
+              "receipt_status"
+            ]
+          },
+          {
+            "properties": {
+              "receipt_kind": {
+                "const": "INGEST"
+              },
+              "receipt_status": {
+                "enum": [
+                  "ACCEPTED",
+                  "DUPLICATE",
+                  "LATE_AUDIT_ONLY"
+                ]
+              }
+            },
+            "required": [
+              "receipt_kind",
+              "receipt_status"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/resultBinding"
+          },
+          "authority_event": {
+            "type": "object",
+            "properties": {
+              "event_purpose": {
+                "const": "CHILD_RESULT"
+              },
+              "child_result_binding": {
+                "$ref": "codex_authority_event.v1.schema.json#/$defs/childResultBinding"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "receipt_kind": {
+            "const": "COMPLETE"
+          }
+        },
+        "required": [
+          "receipt_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "receipt_status": {
+            "enum": [
+              "COMPLETED",
+              "FAILED",
+              "REJECTED"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "receipt_kind": {
+            "const": "INGEST"
+          }
+        },
+        "required": [
+          "receipt_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "receipt_status": {
+            "enum": [
+              "ACCEPTED",
+              "DUPLICATE",
+              "LATE_AUDIT_ONLY",
+              "REJECTED"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "receipt_kind": {
+            "const": "CLOSE"
+          }
+        },
+        "required": [
+          "receipt_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "receipt_status": {
+            "enum": [
+              "CLOSE_REQUESTED",
+              "CLOSE_TOOL_COMPLETED",
+              "PLATFORM_CLOSED",
+              "FAILED"
+            ]
+          },
+          "observed_identity": {
+            "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+          },
+          "result": {
+            "type": "null"
+          },
+          "authority_event": {
+            "type": "object",
+            "properties": {
+              "event_purpose": {
+                "const": "CLOSE"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "receipt_kind": {
+            "const": "CAPABILITY"
+          }
+        },
+        "required": [
+          "receipt_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "receipt_status": {
+            "enum": [
+              "VERIFIED",
+              "FAILED"
+            ]
+          },
+          "observed_identity": {
+            "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+          },
+          "result": {
+            "type": "null"
+          },
+          "authority_event": {
+            "type": "object",
+            "properties": {
+              "event_purpose": {
+                "const": "CAPABILITY"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "receipt_status": {
+            "const": "REJECTED"
+          }
+        },
+        "required": [
+          "receipt_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "rejection_reason_id": {
+            "$ref": "common.v1.schema.json#/$defs/receiptRejectionId"
+          },
+          "result": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "rejection_reason_id": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "receipt_status": {
+            "enum": [
+              "FAILED",
+              "FAILED_BEFORE_SEND",
+              "SEND_OUTCOME_UNKNOWN"
+            ]
+          }
+        },
+        "required": [
+          "receipt_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "failure_reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "failure_reason": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "resultBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result_path",
+        "result_sha256"
+      ],
+      "properties": {
+        "result_path": {
+          "$ref": "common.v1.schema.json#/$defs/runtimeAbsolutePath"
+        },
+        "result_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      },
+      "$comment": "The gate must prove result_path lies in the target role/attempt outbox and hash the bytes after atomic publication. SEND_OUTCOME_UNKNOWN is never auto-replayed; recovery must query authoritative item/turn state or enter unknown-side-effect handling. Only PLATFORM_CLOSED releases physical capacity."
+    }
+  }
+}

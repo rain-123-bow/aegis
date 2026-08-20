@@ -1,0 +1,303 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/four_layer_identity.v1.schema.json",
+  "title": "FourLayerIdentity.v1",
+  "description": "Content-addressed bindings for source baseline, current registry snapshot, approved plan revision, execution environment, and replacement-stable execution contract.",
+  "$comment": "The gate must load each manifest from the runtime path triple, validate it against its layer-specific schema, require exact UTF-8 JCS bytes, recompute manifest_sha256, require id == sha256:manifest_sha256, and verify all dependency IDs. The execution contract binds source, plan, and execution environment but deliberately does not hash the registry. Registry snapshot and physical revision remain mandatory side bindings on every action, receipt, evidence record, and D acceptance. The configured runtime root must resolve outside the repository root; every absolute and run-relative path must resolve to the same file under that runtime root without symlink, junction, case-fold, or TOCTOU escape.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity_state",
+    "source_baseline",
+    "registry_snapshot",
+    "test_plan_revision",
+    "execution_environment_snapshot",
+    "execution_contract"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "FourLayerIdentity.v1"
+    },
+    "identity_state": {
+      "type": "string",
+      "enum": [
+        "SOURCE_FROZEN",
+        "REGISTRY_FROZEN",
+        "PLAN_FROZEN",
+        "EXECUTION_FROZEN"
+      ]
+    },
+    "source_baseline": {
+      "$ref": "#/$defs/sourceBaselineBinding"
+    },
+    "registry_snapshot": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/registrySnapshotBinding"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "test_plan_revision": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/testPlanRevisionBinding"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_environment_snapshot": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/executionEnvironmentBinding"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_contract": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/executionContractBinding"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "identity_state": {
+            "const": "SOURCE_FROZEN"
+          }
+        },
+        "required": [
+          "identity_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "registry_snapshot": {
+            "type": "null"
+          },
+          "test_plan_revision": {
+            "type": "null"
+          },
+          "execution_environment_snapshot": {
+            "type": "null"
+          },
+          "execution_contract": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "identity_state": {
+            "const": "REGISTRY_FROZEN"
+          }
+        },
+        "required": [
+          "identity_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "registry_snapshot": {
+            "$ref": "#/$defs/registrySnapshotBinding"
+          },
+          "test_plan_revision": {
+            "type": "null"
+          },
+          "execution_environment_snapshot": {
+            "type": "null"
+          },
+          "execution_contract": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "identity_state": {
+            "const": "PLAN_FROZEN"
+          }
+        },
+        "required": [
+          "identity_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "registry_snapshot": {
+            "$ref": "#/$defs/registrySnapshotBinding"
+          },
+          "test_plan_revision": {
+            "$ref": "#/$defs/testPlanRevisionBinding"
+          },
+          "execution_environment_snapshot": {
+            "type": "null"
+          },
+          "execution_contract": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "identity_state": {
+            "const": "EXECUTION_FROZEN"
+          }
+        },
+        "required": [
+          "identity_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "registry_snapshot": {
+            "$ref": "#/$defs/registrySnapshotBinding"
+          },
+          "test_plan_revision": {
+            "$ref": "#/$defs/testPlanRevisionBinding"
+          },
+          "execution_environment_snapshot": {
+            "$ref": "#/$defs/executionEnvironmentBinding"
+          },
+          "execution_contract": {
+            "$ref": "#/$defs/executionContractBinding"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "manifestBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schema_id",
+        "manifest_path",
+        "manifest_sha256"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "schema_id": {
+          "type": "string",
+          "format": "uri"
+        },
+        "manifest_path": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "absolute_path",
+            "run_relative_path",
+            "canonical_casefold_key"
+          ],
+          "properties": {
+            "absolute_path": {
+              "$ref": "common.v1.schema.json#/$defs/runtimeAbsolutePath"
+            },
+            "run_relative_path": {
+              "$ref": "common.v1.schema.json#/$defs/runRelativePath"
+            },
+            "canonical_casefold_key": {
+              "$ref": "common.v1.schema.json#/$defs/runtimeCanonicalPathKey"
+            }
+          }
+        },
+        "manifest_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      }
+    },
+    "sourceBaselineBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/manifestBinding"
+        },
+        {
+          "properties": {
+            "schema_id": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/source_baseline_manifest.v1.schema.json"
+            }
+          }
+        }
+      ]
+    },
+    "registrySnapshotBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/manifestBinding"
+        },
+        {
+          "properties": {
+            "schema_id": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/registry_snapshot_manifest.v1.schema.json"
+            }
+          }
+        }
+      ]
+    },
+    "testPlanRevisionBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/manifestBinding"
+        },
+        {
+          "properties": {
+            "schema_id": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/test_plan_revision_manifest.v1.schema.json"
+            }
+          }
+        }
+      ]
+    },
+    "executionEnvironmentBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/manifestBinding"
+        },
+        {
+          "properties": {
+            "schema_id": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/execution_environment_snapshot_manifest.v1.schema.json"
+            }
+          }
+        }
+      ]
+    },
+    "executionContractBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/manifestBinding"
+        },
+        {
+          "properties": {
+            "schema_id": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/execution_contract_manifest.v1.schema.json"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

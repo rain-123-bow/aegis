@@ -1,0 +1,530 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/cancel_control.v1.schema.json",
+  "title": "CancelControl.v1",
+  "description": "Append-only cancellation convergence snapshot and external-work ledger.",
+  "$comment": "The cancellation gate must stop generation of new actions at REQUESTED, invalidate unsent actions, emit one CancelDispatch control event per non-terminal already-dispatched action, and keep late receipts audit-only. A control event targets but never reuses or replaces the work action identity. QUIESCENT requires every dispatched action terminal and every external job terminal.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "cancellation_id",
+    "campaign_id",
+    "run_id",
+    "cancel_state",
+    "requested_event_id",
+    "requested_at_utc",
+    "dispatch_stopped_state_seq",
+    "dispatched_action_ids",
+    "terminal_receipt_action_ids",
+    "active_or_unverifiable_action_ids",
+    "active_or_unverifiable_actions",
+    "invalidated_unsent_action_ids",
+    "cancel_control_event_ids",
+    "cancel_dispatches",
+    "external_jobs",
+    "active_external_jobs",
+    "unknown_side_effects",
+    "late_receipt_ids",
+    "terminal_event_id",
+    "updated_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "CancelControl.v1"
+    },
+    "cancellation_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "campaign_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "cancel_state": {
+      "type": "string",
+      "enum": [
+        "REQUESTED",
+        "QUIESCING",
+        "QUIESCENT",
+        "TERMINATED_WITH_ACTIVE_WORK"
+      ]
+    },
+    "requested_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "requested_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "dispatch_stopped_state_seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "dispatched_action_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "terminal_receipt_action_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "active_or_unverifiable_action_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "active_or_unverifiable_actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/activeOrUnverifiableAction"
+      }
+    },
+    "invalidated_unsent_action_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "cancel_control_event_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "cancel_dispatches": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "cancel_dispatch.v1.schema.json"
+      }
+    },
+    "external_jobs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/externalJob"
+      }
+    },
+    "active_external_jobs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/activeExternalJob"
+      }
+    },
+    "unknown_side_effects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/unknownSideEffect"
+      }
+    },
+    "late_receipt_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "terminal_event_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "updated_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "cancel_state": {
+            "const": "QUIESCENT"
+          }
+        },
+        "required": [
+          "cancel_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "active_external_jobs": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "active_or_unverifiable_action_ids": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "active_or_unverifiable_actions": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "terminal_event_id": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "cancel_state": {
+            "const": "TERMINATED_WITH_ACTIVE_WORK"
+          }
+        },
+        "required": [
+          "cancel_state"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "terminal_event_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              }
+            }
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "active_or_unverifiable_actions": {
+                    "type": "array",
+                    "minItems": 1
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "active_external_jobs": {
+                    "type": "array",
+                    "minItems": 1
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "cancel_state": {
+            "enum": [
+              "REQUESTED",
+              "QUIESCING"
+            ]
+          }
+        },
+        "required": [
+          "cancel_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "terminal_event_id": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "$comment": "The gate recomputes active_external_jobs as the exact subset of external_jobs whose status is non-terminal or UNKNOWN, and active_or_unverifiable_action_ids as the exact action_id set in active_or_unverifiable_actions. IDs in every set are unique and sorted. cancel_control_event_ids must equal the unique control_event_id set in cancel_dispatches; each cancel dispatch targets exactly one member of dispatched_action_ids; target action IDs are unique within the cancellation. QUIESCENT requires terminal_receipt_action_ids == dispatched_action_ids and both active action arrays plus active_external_jobs empty. TERMINATED_WITH_ACTIVE_WORK requires dispatched_action_ids to be the disjoint union of terminal_receipt_action_ids and active_or_unverifiable_action_ids, and requires every non-terminal/unverifiable action and job to have one detailed registration. Missing or extra registrations fail closed. JSON Schema cannot compare these arrays."
+    }
+  ],
+  "$defs": {
+    "activeOrUnverifiableAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_id",
+        "registry_snapshot_id",
+        "target_identity",
+        "last_state",
+        "possible_side_effects",
+        "external_job_ids",
+        "follow_up_method",
+        "evidence_refs",
+        "last_observed_at_utc",
+        "last_observed_event_id"
+      ],
+      "properties": {
+        "action_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "registry_snapshot_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "target_identity": {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        "last_state": {
+          "type": "string",
+          "enum": [
+            "DISPATCHED",
+            "SEND_OUTCOME_UNKNOWN",
+            "CLAIMED",
+            "IN_PROGRESS",
+            "CANCEL_SENT",
+            "UNINTERRUPTIBLE",
+            "UNKNOWN"
+          ]
+        },
+        "possible_side_effects": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+          }
+        },
+        "external_job_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        },
+        "follow_up_method": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/evidenceId"
+          }
+        },
+        "last_observed_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "last_observed_event_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        }
+      },
+      "$comment": "The program gate loads the immutable DispatchAction and all receipts for action_id, requires the historical registry snapshot and target identity to match that action, and proves that no terminal receipt exists. external_job_ids must resolve exactly to external_jobs/active_external_jobs records for this action."
+    },
+    "externalJob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "job_kind",
+        "dispatch_action_id",
+        "location",
+        "status",
+        "possible_side_effects",
+        "owner",
+        "follow_up_method",
+        "evidence_refs",
+        "last_observed_at_utc",
+        "last_observed_event_id"
+      ],
+      "properties": {
+        "job_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "job_kind": {
+          "type": "string",
+          "enum": [
+            "LOCAL_PROCESS",
+            "REMOTE_JOB",
+            "DEVICE_OPERATION",
+            "UNINTERRUPTIBLE_ACTION"
+          ]
+        },
+        "dispatch_action_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "location": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "host_identity",
+            "device_identity",
+            "description"
+          ],
+          "properties": {
+            "host_identity": {
+              "anyOf": [
+                {
+                  "$ref": "common.v1.schema.json#/$defs/contentId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "device_identity": {
+              "anyOf": [
+                {
+                  "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": {
+              "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+            }
+          },
+          "anyOf": [
+            {
+              "properties": {
+                "host_identity": {
+                  "$ref": "common.v1.schema.json#/$defs/contentId"
+                }
+              }
+            },
+            {
+              "properties": {
+                "device_identity": {
+                  "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+                }
+              }
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "DISPATCHED",
+            "RUNNING",
+            "STOP_REQUESTED",
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED",
+            "UNINTERRUPTIBLE",
+            "UNKNOWN"
+          ]
+        },
+        "possible_side_effects": {
+          "type": "array",
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+          }
+        },
+        "owner": {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        "follow_up_method": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/evidenceId"
+          }
+        },
+        "last_observed_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "last_observed_event_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        }
+      }
+    },
+    "activeExternalJob": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/externalJob"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "DISPATCHED",
+                "RUNNING",
+                "STOP_REQUESTED",
+                "UNINTERRUPTIBLE",
+                "UNKNOWN"
+              ]
+            },
+            "possible_side_effects": {
+              "type": "array",
+              "minItems": 1
+            }
+          }
+        }
+      ]
+    },
+    "unknownSideEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "side_effect_id",
+        "action_id",
+        "operation",
+        "location",
+        "last_known_state",
+        "possible_side_effects",
+        "owner",
+        "follow_up_method",
+        "evidence_refs",
+        "opened_event_id"
+      ],
+      "properties": {
+        "side_effect_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "action_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "operation": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "location": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "last_known_state": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "possible_side_effects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+          }
+        },
+        "owner": {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        "follow_up_method": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/evidenceId"
+          }
+        },
+        "opened_event_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        }
+      }
+    }
+  }
+}

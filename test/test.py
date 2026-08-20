@@ -9,8 +9,8 @@ from typing import TypedDict
 from langgraph.graph import END, StateGraph
 
 
-THREAD_ID_A = "019f12bb-e555-7102-960a-7178f8b78a20"
-THREAD_ID_B = "019f12bb-e64d-7542-a147-56459f759923"
+THREAD_ID_A = ""
+THREAD_ID_B = ""
 PROMPT_TO_A = "helllo"
 
 

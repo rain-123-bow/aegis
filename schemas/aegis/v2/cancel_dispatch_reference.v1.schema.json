@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/cancel_dispatch_reference.v1.schema.json",
+  "title": "CancelDispatchReference.v1",
+  "description": "Portable reference to a complete CancelDispatch.v1 artifact.",
+  "$comment": "The gate loads repository_path, verifies exact repository bytes, validates the loaded object against cancel_dispatch.v1.schema.json, and requires cancel_dispatch_artifact_id == sha256:<SHA-256(UTF-8 JCS bytes of the complete loaded object)>. Inline reference summaries must not claim schema_version CancelDispatch.v1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "cancel_dispatch_artifact_id",
+    "cancel_dispatch_schema_id",
+    "repository_path",
+    "artifact_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "CancelDispatchReference.v1"
+    },
+    "cancel_dispatch_artifact_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "cancel_dispatch_schema_id": {
+      "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/cancel_dispatch.v1.schema.json"
+    },
+    "repository_path": {
+      "$ref": "common.v1.schema.json#/$defs/repositoryRelativePath"
+    },
+    "artifact_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    }
+  }
+}

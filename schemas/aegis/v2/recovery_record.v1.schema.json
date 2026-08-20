@@ -1,0 +1,829 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/recovery_record.v1.schema.json",
+  "title": "RecoveryRecord.v1",
+  "description": "Content-addressed crash-recovery record binding action, receipts, events, checkpoint, lease, effects, and reference trace.",
+  "$comment": "recovery_record_id is sha256:<SHA-256(UTF-8 JCS RFC8785 bytes of this object with recovery_record_id omitted)>. The recovery gate loads the exact action, validates every receipt and authority event against that action's run/registry/physical revision, proves the before/after checkpoint and lease sequence, validates query/journal evidence, and compares actual_trace with uninterrupted_reference_trace. Unknown effects from NON_IDEMPOTENT_UNJOURNALED or an unproven post-effect window force UNKNOWN_SIDE_EFFECT and automatic_replay_performed=false. A boolean or count without these preimages cannot authorize resume.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recovery_record_id",
+    "canonicalization",
+    "campaign_id",
+    "run_id",
+    "source_baseline_id",
+    "registry_snapshot_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "effect_class",
+    "crash_window",
+    "action",
+    "receipts",
+    "authority_events",
+    "kernel_event_ids",
+    "event_trace_id",
+    "checkpoint",
+    "lease",
+    "pre_state_sha256",
+    "post_state_sha256",
+    "effect_query",
+    "journal",
+    "actual_trace",
+    "uninterrupted_reference_trace",
+    "trace_comparison",
+    "recovery_decision",
+    "automatic_replay_performed",
+    "recovered_event_id",
+    "recovered_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "RecoveryRecord.v1"
+    },
+    "recovery_record_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "campaign_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "registry_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_contract_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "effect_class": {
+      "type": "string",
+      "enum": [
+        "PURE_READ",
+        "IDEMPOTENT_QUERYABLE",
+        "NON_IDEMPOTENT",
+        "NON_IDEMPOTENT_UNJOURNALED"
+      ]
+    },
+    "crash_window": {
+      "type": "string",
+      "enum": [
+        "BEFORE_ACTION_PERSIST",
+        "AFTER_ACTION_PERSIST_BEFORE_DISPATCH",
+        "AFTER_DISPATCH_BEFORE_DISPATCH_RECEIPT",
+        "AFTER_CLAIM_BEFORE_SIDE_EFFECT",
+        "AFTER_SIDE_EFFECT_BEFORE_RESULT",
+        "AFTER_RESULT_BEFORE_COMPLETE_RECEIPT",
+        "AFTER_COMPLETE_BEFORE_INGEST",
+        "AFTER_INGEST_BEFORE_GATE",
+        "AFTER_GATE_BEFORE_CHECKPOINT"
+      ]
+    },
+    "action": {
+      "$ref": "dispatch_action.v1.schema.json"
+    },
+    "receipts": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "agent_receipt.v1.schema.json"
+      }
+    },
+    "authority_events": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "codex_authority_event.v1.schema.json"
+      }
+    },
+    "kernel_event_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "event_trace_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "checkpoint": {
+      "$ref": "#/$defs/checkpointTransition"
+    },
+    "lease": {
+      "$ref": "#/$defs/leaseTransition"
+    },
+    "pre_state_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "post_state_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "effect_query": {
+      "$ref": "#/$defs/effectQuery"
+    },
+    "journal": {
+      "$ref": "#/$defs/journalBinding"
+    },
+    "actual_trace": {
+      "$ref": "#/$defs/traceBinding"
+    },
+    "uninterrupted_reference_trace": {
+      "$ref": "#/$defs/traceBinding"
+    },
+    "trace_comparison": {
+      "type": "string",
+      "enum": [
+        "EQUIVALENT",
+        "DIVERGENT",
+        "UNVERIFIABLE"
+      ]
+    },
+    "recovery_decision": {
+      "type": "string",
+      "enum": [
+        "RESUME_SAME_ACTION",
+        "RETURN_EXISTING_RESULT",
+        "ADVANCE_WITH_EXISTING_RECEIPT",
+        "UNKNOWN_SIDE_EFFECT",
+        "REJECT_INTEGRITY"
+      ]
+    },
+    "automatic_replay_performed": {
+      "type": "boolean"
+    },
+    "recovered_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "recovered_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "effect_class": {
+            "const": "NON_IDEMPOTENT_UNJOURNALED"
+          }
+        },
+        "required": [
+          "effect_class"
+        ]
+      },
+      "then": {
+        "properties": {
+          "journal": {
+            "type": "object",
+            "properties": {
+              "journal_state": {
+                "const": "ABSENT"
+              }
+            },
+            "required": [
+              "journal_state"
+            ]
+          },
+          "automatic_replay_performed": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "effect_class": {
+              "const": "PURE_READ"
+            },
+            "action": {
+              "type": "object",
+              "properties": {
+                "side_effect_policy": {
+                  "type": "object",
+                  "properties": {
+                    "operation_class": {
+                      "const": "PURE_READ"
+                    }
+                  },
+                  "required": [
+                    "operation_class"
+                  ]
+                }
+              },
+              "required": [
+                "side_effect_policy"
+              ]
+            }
+          },
+          "required": [
+            "effect_class",
+            "action"
+          ]
+        },
+        {
+          "properties": {
+            "effect_class": {
+              "const": "IDEMPOTENT_QUERYABLE"
+            },
+            "action": {
+              "type": "object",
+              "properties": {
+                "side_effect_policy": {
+                  "type": "object",
+                  "properties": {
+                    "operation_class": {
+                      "const": "IDEMPOTENT_QUERYABLE"
+                    }
+                  },
+                  "required": [
+                    "operation_class"
+                  ]
+                }
+              },
+              "required": [
+                "side_effect_policy"
+              ]
+            }
+          },
+          "required": [
+            "effect_class",
+            "action"
+          ]
+        },
+        {
+          "properties": {
+            "effect_class": {
+              "const": "NON_IDEMPOTENT"
+            },
+            "action": {
+              "type": "object",
+              "properties": {
+                "side_effect_policy": {
+                  "type": "object",
+                  "properties": {
+                    "operation_class": {
+                      "const": "NON_IDEMPOTENT"
+                    }
+                  },
+                  "required": [
+                    "operation_class"
+                  ]
+                }
+              },
+              "required": [
+                "side_effect_policy"
+              ]
+            }
+          },
+          "required": [
+            "effect_class",
+            "action"
+          ]
+        },
+        {
+          "properties": {
+            "effect_class": {
+              "const": "NON_IDEMPOTENT_UNJOURNALED"
+            },
+            "action": {
+              "type": "object",
+              "properties": {
+                "side_effect_policy": {
+                  "type": "object",
+                  "properties": {
+                    "operation_class": {
+                      "const": "NON_IDEMPOTENT_UNJOURNALED"
+                    }
+                  },
+                  "required": [
+                    "operation_class"
+                  ]
+                }
+              },
+              "required": [
+                "side_effect_policy"
+              ]
+            }
+          },
+          "required": [
+            "effect_class",
+            "action"
+          ]
+        }
+      ]
+    },
+    {
+      "if": {
+        "properties": {
+          "effect_class": {
+            "const": "NON_IDEMPOTENT"
+          }
+        },
+        "required": [
+          "effect_class"
+        ]
+      },
+      "then": {
+        "properties": {
+          "journal": {
+            "type": "object",
+            "properties": {
+              "journal_state": {
+                "enum": [
+                  "CLAIMED",
+                  "COMPLETED"
+                ]
+              }
+            },
+            "required": [
+              "journal_state"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "effect_class": {
+            "const": "IDEMPOTENT_QUERYABLE"
+          }
+        },
+        "required": [
+          "effect_class"
+        ]
+      },
+      "then": {
+        "properties": {
+          "effect_query": {
+            "type": "object",
+            "properties": {
+              "query_state": {
+                "enum": [
+                  "RESULT_FOUND",
+                  "NO_EFFECT_FOUND",
+                  "UNVERIFIABLE"
+                ]
+              }
+            },
+            "required": [
+              "query_state"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "effect_class": {
+            "const": "NON_IDEMPOTENT_UNJOURNALED"
+          },
+          "crash_window": {
+            "enum": [
+              "AFTER_DISPATCH_BEFORE_DISPATCH_RECEIPT",
+              "AFTER_SIDE_EFFECT_BEFORE_RESULT",
+              "AFTER_RESULT_BEFORE_COMPLETE_RECEIPT"
+            ]
+          }
+        },
+        "required": [
+          "effect_class",
+          "crash_window"
+        ]
+      },
+      "then": {
+        "properties": {
+          "effect_query": {
+            "type": "object",
+            "properties": {
+              "query_state": {
+                "const": "UNVERIFIABLE"
+              }
+            },
+            "required": [
+              "query_state"
+            ]
+          },
+          "trace_comparison": {
+            "const": "UNVERIFIABLE"
+          },
+          "recovery_decision": {
+            "const": "UNKNOWN_SIDE_EFFECT"
+          },
+          "automatic_replay_performed": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "recovery_decision": {
+            "const": "UNKNOWN_SIDE_EFFECT"
+          }
+        },
+        "required": [
+          "recovery_decision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "automatic_replay_performed": {
+            "const": false
+          },
+          "trace_comparison": {
+            "const": "UNVERIFIABLE"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "trace_comparison": {
+            "const": "EQUIVALENT"
+          }
+        },
+        "required": [
+          "trace_comparison"
+        ]
+      },
+      "then": {
+        "properties": {
+          "recovery_decision": {
+            "enum": [
+              "RETURN_EXISTING_RESULT",
+              "ADVANCE_WITH_EXISTING_RECEIPT",
+              "RESUME_SAME_ACTION"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "$comment": "Program invariants: effect_class equals action.side_effect_policy.operation_class; all duplicated campaign/run/source/registry/plan/execution/action/state_seq values equal; receipt/event order matches crash_window; lease recovery occurs only after expiry or authoritative release; checkpoint.after_state_seq never regresses; event IDs and trace entries are unique and sorted; NON_IDEMPOTENT effect_count is at most one and duplicate requests query the journal; RESUME_SAME_ACTION is legal only when the effect contract proves no duplicate effect."
+    }
+  ],
+  "$defs": {
+    "checkpointTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "before_checkpoint_id",
+        "before_state_seq",
+        "after_checkpoint_id",
+        "after_state_seq"
+      ],
+      "properties": {
+        "before_checkpoint_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "before_state_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "after_checkpoint_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "after_state_seq": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "leaseTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lease_id",
+        "lease_owner",
+        "issued_at_utc",
+        "expires_at_utc",
+        "recovery_owner",
+        "reacquired_at_utc"
+      ],
+      "properties": {
+        "lease_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "lease_owner": {
+          "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+        },
+        "issued_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "expires_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "recovery_owner": {
+          "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+        },
+        "reacquired_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        }
+      }
+    },
+    "effectQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "query_state",
+        "query_invocation",
+        "query_result_content_id",
+        "evidence_refs",
+        "query_event_id"
+      ],
+      "properties": {
+        "query_state": {
+          "type": "string",
+          "enum": [
+            "NOT_REQUIRED",
+            "RESULT_FOUND",
+            "NO_EFFECT_FOUND",
+            "UNVERIFIABLE"
+          ]
+        },
+        "query_invocation": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 32768
+        },
+        "query_result_content_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/contentId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/evidenceId"
+          }
+        },
+        "query_event_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "query_state": {
+                "const": "NOT_REQUIRED"
+              }
+            },
+            "required": [
+              "query_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "query_invocation": {
+                "type": "null"
+              },
+              "query_result_content_id": {
+                "type": "null"
+              },
+              "evidence_refs": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "query_event_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "query_state": {
+                "enum": [
+                  "RESULT_FOUND",
+                  "NO_EFFECT_FOUND"
+                ]
+              }
+            },
+            "required": [
+              "query_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "query_invocation": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence_refs": {
+                "type": "array",
+                "minItems": 1
+              },
+              "query_event_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "query_state": {
+                "const": "RESULT_FOUND"
+              }
+            },
+            "required": [
+              "query_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "query_result_content_id": {
+                "$ref": "common.v1.schema.json#/$defs/contentId"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "journalBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "journal_state",
+        "operation_id",
+        "journal_artifact",
+        "claim_event_id",
+        "evidence_refs"
+      ],
+      "properties": {
+        "journal_state": {
+          "type": "string",
+          "enum": [
+            "ABSENT",
+            "CLAIMED",
+            "COMPLETED"
+          ]
+        },
+        "operation_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "journal_artifact": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/artifactReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "claim_event_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/evidenceId"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "journal_state": {
+                "const": "ABSENT"
+              }
+            },
+            "required": [
+              "journal_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "operation_id": {
+                "type": "null"
+              },
+              "journal_artifact": {
+                "type": "null"
+              },
+              "claim_event_id": {
+                "type": "null"
+              },
+              "evidence_refs": {
+                "type": "array",
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "operation_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              },
+              "journal_artifact": {
+                "$ref": "common.v1.schema.json#/$defs/artifactReference"
+              },
+              "claim_event_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              },
+              "evidence_refs": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "traceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trace_id",
+        "state_sha256",
+        "event_sequence_sha256",
+        "effect_sequence_sha256",
+        "effect_count",
+        "terminal_state"
+      ],
+      "properties": {
+        "trace_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "state_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "event_sequence_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "effect_sequence_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "effect_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "terminal_state": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        }
+      }
+    }
+  }
+}

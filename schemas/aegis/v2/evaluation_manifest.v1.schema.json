@@ -1,0 +1,1437 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/evaluation_manifest.v1.schema.json",
+  "title": "EvaluationManifest.v1",
+  "description": "Append-only, parent-linked Aegis v2 evaluation corpus with immutable cases, frozen runner contracts, fixture/risk bindings, and expected-decision isolation.",
+  "$comment": "Ordinary cases freeze only a machine-independent SutDecision.v1 expectation. Dynamic EvaluationRunnerOutput, RunnerExecutionRecord, PythonExecutableBinding, process facts, and comparator results are forbidden from ordinary expected data. Runner conformance cases instead bind a RunnerConformanceInvocation.v1 preimage and structural RunnerConformanceResult.v1 assertions; they never claim SUT execution or PASS credit. Property generators and oracles remain evaluator-only, while a source-bound materializer produces and validates the complete EvaluationRunnerInput before the formal SUT entrypoint.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_kind",
+    "manifest_id",
+    "corpus_version",
+    "canonicalization",
+    "created_at_utc",
+    "parent_manifest_hash",
+    "parent_manifest_locator",
+    "manifest_sha256",
+    "freeze",
+    "hash_contract",
+    "history_policy",
+    "release_policy",
+    "capability_claim_policy",
+    "fixture_catalog_binding",
+    "risk_register_binding",
+    "reference_source_manifest_binding",
+    "runner_contracts",
+    "property_suites",
+    "denominator_groups",
+    "supersession_events",
+    "runner_conformance_cases",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "EvaluationManifest.v1"
+    },
+    "manifest_kind": {
+      "const": "AEGIS_V2_FROZEN_EVALUATION_CORPUS"
+    },
+    "manifest_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "corpus_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "created_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "parent_manifest_hash": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "parent_manifest_locator": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/parentManifestLocator"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "manifest_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "freeze": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/pendingFreeze"
+        },
+        {
+          "$ref": "phase0_freeze_record.v1.schema.json"
+        }
+      ]
+    },
+    "hash_contract": {
+      "$ref": "#/$defs/hashContract"
+    },
+    "history_policy": {
+      "$ref": "#/$defs/historyPolicy"
+    },
+    "release_policy": {
+      "$ref": "#/$defs/releasePolicy"
+    },
+    "capability_claim_policy": {
+      "$ref": "#/$defs/capabilityClaimPolicy"
+    },
+    "fixture_catalog_binding": {
+      "$ref": "#/$defs/repositoryArtifactBinding"
+    },
+    "risk_register_binding": {
+      "$ref": "#/$defs/repositoryArtifactBinding"
+    },
+    "reference_source_manifest_binding": {
+      "$ref": "#/$defs/referenceSourceManifestBinding"
+    },
+    "runner_contracts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "evaluation_runner_contract.v1.schema.json"
+      }
+    },
+    "property_suites": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/propertySuite"
+      }
+    },
+    "denominator_groups": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/denominatorGroup"
+      }
+    },
+    "supersession_events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/supersessionEvent"
+      }
+    },
+    "runner_conformance_cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/runnerConformanceCase"
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/evaluationCase"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "parent_manifest_hash": {
+            "type": "null"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "parent_manifest_locator": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "parent_manifest_locator": {
+            "$ref": "#/$defs/parentManifestLocator"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "hashContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "canonicalization",
+        "text_encoding",
+        "case_hash_rule",
+        "runner_contract_id_rule",
+        "sut_decision_hash_rule",
+        "property_suite_hash_rule",
+        "property_instance_envelope_hash_rule",
+        "property_materialization_bundle_hash_rule",
+        "property_materialized_fixture_set_hash_rule",
+        "property_expected_record_hash_rule",
+        "runner_conformance_invocation_hash_rule",
+        "runner_conformance_candidate_hash_rule",
+        "runner_conformance_result_hash_rule",
+        "runner_conformance_case_hash_rule",
+        "denominator_hash_rule",
+        "supersession_event_hash_rule",
+        "risk_entry_hash_rule",
+        "risk_register_hash_rule",
+        "manifest_hash_rule",
+        "parent_hash_rule"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "SHA-256"
+        },
+        "canonicalization": {
+          "const": "JCS-RFC8785"
+        },
+        "text_encoding": {
+          "const": "UTF-8-NO-BOM"
+        },
+        "case_hash_rule": {
+          "const": "sha256:JCS(case object with case_sha256 member omitted; every other member retained)"
+        },
+        "runner_contract_id_rule": {
+          "const": "sha256:JCS(runner contract object with runner_contract_id member omitted; every other member retained)"
+        },
+        "sut_decision_hash_rule": {
+          "const": "hex SHA-256(JCS(SutDecision object with sut_decision_sha256 member omitted; every other member retained))"
+        },
+        "property_suite_hash_rule": {
+          "const": "sha256:JCS(property suite object with suite_sha256 member omitted; every other member retained)"
+        },
+        "property_instance_envelope_hash_rule": {
+          "const": "sha256:JCS(PropertyInstanceEnvelope object with envelope_sha256 omitted; every other member retained)"
+        },
+        "property_materialization_bundle_hash_rule": {
+          "const": "sha256:JCS(PropertyMaterializationBundle object with bundle_sha256 omitted; every other member retained)"
+        },
+        "property_materialized_fixture_set_hash_rule": {
+          "const": "hex SHA-256(JCS(sut_materialized_fixtures array in exact order))"
+        },
+        "property_expected_record_hash_rule": {
+          "const": "sha256:JCS(PropertyExpectedRecord object with record_sha256 omitted; every other member retained)"
+        },
+        "runner_conformance_invocation_hash_rule": {
+          "const": "hex SHA-256(JCS(RunnerConformanceInvocation object with invocation_jcs_sha256 member omitted; every other member retained))"
+        },
+        "runner_conformance_candidate_hash_rule": {
+          "const": "hex SHA-256(JCS(RunnerConformanceInputVariant.candidate exact value))"
+        },
+        "runner_conformance_result_hash_rule": {
+          "const": "sha256:JCS(RunnerConformanceResult object with result_sha256 omitted; every other member retained)"
+        },
+        "runner_conformance_case_hash_rule": {
+          "const": "sha256:JCS(runner conformance case object with case_sha256 member omitted; every other member retained)"
+        },
+        "denominator_hash_rule": {
+          "const": "sha256:JCS(denominator group object with group_sha256 member omitted; every other member retained)"
+        },
+        "supersession_event_hash_rule": {
+          "const": "sha256:JCS(supersession event object with event_sha256 member omitted; every other member retained)"
+        },
+        "risk_entry_hash_rule": {
+          "const": "sha256:JCS(risk entry object with risk_sha256 member omitted; every other member retained)"
+        },
+        "risk_register_hash_rule": {
+          "const": "sha256:JCS(risk register object with register_sha256 member omitted; every other member retained)"
+        },
+        "manifest_hash_rule": {
+          "const": "sha256:JCS(manifest root object with manifest_sha256 member omitted; every other member retained)"
+        },
+        "parent_hash_rule": {
+          "const": "parent_manifest_hash MUST equal the parent artifact declared manifest_sha256; it is not a raw-byte hash or a full-JCS hash including the self-hash member"
+        }
+      }
+    },
+    "historyPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_objects_immutable",
+        "case_deletion_allowed",
+        "case_in_place_status_allowed",
+        "case_in_place_supersession_allowed",
+        "cross_manifest_case_id_unique",
+        "manifest_payload_model",
+        "parent_chain_required_after_root",
+        "supersession_mechanism",
+        "active_set_derivation",
+        "cross_version_gate"
+      ],
+      "properties": {
+        "case_objects_immutable": {
+          "const": true
+        },
+        "case_deletion_allowed": {
+          "const": false
+        },
+        "case_in_place_status_allowed": {
+          "const": false
+        },
+        "case_in_place_supersession_allowed": {
+          "const": false
+        },
+        "cross_manifest_case_id_unique": {
+          "const": true
+        },
+        "manifest_payload_model": {
+          "const": "ROOT_INTRODUCES_INITIAL_CASES_CHILD_IS_DELTA_NEW_CASES_AND_NEW_EVENTS_ONLY"
+        },
+        "parent_chain_required_after_root": {
+          "const": true
+        },
+        "supersession_mechanism": {
+          "const": "TOP_LEVEL_APPEND_ONLY_SUPERSESSION_EVENT"
+        },
+        "active_set_derivation": {
+          "const": "Replay the complete parent chain, reject changed or duplicate historical case_id bytes, append new cases/events, then remove only targets of valid supersession events"
+        },
+        "cross_version_gate": {
+          "const": "Verify parent locator bytes, parent declared manifest_sha256, case_id uniqueness, historical case byte identity, event target existence, user-decision binding, and independent-review binding"
+        }
+      }
+    },
+    "releasePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gate_case_set",
+        "acceptance",
+        "runner_conformance_acceptance",
+        "aggregate_scores_allowed",
+        "reason_order"
+      ],
+      "properties": {
+        "gate_case_set": {
+          "const": "PARENT_CHAIN_EFFECTIVE_ACTIVE_MUST_DETECT_AFTER_VALID_SUPERSESSION_EVENTS"
+        },
+        "acceptance": {
+          "const": "EXACT_EXPECTED_OUTPUT_PER_CASE_AND_ALL_ORACLE_INVARIANTS"
+        },
+        "runner_conformance_acceptance": {
+          "const": "EVERY_CONFORMANCE_CASE_BLOCKS_BEFORE_SPAWN_WITH_NO_PASS_CREDIT"
+        },
+        "aggregate_scores_allowed": {
+          "const": false
+        },
+        "reason_order": {
+          "const": "Governing rule first where GraphDecision requires it; remaining reason identifiers in Unicode code-point order; duplicates forbidden"
+        }
+      }
+    },
+    "capabilityClaimPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixture_provenance",
+        "synthetic_case_live_capability_effect",
+        "phase_0b_status",
+        "ordinary_case_execution_state",
+        "ordinary_case_pass_count",
+        "required_runner_isolation_state",
+        "live_pass_required_provenance"
+      ],
+      "properties": {
+        "fixture_provenance": {
+          "const": "SYNTHETIC_OFFLINE"
+        },
+        "synthetic_case_live_capability_effect": {
+          "const": "NONE"
+        },
+        "phase_0b_status": {
+          "const": "UNVERIFIED"
+        },
+        "ordinary_case_execution_state": {
+          "const": "NOT_EXECUTED_CAPABILITY_GATED"
+        },
+        "ordinary_case_pass_count": {
+          "const": 0
+        },
+        "required_runner_isolation_state": {
+          "const": "VERIFIED_RELEASE_GRADE"
+        },
+        "live_pass_required_provenance": {
+          "const": "Separately authorized live Codex child, authoritative event, exact version, restart, capacity, and retention evidence"
+        }
+      }
+    },
+    "pendingFreeze": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "required_record_schema_ref",
+        "freeze_record",
+        "independent_review_state"
+      ],
+      "properties": {
+        "state": {
+          "const": "PENDING"
+        },
+        "required_record_schema_ref": {
+          "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/phase0_freeze_record.v1.schema.json"
+        },
+        "freeze_record": {
+          "type": "null"
+        },
+        "independent_review_state": {
+          "const": "PENDING"
+        }
+      }
+    },
+    "parentManifestLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_path",
+        "declared_manifest_sha256",
+        "raw_sha256",
+        "byte_size",
+        "content_addressed_store_key"
+      ],
+      "properties": {
+        "repository_path": {
+          "$ref": "common.v1.schema.json#/$defs/repositoryRelativePath"
+        },
+        "declared_manifest_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_addressed_store_key": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      }
+    },
+    "repositoryArtifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_kind",
+        "schema_ref",
+        "repository_path",
+        "declared_content_hash",
+        "raw_sha256",
+        "byte_size",
+        "byte_domain"
+      ],
+      "properties": {
+        "artifact_kind": {
+          "type": "string",
+          "enum": [
+            "EVALUATION_FIXTURE_CATALOG",
+            "EVALUATION_RISK_REGISTER",
+            "REFERENCE_SOURCE_MANIFEST"
+          ]
+        },
+        "schema_ref": {
+          "type": "string",
+          "format": "uri-reference"
+        },
+        "repository_path": {
+          "$ref": "common.v1.schema.json#/$defs/repositoryRelativePath"
+        },
+        "declared_content_hash": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "byte_domain": {
+          "const": "EXACT_GIT_BLOB_BYTES_UTF8_LF_NO_BOM"
+        }
+      }
+    },
+    "referenceSourceManifestBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/repositoryArtifactBinding"
+        },
+        {
+          "type": "object",
+          "required": [
+            "artifact_kind",
+            "schema_ref",
+            "repository_path"
+          ],
+          "properties": {
+            "artifact_kind": {
+              "const": "REFERENCE_SOURCE_MANIFEST"
+            },
+            "schema_ref": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/reference_source_manifest.v1.schema.json"
+            },
+            "repository_path": {
+              "const": "evaluation/aegis_v2/reference/source_manifest.v1.json"
+            }
+          }
+        }
+      ]
+    },
+    "propertySuite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suite_id",
+        "sut_runner_contract_id",
+        "domain",
+        "domain_order",
+        "generator",
+        "input_materializer",
+        "reference_oracle",
+        "instance_validation_policy",
+        "runner_fixture_source",
+        "expected_record_schema_ref",
+        "expected_record_assembly_policy",
+        "store_separation_policy",
+        "sut_mount_policy",
+        "isolation_mount_binding_policy",
+        "expected_instance_count",
+        "instance_id_algorithm",
+        "release_gate",
+        "suite_sha256"
+      ],
+      "properties": {
+        "suite_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "sut_runner_contract_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "domain": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1
+          },
+          "minProperties": 1
+        },
+        "domain_order": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "maxLength": 128
+          }
+        },
+        "generator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm_id",
+            "algorithm_version",
+            "source_manifest_entry_sha256",
+            "output_schema_ref",
+            "output_visibility"
+          ],
+          "properties": {
+            "algorithm_id": {
+              "$ref": "common.v1.schema.json#/$defs/stableId"
+            },
+            "algorithm_version": {
+              "const": "1.0.0"
+            },
+            "source_manifest_entry_sha256": {
+              "$ref": "common.v1.schema.json#/$defs/sha256"
+            },
+            "output_schema_ref": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/property_instance_envelope.v1.schema.json"
+            },
+            "output_visibility": {
+              "const": "EVALUATOR_ONLY_NEVER_SUT_READABLE"
+            }
+          }
+        },
+        "input_materializer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm_id",
+            "algorithm_version",
+            "source_manifest_entry_sha256",
+            "input_binding_id",
+            "input_schema_ref",
+            "output_schema_ref",
+            "case_id_algorithm",
+            "identity_validation_policy",
+            "validation_policy",
+            "sut_entrypoint_policy"
+          ],
+          "properties": {
+            "algorithm_id": {
+              "$ref": "common.v1.schema.json#/$defs/stableId"
+            },
+            "algorithm_version": {
+              "const": "1.0.0"
+            },
+            "source_manifest_entry_sha256": {
+              "$ref": "common.v1.schema.json#/$defs/sha256"
+            },
+            "input_binding_id": {
+              "$ref": "common.v1.schema.json#/$defs/stableId"
+            },
+            "input_schema_ref": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/property_instance_envelope.v1.schema.json"
+            },
+            "output_schema_ref": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/property_materialization_bundle.v1.schema.json"
+            },
+            "case_id_algorithm": {
+              "const": "concat(suite_id,'-INSTANCE-',one_based_ordinal_zero_padded_6)"
+            },
+            "identity_validation_policy": {
+              "const": "INSTANCE_ID_AND_CASE_ID_RECOMPUTED_BEFORE_MATERIALIZATION"
+            },
+            "validation_policy": {
+              "const": "FULL_BUNDLE_RUNNER_INPUT_BOUND_SUBJECT_AND_FIXTURE_BYTES_BEFORE_SUT"
+            },
+            "sut_entrypoint_policy": {
+              "const": "RESOLVE_ONLY_FROM_SUITE_RUNNER_CONTRACT_INPUT_BINDING"
+            }
+          }
+        },
+        "instance_validation_policy": {
+          "const": "VALIDATE_PROPERTY_INSTANCE_ENVELOPE_AND_EXACT_DOMAIN_MEMBERSHIP_BEFORE_MATERIALIZATION"
+        },
+        "reference_oracle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm_id",
+            "source_manifest_entry_sha256",
+            "oracle_output_schema_ref",
+            "input_source",
+            "materialized_input_access",
+            "sut_output_artifact_access"
+          ],
+          "properties": {
+            "algorithm_id": {
+              "$ref": "common.v1.schema.json#/$defs/stableId"
+            },
+            "source_manifest_entry_sha256": {
+              "$ref": "common.v1.schema.json#/$defs/sha256"
+            },
+            "oracle_output_schema_ref": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/sut_decision.v1.schema.json"
+            },
+            "input_source": {
+              "const": "PROPERTY_INSTANCE_ENVELOPE_READ_ONLY_COPY"
+            },
+            "materialized_input_access": {
+              "const": "FORBIDDEN"
+            },
+            "sut_output_artifact_access": {
+              "const": "FORBIDDEN"
+            }
+          }
+        },
+        "runner_fixture_source": {
+          "const": "PROPERTY_INSTANCE_MATERIALIZATION"
+        },
+        "expected_record_schema_ref": {
+          "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/property_expected_record.v1.schema.json"
+        },
+        "expected_record_assembly_policy": {
+          "const": "FREEZE_SUT_OUTPUT_ARTIFACT_THEN_INVOKE_ORACLE_WITH_ENVELOPE_ONLY"
+        },
+        "store_separation_policy": {
+          "const": "MATERIALIZATION_BUNDLE_AND_EXPECTED_RECORD_PHYSICALLY_SEPARATE"
+        },
+        "sut_mount_policy": {
+          "const": "ONLY_BUNDLE_SUT_MATERIALIZED_FIXTURES"
+        },
+        "isolation_mount_binding_policy": {
+          "const": "CURRENT_CASE_DECLARED_FIXTURES_MANIFEST_EQUALS_BUNDLE_FIXTURE_SET_HASH"
+        },
+        "expected_instance_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "instance_id_algorithm": {
+          "const": "sha256:JCS({suite_id, lexicographically ordered domain assignment})"
+        },
+        "release_gate": {
+          "const": "EXHAUSTIVE_ZERO_FAILURES_NO_RANDOM_SAMPLING_PROMOTE_ANY_FAILURE_TO_PERMANENT_CASE"
+        },
+        "suite_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      }
+    },
+    "denominatorGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "group_id",
+        "description",
+        "release_requirement",
+        "group_sha256"
+      ],
+      "properties": {
+        "group_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "release_requirement": {
+          "type": "string",
+          "enum": [
+            "ALL_EFFECTIVE_ACTIVE_MUST_DETECT_EXACT",
+            "ALL_EFFECTIVE_ACTIVE_REFERENCE_EXACT",
+            "ALL_RUNNER_CONFORMANCE_CASES_MUST_BLOCK_WITHOUT_SPAWN"
+          ]
+        },
+        "group_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      }
+    },
+    "scenarioBasis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trigger",
+        "runtime_boundary",
+        "probability_or_exposure",
+        "impact",
+        "inclusion_rationale",
+        "risk_register_entry_id"
+      ],
+      "properties": {
+        "trigger": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mechanism",
+            "observable_preconditions"
+          ],
+          "properties": {
+            "mechanism": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "observable_preconditions": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            }
+          }
+        },
+        "runtime_boundary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "probability_or_exposure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "basis_kind",
+            "statement",
+            "evidence_refs"
+          ],
+          "properties": {
+            "basis_kind": {
+              "type": "string",
+              "enum": [
+                "DIRECT_CONTRACT_PATH",
+                "EXPLICIT_ASSUMPTION"
+              ]
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "evidence_refs": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "common.v1.schema.json#/$defs/stableId"
+              }
+            }
+          }
+        },
+        "impact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "domains",
+            "consequence"
+          ],
+          "properties": {
+            "domains": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "INTEGRITY",
+                  "AUTHORITY",
+                  "COVERAGE",
+                  "SIDE_EFFECT",
+                  "SAFETY",
+                  "DATA_LOSS",
+                  "RELEASE_DECISION",
+                  "AUDITABILITY"
+                ]
+              }
+            },
+            "consequence": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          }
+        },
+        "inclusion_rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "risk_register_entry_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/stableId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "comparator_id",
+        "mode",
+        "expected_sut_decision_sha256",
+        "reference_trace_fixture_id",
+        "trace_normalization",
+        "invariant_ids"
+      ],
+      "properties": {
+        "comparator_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "EXACT_SUT_DECISION",
+            "EXACT_SUT_DECISION_AND_REFERENCE_TRACE"
+          ]
+        },
+        "expected_sut_decision_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "reference_trace_fixture_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/stableId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trace_normalization": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "DROP_OBSERVATION_TIME_ONLY_KEEP_ORDER_AND_IDENTITIES"
+          ]
+        },
+        "invariant_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        }
+      }
+    },
+    "runnerConformanceExpected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "result_schema_ref",
+        "result_validation_policy",
+        "expected_runner_state",
+        "required_isolation_binding_state",
+        "pre_spawn_expectation",
+        "expected_reason_ids",
+        "reason_match_policy",
+        "required_evidence_ids",
+        "evidence_match_policy",
+        "forbidden_result_members",
+        "assertion_ids"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "RunnerConformanceExpected.v1"
+        },
+        "result_schema_ref": {
+          "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/runner_conformance_result.v1.schema.json"
+        },
+        "result_validation_policy": {
+          "const": "VALIDATE_FULL_RESULT_SCHEMA_AND_SELF_HASH_BEFORE_EXPECTED_TEMPLATE"
+        },
+        "expected_runner_state": {
+          "type": "string",
+          "enum": [
+            "BLOCKED_INVALID_RUNNER_INPUT",
+            "BLOCKED_INVALID_RUNNER_CONTRACT",
+            "BLOCKED_UNSUPPORTED_PLATFORM",
+            "BLOCKED_INVALID_PYTHON_BINDING",
+            "BLOCKED_FIXTURE_PREPARATION",
+            "BLOCKED_UNVERIFIED_ISOLATION"
+          ]
+        },
+        "required_isolation_binding_state": {
+          "type": "string",
+          "enum": [
+            "UNVERIFIED_ISOLATION",
+            "NOT_APPLICABLE"
+          ]
+        },
+        "pre_spawn_expectation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spawn_attempted",
+            "comparison_performed",
+            "pass_eligible",
+            "output_artifact_raw_sha256"
+          ],
+          "properties": {
+            "spawn_attempted": {
+              "const": false
+            },
+            "comparison_performed": {
+              "const": false
+            },
+            "pass_eligible": {
+              "const": false
+            },
+            "output_artifact_raw_sha256": {
+              "type": "null"
+            }
+          }
+        },
+        "expected_reason_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        },
+        "reason_match_policy": {
+          "const": "EXACT_ARRAY_ORDER"
+        },
+        "required_evidence_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          }
+        },
+        "evidence_match_policy": {
+          "const": "REQUIRED_SUBSET_ALLOW_RUNTIME_ADDITIONS"
+        },
+        "forbidden_result_members": {
+          "const": [
+            "evaluation_runner_output",
+            "execution_failure",
+            "execution_record",
+            "pre_spawn_block",
+            "python_executable_binding_id",
+            "runner_execution_record_id",
+            "runner_input_jcs_sha256",
+            "runner_output_sha256",
+            "sut_decision",
+            "sut_decision_sha256",
+            "sut_input_jcs_sha256",
+            "sut_output_schema_id"
+          ]
+        },
+        "assertion_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "expected_runner_state": {
+                "const": "BLOCKED_UNVERIFIED_ISOLATION"
+              }
+            },
+            "required": [
+              "expected_runner_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "required_isolation_binding_state": {
+                "const": "UNVERIFIED_ISOLATION"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "required_isolation_binding_state": {
+                "const": "NOT_APPLICABLE"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "runnerConformanceCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "title",
+        "category",
+        "defect_class",
+        "severity",
+        "must_detect",
+        "denominator_group_ids",
+        "source_contract_refs",
+        "scenario_basis",
+        "invocation",
+        "expected",
+        "case_sha256"
+      ],
+      "properties": {
+        "case_id": {
+          "$ref": "common.v1.schema.json#/$defs/caseId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "category": {
+          "const": "EVALUATOR-ISOLATION-CONFORMANCE"
+        },
+        "defect_class": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "severity": {
+          "$ref": "common.v1.schema.json#/$defs/severity"
+        },
+        "must_detect": {
+          "const": true
+        },
+        "denominator_group_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        },
+        "source_contract_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        },
+        "scenario_basis": {
+          "$ref": "#/$defs/scenarioBasis"
+        },
+        "invocation": {
+          "$ref": "runner_conformance_invocation.v1.schema.json"
+        },
+        "expected": {
+          "$ref": "#/$defs/runnerConformanceExpected"
+        },
+        "case_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      },
+      "$comment": "These cases exercise the outer evaluator trust gate and are disjoint from SUT decision cases. A conforming observation blocks before process creation and receives no PASS credit."
+    },
+    "evaluationCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "title",
+        "category",
+        "defect_class",
+        "severity",
+        "must_detect",
+        "denominator_group_ids",
+        "source_contract_refs",
+        "scenario_basis",
+        "runner_contract_id",
+        "input_schema_ref",
+        "input",
+        "sut_output_schema_ref",
+        "expected",
+        "oracle",
+        "case_sha256"
+      ],
+      "properties": {
+        "case_id": {
+          "$ref": "common.v1.schema.json#/$defs/caseId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "category": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "defect_class": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "severity": {
+          "$ref": "common.v1.schema.json#/$defs/severity"
+        },
+        "must_detect": {
+          "type": "boolean"
+        },
+        "denominator_group_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        },
+        "source_contract_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        },
+        "scenario_basis": {
+          "$ref": "#/$defs/scenarioBasis"
+        },
+        "runner_contract_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "input_schema_ref": {
+          "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/evaluation_runner_input.v1.schema.json"
+        },
+        "input": {
+          "$ref": "evaluation_runner_input.v1.schema.json"
+        },
+        "sut_output_schema_ref": {
+          "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/sut_decision.v1.schema.json"
+        },
+        "expected": {
+          "$ref": "sut_decision.v1.schema.json"
+        },
+        "oracle": {
+          "$ref": "#/$defs/oracle"
+        },
+        "case_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      }
+    },
+    "supersessionEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "event_type",
+        "target_case_id",
+        "target_case_sha256",
+        "replacement_case_ids",
+        "rationale",
+        "parent_manifest_hash",
+        "user_decision",
+        "independent_review",
+        "appended_at_utc",
+        "event_sha256"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "event_type": {
+          "const": "CASE_SUPERSEDED"
+        },
+        "target_case_id": {
+          "$ref": "common.v1.schema.json#/$defs/caseId"
+        },
+        "target_case_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "replacement_case_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/caseId"
+          }
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "parent_manifest_hash": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "user_decision": {
+          "$ref": "common.v1.schema.json#/$defs/artifactReference"
+        },
+        "independent_review": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reviewer_identity",
+            "decision",
+            "artifact",
+            "event"
+          ],
+          "properties": {
+            "reviewer_identity": {
+              "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+            },
+            "decision": {
+              "const": "CONFLICT_CONFIRMED"
+            },
+            "artifact": {
+              "$ref": "common.v1.schema.json#/$defs/artifactReference"
+            },
+            "event": {
+              "$ref": "common.v1.schema.json#/$defs/artifactReference"
+            }
+          }
+        },
+        "appended_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "event_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      }
+    },
+    "riskRegister": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "register_kind",
+        "register_id",
+        "canonicalization",
+        "created_at_utc",
+        "hash_contract",
+        "entries",
+        "register_sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "EvaluationRiskRegister.v1"
+        },
+        "register_kind": {
+          "const": "EXTREME_SCENARIO_EXCLUSION_REGISTER"
+        },
+        "register_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "canonicalization": {
+          "const": "JCS-RFC8785"
+        },
+        "created_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "hash_contract": {
+          "const": "Each risk_sha256 is sha256:JCS(entry omitting risk_sha256); register_sha256 is sha256:JCS(root omitting register_sha256)"
+        },
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/riskEntry"
+          }
+        },
+        "register_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      }
+    },
+    "riskEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "risk_id",
+        "title",
+        "disposition",
+        "trigger",
+        "runtime_boundary",
+        "probability_or_exposure",
+        "impact",
+        "rationale",
+        "linked_case_ids",
+        "review_state",
+        "risk_sha256"
+      ],
+      "properties": {
+        "risk_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "disposition": {
+          "enum": [
+            "INCLUDED",
+            "EXCLUDED"
+          ]
+        },
+        "trigger": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "runtime_boundary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "probability_or_exposure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "basis_kind",
+            "statement",
+            "evidence_refs"
+          ],
+          "properties": {
+            "basis_kind": {
+              "enum": [
+                "DIRECT_CONTRACT_PATH",
+                "EXPLICIT_ASSUMPTION",
+                "NO_DEMONSTRABLE_TRIGGER"
+              ]
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "evidence_refs": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "common.v1.schema.json#/$defs/stableId"
+              }
+            }
+          }
+        },
+        "impact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "domains",
+            "consequence"
+          ],
+          "properties": {
+            "domains": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "consequence": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          }
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "linked_case_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/caseId"
+          }
+        },
+        "review_state": {
+          "const": "PENDING_INDEPENDENT_REVIEW"
+        },
+        "risk_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      }
+    }
+  }
+}

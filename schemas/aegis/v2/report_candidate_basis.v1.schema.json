@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/report_candidate_basis.v1.schema.json",
+  "title": "ReportCandidateBasis.v1",
+  "description": "Content-addressed kernel comparison between one D snapshot and one E report candidate.",
+  "$comment": "report_candidate_basis_id is sha256:<SHA-256(UTF-8 JCS RFC8785 bytes of this object with report_candidate_basis_id omitted)>. The kernel, not E, produces this record. It loads both referenced artifacts, independently recomputes expected_fact_ids and reported_fact_ids, requires each sorted and duplicate-free, and sets basis_result=MATCH iff the arrays are byte-for-byte equal. Any D fact change creates a different snapshot and makes this basis stale.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "report_candidate_basis_id",
+    "canonicalization",
+    "run_id",
+    "source_baseline_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "state_seq",
+    "d_review_snapshot_id",
+    "report_candidate_id",
+    "expected_fact_ids",
+    "reported_fact_ids",
+    "basis_result",
+    "kernel_instance_id",
+    "produced_event_id",
+    "produced_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ReportCandidateBasis.v1"
+    },
+    "report_candidate_basis_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "execution_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "state_seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "d_review_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "report_candidate_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "expected_fact_ids": {
+      "$ref": "#/$defs/factSet"
+    },
+    "reported_fact_ids": {
+      "$ref": "#/$defs/factSet"
+    },
+    "basis_result": {
+      "type": "string",
+      "enum": [
+        "MATCH",
+        "MISMATCH"
+      ]
+    },
+    "kernel_instance_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "produced_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "produced_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "$defs": {
+    "factSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/stableId"
+      }
+    }
+  }
+}

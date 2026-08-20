@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/agent_identity.v1.schema.json",
+  "title": "AgentIdentity.v1",
+  "description": "Observed, generation-bound identity of one Aegis role instance.",
+  "$comment": "The physical platform key is the exact pair identity.thread_id + identity.session_id. Codex CLI 0.145.0 exposes no independent agent_id. agent_handle is an optional locator projected from source.subAgent.thread_spawn.agent_path and is never an identity key. Phase 0B must establish live same-Desktop authority access before any identity becomes ACTIVE.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity",
+    "parent_task_id",
+    "thread",
+    "lifecycle_state",
+    "capability_state",
+    "observed_at_utc",
+    "authority_event"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "AgentIdentity.v1"
+    },
+    "identity": {
+      "$ref": "common.v1.schema.json#/$defs/observedAgentIdentityRef"
+    },
+    "parent_task_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "thread": {
+      "allOf": [
+        {
+          "$ref": "codex_authority_event.v1.schema.json#/$defs/thread"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "parentThreadId": {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            "source": {
+              "$ref": "codex_authority_event.v1.schema.json#/$defs/subAgentSource"
+            }
+          },
+          "required": [
+            "parentThreadId",
+            "source"
+          ]
+        }
+      ]
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": [
+        "PROVISIONAL",
+        "PROVISIONAL_REPLACEMENT",
+        "ACTIVE",
+        "PROVISIONAL_ORPHAN",
+        "LOST_VISIBLE",
+        "SUPERSEDED_LOST",
+        "RETAINED",
+        "CLOSE_REQUESTED",
+        "CLOSE_TOOL_COMPLETED",
+        "CLOSED"
+      ]
+    },
+    "capability_state": {
+      "type": "string",
+      "enum": [
+        "UNVERIFIED",
+        "VERIFIED",
+        "FAILED"
+      ]
+    },
+    "observed_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "authority_event": {
+      "$ref": "codex_authority_event.v1.schema.json"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "capability_state": {
+            "const": "VERIFIED"
+          }
+        },
+        "required": [
+          "capability_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "identity": {
+            "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "lifecycle_state": {
+            "const": "ACTIVE"
+          }
+        },
+        "required": [
+          "lifecycle_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "capability_state": {
+            "const": "VERIFIED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "lifecycle_state": {
+            "enum": [
+              "CLOSE_REQUESTED",
+              "CLOSE_TOOL_COMPLETED",
+              "CLOSED"
+            ]
+          }
+        },
+        "required": [
+          "lifecycle_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "authority_event": {
+            "type": "object",
+            "properties": {
+              "event_purpose": {
+                "const": "CLOSE"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "$comment": "The program gate must prove identity.thread_id == thread.id, identity.session_id == thread.sessionId, parent_task_id == thread.parentThreadId == thread.source.subAgent.thread_spawn.parent_thread_id, thread.createdAt is the authoritative Unix-second creation time, and authority_event.thread equals thread. If identity.agent_handle is non-null it must equal thread.source.subAgent.thread_spawn.agent_path and handle_source must be THREAD_SPAWN_AGENT_PATH."
+    }
+  ]
+}

@@ -457,7 +457,7 @@ TEST_RESULT_BLOCKER_CLOSURE.json   # 仅当输入 open_blockers 非空时必须�
 
 ```text
 status == true
-score >= 90
+score >= 95
 open_blockers.length == 0
 previous open blockers 均在 TEST_RESULT_BLOCKER_CLOSURE.json 中显式关闭
 ```

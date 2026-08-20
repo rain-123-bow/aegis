@@ -1,0 +1,899 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/reference_source_manifest.v1.schema.json",
+  "title": "ReferenceSourceManifest.v1",
+  "description": "Frozen source, dependency, import, entrypoint, and comparator-spec preimages for the independent Aegis v2 evaluation reference implementation.",
+  "$comment": "manifest_sha256 is SHA-256 over RFC 8785 JCS UTF-8 bytes with manifest_sha256 omitted. entry_sha256 and spec_sha256 use the same self-field omission rule. The program gate verifies exact source and assurance file bytes, unique sorted paths and IDs, complete transitive owned-source closure, entrypoint ownership, dependency/import policy, all cross-referenced algorithm IDs and hashes, and the absence of production aegis imports or dynamic SUT loading. A hash without the repository preimage is invalid.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_id",
+    "canonicalization",
+    "hash_contract",
+    "runtime_binding",
+    "source_files",
+    "assurance_files",
+    "algorithm_entries",
+    "comparator_specs",
+    "manifest_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ReferenceSourceManifest.v1"
+    },
+    "manifest_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "hash_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_source_sha256",
+        "entry_sha256",
+        "comparator_spec_sha256",
+        "manifest_sha256"
+      ],
+      "properties": {
+        "raw_source_sha256": {
+          "const": "Lowercase hex SHA-256 over exact repository file bytes."
+        },
+        "entry_sha256": {
+          "const": "Lowercase hex SHA-256 over JCS of the complete algorithm entry with entry_sha256 omitted."
+        },
+        "comparator_spec_sha256": {
+          "const": "Lowercase hex SHA-256 over JCS of the complete comparator spec with spec_sha256 omitted."
+        },
+        "manifest_sha256": {
+          "const": "Lowercase hex SHA-256 over JCS of this complete object with manifest_sha256 omitted."
+        }
+      }
+    },
+    "runtime_binding": {
+      "$ref": "#/$defs/runtimeBinding"
+    },
+    "source_files": {
+      "type": "array",
+      "minItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/sourceFile"
+      }
+    },
+    "assurance_files": {
+      "type": "array",
+      "minItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/fileBinding"
+      }
+    },
+    "algorithm_entries": {
+      "type": "array",
+      "minItems": 7,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/algorithmEntry"
+      }
+    },
+    "comparator_specs": {
+      "type": "array",
+      "minItems": 16,
+      "maxItems": 16,
+      "items": {
+        "$ref": "#/$defs/comparatorSpec"
+      }
+    },
+    "manifest_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    }
+  },
+  "$defs": {
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_path",
+        "byte_size",
+        "raw_sha256"
+      ],
+      "properties": {
+        "repository_path": {
+          "$ref": "common.v1.schema.json#/$defs/repositoryRelativePath"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_path",
+        "byte_size",
+        "raw_sha256",
+        "role"
+      ],
+      "properties": {
+        "repository_path": {
+          "$ref": "common.v1.schema.json#/$defs/repositoryRelativePath"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "PACKAGE_BOUNDARY",
+            "CLI_ENTRYPOINT",
+            "CANONICALIZATION",
+            "CLI",
+            "CLOSURE_ORACLE",
+            "COMPARATOR",
+            "CARTESIAN_GENERATOR",
+            "CLOSURE_INPUT_MATERIALIZER",
+            "COVERAGE_ACCOUNTING",
+            "MANIFEST_READER",
+            "MATERIALIZATION_SUPPORT",
+            "OFFLINE_SCHEMA_VALIDATION",
+            "VERDICT_FACT_MATERIALIZER",
+            "VERDICT_INPUT_MATERIALIZER",
+            "VERDICT_ORACLE"
+          ]
+        }
+      }
+    },
+    "algorithmEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_id",
+        "entrypoints",
+        "direct_source_files",
+        "owned_source_files",
+        "dependency_policy",
+        "import_policy",
+        "separation_policy",
+        "entry_sha256"
+      ],
+      "properties": {
+        "entry_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "entrypoints": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 512,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+          }
+        },
+        "direct_source_files": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/repositoryRelativePath"
+          }
+        },
+        "owned_source_files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/fileBinding"
+          }
+        },
+        "dependency_policy": {
+          "$ref": "#/$defs/dependencyPolicy"
+        },
+        "import_policy": {
+          "$ref": "#/$defs/importPolicy"
+        },
+        "separation_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/materializerSeparationPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "entry_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "entry_id": {
+                "enum": [
+                  "MATERIALIZER-BLOCKER-CLOSURE-RUNNER-INPUT-V1",
+                  "MATERIALIZER-VERDICT-RUNNER-INPUT-V1"
+                ]
+              }
+            },
+            "required": [
+              "entry_id"
+            ]
+          },
+          "then": {
+            "properties": {
+              "separation_policy": {
+                "$ref": "#/$defs/materializerSeparationPolicy"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "separation_policy": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "dependencyPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "python_specifier",
+        "third_party_distributions",
+        "unlisted_third_party",
+        "network_access",
+        "shell_execution"
+      ],
+      "properties": {
+        "python_specifier": {
+          "const": ">=3.11,<3.14"
+        },
+        "third_party_distributions": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/distribution"
+          }
+        },
+        "unlisted_third_party": {
+          "const": "FORBIDDEN"
+        },
+        "network_access": {
+          "const": "DENIED"
+        },
+        "shell_execution": {
+          "const": "FORBIDDEN"
+        }
+      }
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "jsonschema",
+            "referencing",
+            "rfc8785"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "enum": [
+            "4.26.0",
+            "0.37.0",
+            "0.1.4"
+          ]
+        },
+        "extra": {
+          "const": "format-nongpl"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "jsonschema"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "version": {
+                "const": "4.26.0"
+              },
+              "extra": {
+                "const": "format-nongpl"
+              }
+            },
+            "required": [
+              "extra"
+            ]
+          },
+          "else": {
+            "if": {
+              "properties": {
+                "name": {
+                  "const": "referencing"
+                }
+              },
+              "required": [
+                "name"
+              ]
+            },
+            "then": {
+              "properties": {
+                "version": {
+                  "const": "0.37.0"
+                },
+                "extra": false
+              }
+            },
+            "else": {
+              "properties": {
+                "version": {
+                  "const": "0.1.4"
+                },
+                "extra": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "materializerSeparationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_schema",
+        "output_schema",
+        "oracle_imports",
+        "oracle_output_access",
+        "sut_output_access",
+        "expected_store_access"
+      ],
+      "properties": {
+        "input_schema": {
+          "const": "PropertyInstanceEnvelope.v1"
+        },
+        "output_schema": {
+          "const": "PropertyMaterializationBundle.v1"
+        },
+        "oracle_imports": {
+          "const": "FORBIDDEN"
+        },
+        "oracle_output_access": {
+          "const": "DENIED"
+        },
+        "sut_output_access": {
+          "const": "DENIED"
+        },
+        "expected_store_access": {
+          "const": "DENIED"
+        }
+      }
+    },
+    "runtimeBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "language",
+        "interpreter",
+        "platform_tag",
+        "working_directory",
+        "argv",
+        "stdin_framing",
+        "stdout_framing",
+        "pyproject",
+        "lock",
+        "schema_bundle",
+        "resolved_distributions"
+      ],
+      "properties": {
+        "language": {
+          "const": "Python"
+        },
+        "interpreter": {
+          "const": "CPython>=3.11,<3.14"
+        },
+        "platform_tag": {
+          "const": "win_amd64"
+        },
+        "working_directory": {
+          "const": "REPOSITORY_ROOT"
+        },
+        "argv": {
+          "const": [
+            "python",
+            "-B",
+            "-m",
+            "evaluation.aegis_v2.reference"
+          ]
+        },
+        "stdin_framing": {
+          "const": "UTF8_JCS_JSON_OR_JSONL"
+        },
+        "stdout_framing": {
+          "const": "UTF8_JCS_JSONL"
+        },
+        "pyproject": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/fileBinding"
+            },
+            {
+              "properties": {
+                "repository_path": {
+                  "const": "pyproject.toml"
+                }
+              }
+            }
+          ]
+        },
+        "lock": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repository_path",
+            "byte_size",
+            "raw_sha256",
+            "lock_format"
+          ],
+          "properties": {
+            "repository_path": {
+              "const": "pylock.windows-py313.toml"
+            },
+            "byte_size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "raw_sha256": {
+              "$ref": "common.v1.schema.json#/$defs/sha256"
+            },
+            "lock_format": {
+              "const": "PEP-751-pylock-1.0"
+            }
+          }
+        },
+        "schema_bundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repository_path",
+            "byte_size",
+            "raw_sha256",
+            "bundle_id",
+            "bundle_sha256"
+          ],
+          "properties": {
+            "repository_path": {
+              "const": "schemas/aegis/v2/schema_bundle.v1.json"
+            },
+            "byte_size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "raw_sha256": {
+              "$ref": "common.v1.schema.json#/$defs/sha256"
+            },
+            "bundle_id": {
+              "const": "AEGIS-V2-SCHEMA-BUNDLE-ROOT"
+            },
+            "bundle_sha256": {
+              "$ref": "common.v1.schema.json#/$defs/contentId"
+            }
+          }
+        },
+        "resolved_distributions": {
+          "type": "array",
+          "minItems": 20,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/runtimeDistribution"
+          }
+        }
+      }
+    },
+    "runtimeDistribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "relationship",
+        "via"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "arrow",
+            "attrs",
+            "fqdn",
+            "idna",
+            "isoduration",
+            "jsonpointer",
+            "jsonschema",
+            "jsonschema-specifications",
+            "lark",
+            "python-dateutil",
+            "referencing",
+            "rfc3339-validator",
+            "rfc3986-validator",
+            "rfc3987-syntax",
+            "rfc8785",
+            "rpds-py",
+            "six",
+            "tzdata",
+            "uri-template",
+            "webcolors"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "relationship": {
+          "enum": [
+            "DIRECT_IMPORT",
+            "TRANSITIVE_RUNTIME"
+          ]
+        },
+        "via": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "name": { "const": "arrow" },
+                "version": { "const": "1.4.0" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "attrs" },
+                "version": { "const": "26.1.0" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "fqdn" },
+                "version": { "const": "1.5.1" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "idna" },
+                "version": { "const": "3.18" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "isoduration" },
+                "version": { "const": "20.11.0" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "jsonpointer" },
+                "version": { "const": "3.1.1" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "jsonschema" },
+                "version": { "const": "4.26.0" },
+                "relationship": { "const": "DIRECT_IMPORT" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "jsonschema-specifications" },
+                "version": { "const": "2025.9.1" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "lark" },
+                "version": { "const": "1.3.1" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "python-dateutil" },
+                "version": { "const": "2.9.0.post0" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "referencing" },
+                "version": { "const": "0.37.0" },
+                "relationship": { "const": "DIRECT_IMPORT" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "rfc3339-validator" },
+                "version": { "const": "0.1.4" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "rfc3986-validator" },
+                "version": { "const": "0.1.1" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "rfc3987-syntax" },
+                "version": { "const": "1.1.0" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "rfc8785" },
+                "version": { "const": "0.1.4" },
+                "relationship": { "const": "DIRECT_IMPORT" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "rpds-py" },
+                "version": { "const": "2026.6.3" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "six" },
+                "version": { "const": "1.17.0" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "tzdata" },
+                "version": { "const": "2026.3" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "uri-template" },
+                "version": { "const": "1.3.0" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            },
+            {
+              "properties": {
+                "name": { "const": "webcolors" },
+                "version": { "const": "25.10.0" },
+                "relationship": { "const": "TRANSITIVE_RUNTIME" }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "importPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed_local_prefix",
+        "production_package_roots",
+        "production_imports",
+        "dynamic_sut_loading"
+      ],
+      "properties": {
+        "allowed_local_prefix": {
+          "const": "evaluation.aegis_v2.reference"
+        },
+        "production_package_roots": {
+          "const": [
+            "aegis"
+          ]
+        },
+        "production_imports": {
+          "const": "FORBIDDEN"
+        },
+        "dynamic_sut_loading": {
+          "const": "FORBIDDEN"
+        }
+      }
+    },
+    "comparatorSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "comparator_id",
+        "algorithm_entry_id",
+        "algorithm_entry_sha256",
+        "trace_algorithm_entry_id",
+        "trace_algorithm_entry_sha256",
+        "kind",
+        "exact_array_order",
+        "exact_reason_order",
+        "state_oracle",
+        "side_effect_oracle",
+        "event_oracle",
+        "trace_normalization",
+        "spec_sha256"
+      ],
+      "properties": {
+        "comparator_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "algorithm_entry_id": {
+          "const": "COMPARATOR-SUT-DECISION-EXACT-JCS-V1"
+        },
+        "algorithm_entry_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "trace_algorithm_entry_id": {
+          "anyOf": [
+            {
+              "const": "COMPARATOR-REFERENCE-TRACE-AUDITABLE-V1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trace_algorithm_entry_sha256": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "const": "SUT_DECISION_SHA256_EXACT"
+        },
+        "exact_array_order": {
+          "const": true
+        },
+        "exact_reason_order": {
+          "const": true
+        },
+        "state_oracle": {
+          "type": "string",
+          "enum": [
+            "EXACT_STATE_HASH",
+            "REFERENCE_TRACE_STATE_HASH"
+          ]
+        },
+        "side_effect_oracle": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "EXACT_EFFECT_TRACE",
+            "AT_MOST_ONCE_EFFECT_TRACE"
+          ]
+        },
+        "event_oracle": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "REFERENCE_TRACE_EQUIVALENCE"
+          ]
+        },
+        "trace_normalization": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "DROP_OBSERVATION_TIME_ONLY_KEEP_ORDER_AND_IDENTITIES"
+          ]
+        },
+        "spec_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "trace_algorithm_entry_id": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "trace_algorithm_entry_id"
+            ]
+          },
+          "then": {
+            "properties": {
+              "trace_algorithm_entry_sha256": {
+                "type": "null"
+              },
+              "state_oracle": {
+                "const": "EXACT_STATE_HASH"
+              },
+              "side_effect_oracle": {
+                "const": "NONE"
+              },
+              "event_oracle": {
+                "const": "NONE"
+              },
+              "trace_normalization": {
+                "const": "NONE"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "trace_algorithm_entry_sha256": {
+                "$ref": "common.v1.schema.json#/$defs/sha256"
+              },
+              "state_oracle": {
+                "const": "REFERENCE_TRACE_STATE_HASH"
+              },
+              "side_effect_oracle": {
+                "enum": [
+                  "EXACT_EFFECT_TRACE",
+                  "AT_MOST_ONCE_EFFECT_TRACE"
+                ]
+              },
+              "event_oracle": {
+                "const": "REFERENCE_TRACE_EQUIVALENCE"
+              },
+              "trace_normalization": {
+                "const": "DROP_OBSERVATION_TIME_ONLY_KEEP_ORDER_AND_IDENTITIES"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

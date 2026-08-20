@@ -1,0 +1,132 @@
+{
+  "schema_version": "EvaluationRiskRegister.v1",
+  "register_kind": "EXTREME_SCENARIO_EXCLUSION_REGISTER",
+  "register_id": "AEGIS-V2-EVALUATION-RISK-REGISTER-V1",
+  "canonicalization": "JCS-RFC8785",
+  "created_at_utc": "2026-07-27T10:00:00Z",
+  "hash_contract": "Each risk_sha256 is sha256:JCS(entry omitting risk_sha256); register_sha256 is sha256:JCS(root omitting register_sha256)",
+  "entries": [
+    {
+      "risk_id": "RISK-EXCLUDED-COSMIC-RAY-BIT-FLIP",
+      "title": "Undetected cosmic-ray bit flip across every retained copy",
+      "disposition": "EXCLUDED",
+      "trigger": "A correlated physical fault changes all copies and all compared digests into mutually consistent values.",
+      "runtime_boundary": "Single-machine evaluation and local evidence retention without a separately attested fault-tolerant store.",
+      "probability_or_exposure": {
+        "basis_kind": "NO_DEMONSTRABLE_TRIGGER",
+        "statement": "No declared runtime mechanism or exposure evidence demonstrates the correlated all-copy transformation.",
+        "evidence_refs": []
+      },
+      "impact": {
+        "domains": [
+          "INTEGRITY",
+          "AUDITABILITY"
+        ],
+        "consequence": "Evidence corruption could evade ordinary digest checks."
+      },
+      "rationale": "Excluded because no demonstrable trigger exists in the declared boundary; ordinary byte mutation remains included.",
+      "linked_case_ids": [],
+      "review_state": "PENDING_INDEPENDENT_REVIEW",
+      "risk_sha256": "sha256:50068b3a1909fe1d7a11c50990f3fe43b1bf425a0ebc37d1d36c4c1caef59464"
+    },
+    {
+      "risk_id": "RISK-EXCLUDED-CRYPTOGRAPHIC-SIGNATURE-CLAIM",
+      "title": "Cryptographic signature against a same-user attacker",
+      "disposition": "EXCLUDED",
+      "trigger": "A same-user process reads or rewrites any key stored in the current local runtime.",
+      "runtime_boundary": "Current v2 uses hashes, nonces, append-only records, and authoritative event binding without a protected signing service.",
+      "probability_or_exposure": {
+        "basis_kind": "DIRECT_CONTRACT_PATH",
+        "statement": "The protocol explicitly forbids a signature claim before a separately protected key service exists.",
+        "evidence_refs": [
+          "CONTRACT-SECTION-7"
+        ]
+      },
+      "impact": {
+        "domains": [
+          "AUTHORITY"
+        ],
+        "consequence": "A false signature claim would overstate the provenance boundary."
+      },
+      "rationale": "Excluded as a claimed guarantee; protocol mutation cases still verify the actual hash/nonce/event controls.",
+      "linked_case_ids": [],
+      "review_state": "PENDING_INDEPENDENT_REVIEW",
+      "risk_sha256": "sha256:09f0f42fab7ba651a35021a327c2867479cfbd94b0256e8b2fe2beb569cd851c"
+    },
+    {
+      "risk_id": "RISK-EXCLUDED-LIVE-PHASE0B-CAPABILITY",
+      "title": "Synthetic fixture treated as live Phase 0B capability proof",
+      "disposition": "EXCLUDED",
+      "trigger": "A release gate attempts to promote an offline fixture result into a live Codex capability status.",
+      "runtime_boundary": "Phase 0A offline evaluation; the user has not authorized live Phase 0B children, restart, retention, or fault injection.",
+      "probability_or_exposure": {
+        "basis_kind": "DIRECT_CONTRACT_PATH",
+        "statement": "The current authorization permits frozen synthetic cases only and retains every live capability as UNVERIFIED.",
+        "evidence_refs": [
+          "REQUIREMENT-R-014",
+          "CONTRACT-SECTION-15"
+        ]
+      },
+      "impact": {
+        "domains": [
+          "AUTHORITY",
+          "RELEASE_DECISION"
+        ],
+        "consequence": "Phase 1-5 could start on capabilities that were never observed."
+      },
+      "rationale": "Excluded from all positive capability effects; manifest-level policy makes the exclusion machine visible.",
+      "linked_case_ids": [],
+      "review_state": "PENDING_INDEPENDENT_REVIEW",
+      "risk_sha256": "sha256:bb13cf498afdf12d8691f86b8b6697b7945a88d67dd17f5117a867736f7fd700"
+    },
+    {
+      "risk_id": "RISK-EXCLUDED-QUANTUM-SHA256-PREIMAGE",
+      "title": "Practical SHA-256 preimage construction",
+      "disposition": "EXCLUDED",
+      "trigger": "An actor constructs chosen bytes with the exact SHA-256 digest of a frozen artifact during the release evaluation.",
+      "runtime_boundary": "Current offline contract review and release-gate time horizon.",
+      "probability_or_exposure": {
+        "basis_kind": "NO_DEMONSTRABLE_TRIGGER",
+        "statement": "No current capability or exposure evidence shows a practical SHA-256 preimage path in this time horizon.",
+        "evidence_refs": []
+      },
+      "impact": {
+        "domains": [
+          "INTEGRITY",
+          "AUTHORITY"
+        ],
+        "consequence": "Content-addressed bindings could be forged."
+      },
+      "rationale": "Excluded until a demonstrable trigger changes the cryptographic assumption; raw/JCS domain confusion remains included.",
+      "linked_case_ids": [],
+      "review_state": "PENDING_INDEPENDENT_REVIEW",
+      "risk_sha256": "sha256:4b0dbdfaeae56f601223fcb2f117c89091840b94201d0fccc695d63d4ca0f8e6"
+    },
+    {
+      "risk_id": "RISK-EXCLUDED-SAME-OS-ADMIN-TAMPERING",
+      "title": "Same-OS-administrator arbitrary tampering",
+      "disposition": "EXCLUDED",
+      "trigger": "An administrator or arbitrary process under a privileged OS identity rewrites kernel state, evidence, or local keys.",
+      "runtime_boundary": "Outside the first-version threat boundary, which does not claim protection from OS administrators or arbitrary same-user processes.",
+      "probability_or_exposure": {
+        "basis_kind": "EXPLICIT_ASSUMPTION",
+        "statement": "The deployment supplies no independent OS identity or protected key service; accepting this scenario would create an unfalsifiable security claim.",
+        "evidence_refs": [
+          "CONTRACT-SECTION-2"
+        ]
+      },
+      "impact": {
+        "domains": [
+          "AUTHORITY",
+          "INTEGRITY"
+        ],
+        "consequence": "Complete provenance and state compromise if the excluded principal is malicious."
+      },
+      "rationale": "Excluded until an independently protected execution and key boundary exists; no current case may claim resistance.",
+      "linked_case_ids": [],
+      "review_state": "PENDING_INDEPENDENT_REVIEW",
+      "risk_sha256": "sha256:14fe3078eb27570a26eec9f4df69abb0fc058aea21a013072fbc3de1d06f1bda"
+    }
+  ],
+  "register_sha256": "sha256:a516b6990c43be69146f7b6f9769cb7501fd7ff8bec97b33b0e0e8f1a1d1c921"
+}

@@ -1,0 +1,326 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/blocker_record.v1.schema.json",
+  "title": "BlockerRecord.v1",
+  "description": "Append-only PROCESS_BLOCKER contract. PRODUCT_FINDING, ENVIRONMENT_GAP, and UPSTREAM_DEFECT use separate schemas.",
+  "$comment": "Only an independent reviewer plus the kernel closure gate may close a process blocker. The gate must verify that the reviewer is not the origin or owner, all identities and baseline layers match, evidence hashes are valid, required closure evidence is satisfied, severity was not downgraded, dependency propagation was applied, and the original record was not overwritten.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "blocker_id",
+    "fact_type",
+    "blocker_kind",
+    "origin_role",
+    "owner_role",
+    "severity",
+    "claim",
+    "violated_requirement",
+    "evidence_refs",
+    "required_closure_evidence",
+    "prohibited_substitutes",
+    "affected_artifacts",
+    "affected_case_ids",
+    "source_baseline_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "opened_attempt_id",
+    "opened_event_id",
+    "stage_rank",
+    "gate_effect",
+    "status",
+    "source_report_defect",
+    "closure_events"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "BlockerRecord.v1"
+    },
+    "blocker_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "fact_type": {
+      "const": "PROCESS_BLOCKER"
+    },
+    "blocker_kind": {
+      "type": "string",
+      "enum": [
+        "PLAN_PROCESS",
+        "CASE_PROCESS",
+        "EVIDENCE_PROCESS",
+        "REPORT_PROCESS",
+        "WORKFLOW_PROCESS"
+      ]
+    },
+    "origin_role": {
+      "type": "string",
+      "enum": [
+        "B",
+        "D",
+        "F"
+      ]
+    },
+    "owner_role": {
+      "$ref": "common.v1.schema.json#/$defs/roleSlotId"
+    },
+    "severity": {
+      "$ref": "common.v1.schema.json#/$defs/severity"
+    },
+    "claim": {
+      "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+    },
+    "violated_requirement": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/evidenceId"
+      }
+    },
+    "required_closure_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+      }
+    },
+    "prohibited_substitutes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+      }
+    },
+    "affected_artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/artifactReference"
+      }
+    },
+    "affected_case_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/caseId"
+      }
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_contract_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "opened_attempt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "opened_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "stage_rank": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 6
+    },
+    "gate_effect": {
+      "type": "string",
+      "enum": [
+        "BLOCKING",
+        "DIAGNOSTIC"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "OPEN",
+        "CLOSED"
+      ]
+    },
+    "source_report_defect": {
+      "anyOf": [
+        {
+          "$ref": "report_defect.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "closure_events": {
+      "type": "array",
+      "items": {
+        "$ref": "blocker_closure_event.v1.schema.json"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "owner_role": {
+              "const": "A"
+            },
+            "stage_rank": {
+              "const": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "owner_role": {
+              "const": "B"
+            },
+            "stage_rank": {
+              "const": 2
+            }
+          }
+        },
+        {
+          "properties": {
+            "owner_role": {
+              "const": "C"
+            },
+            "stage_rank": {
+              "const": 3
+            }
+          }
+        },
+        {
+          "properties": {
+            "owner_role": {
+              "const": "D"
+            },
+            "stage_rank": {
+              "const": 4
+            }
+          }
+        },
+        {
+          "properties": {
+            "owner_role": {
+              "const": "E"
+            },
+            "stage_rank": {
+              "const": 5
+            }
+          }
+        },
+        {
+          "properties": {
+            "owner_role": {
+              "const": "F"
+            },
+            "stage_rank": {
+              "const": 6
+            }
+          }
+        }
+      ]
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "CLOSED"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "closure_events": {
+            "type": "array",
+            "minItems": 1,
+            "contains": {
+              "type": "object",
+              "properties": {
+                "closure_result": {
+                  "const": "CLOSED"
+                }
+              },
+              "required": [
+                "closure_result"
+              ]
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "closure_events": {
+            "not": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "closure_result": {
+                    "const": "CLOSED"
+                  }
+                },
+                "required": [
+                  "closure_result"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "blocker_kind": {
+            "const": "REPORT_PROCESS"
+          }
+        },
+        "required": [
+          "blocker_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "source_report_defect": {
+            "$ref": "report_defect.v1.schema.json"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "source_report_defect": {
+            "type": "null"
+          }
+        }
+      },
+      "$comment": "The program gate requires the nested report defect to be OPEN while this blocker is OPEN and requires exact baseline, evidence, report candidate, owner E, and origin F bindings."
+    },
+    {
+      "$comment": "stage_rank is frozen as A=1, B=2, C=3, D=4, E=5, F=6. The kernel computes gate_effect from blocker_kind plus affected required/optional cases. It must reject missing, extra, misclassified, ownerless, or self-closed records; JSON Schema cannot compare these arrays or identities."
+    }
+  ],
+  "$defs": {}
+}

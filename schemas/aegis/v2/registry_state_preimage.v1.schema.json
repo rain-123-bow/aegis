@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/registry_state_preimage.v1.schema.json",
+  "title": "RegistryStatePreimage.v1",
+  "description": "Content-addressed normalized database snapshot used to derive one active registry state hash.",
+  "$comment": "registry_state_sha256 is SHA-256 over UTF-8 JCS RFC8785 bytes of this object with registry_state_preimage_id and registry_state_sha256 omitted; registry_state_preimage_id must equal 'sha256:' plus that digest. The gate opens the declared database snapshot under its isolation contract, derives this object from the exact frozen table set, and requires every row/pointer/identity/capacity/event value to match. It rejects a caller-supplied hash without this preimage. Arrays are unique and sorted by stable identity.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "registry_state_preimage_id",
+    "registry_state_sha256",
+    "canonicalization",
+    "registry_id",
+    "registry_revision",
+    "previous_registry_state_preimage_id",
+    "parent_task_id",
+    "source_baseline_id",
+    "source_generation_id",
+    "capacity_contract",
+    "active_role_pointers",
+    "identities",
+    "provision_batch_ids",
+    "replacement_batch_ids",
+    "platform_close_receipt_ids",
+    "last_event_id",
+    "database_snapshot",
+    "captured_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "RegistryStatePreimage.v1"
+    },
+    "registry_state_preimage_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "registry_state_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "registry_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "registry_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "previous_registry_state_preimage_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "parent_task_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "source_baseline_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source_generation_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "capacity_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_retained_source_generations",
+        "replacement_reserve",
+        "physical_instance_budget",
+        "capacity_certification_id"
+      ],
+      "properties": {
+        "max_retained_source_generations": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "replacement_reserve": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "physical_instance_budget": {
+          "type": "integer",
+          "minimum": 6
+        },
+        "capacity_certification_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      },
+      "$comment": "The gate enforces physical_instance_budget >= 6 * max_retained_source_generations + replacement_reserve and exact equality with the loaded certification."
+    },
+    "active_role_pointers": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+      }
+    },
+    "identities": {
+      "type": "array",
+      "items": {
+        "$ref": "agent_identity.v1.schema.json"
+      }
+    },
+    "provision_batch_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "replacement_batch_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "platform_close_receipt_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "last_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "database_snapshot": {
+      "$ref": "#/$defs/databaseSnapshot"
+    },
+    "captured_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "registry_revision": {
+            "const": 0
+          }
+        },
+        "required": [
+          "registry_revision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "previous_registry_state_preimage_id": {
+            "type": "null"
+          },
+          "source_baseline_id": {
+            "type": "null"
+          },
+          "source_generation_id": {
+            "type": "null"
+          },
+          "active_role_pointers": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "previous_registry_state_preimage_id": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          },
+          "source_baseline_id": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          },
+          "source_generation_id": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          },
+          "active_role_pointers": {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6
+          },
+          "identities": {
+            "type": "array",
+            "minItems": 6
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "databaseSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backend",
+        "database_instance_id",
+        "isolation_contract",
+        "snapshot_token",
+        "frozen_table_names",
+        "snapshot_started_at_utc",
+        "snapshot_completed_at_utc",
+        "snapshot_event_id"
+      ],
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "SQLITE",
+            "POSTGRESQL"
+          ]
+        },
+        "database_instance_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "isolation_contract": {
+          "type": "string",
+          "enum": [
+            "SQLITE_READ_TRANSACTION",
+            "POSTGRESQL_REPEATABLE_READ_EXPORTED_SNAPSHOT"
+          ]
+        },
+        "snapshot_token": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "frozen_table_names": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,127}$"
+          }
+        },
+        "snapshot_started_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "snapshot_completed_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "snapshot_event_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "backend": {
+                "const": "SQLITE"
+              }
+            },
+            "required": [
+              "backend"
+            ]
+          },
+          "then": {
+            "properties": {
+              "isolation_contract": {
+                "const": "SQLITE_READ_TRANSACTION"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "isolation_contract": {
+                "const": "POSTGRESQL_REPEATABLE_READ_EXPORTED_SNAPSHOT"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "The program gate requires the snapshot token to originate from this database instance, all reads to occur inside the same immutable snapshot, exact table-set equality with the versioned registry persistence contract, and completion time not before start time."
+    }
+  }
+}

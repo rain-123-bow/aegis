@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/execution_contract_manifest.v1.schema.json",
+  "title": "ExecutionContractManifest.v1",
+  "description": "Non-self-referential execution-segment contract preimage whose identity survives an agent replacement.",
+  "$comment": "This exact object is the unambiguous execution_contract_id preimage. The gate computes execution_contract_id as sha256:<SHA-256(UTF-8 JCS RFC8785 bytes of this complete object)>. Registry state is deliberately excluded: each action, receipt, evidence record, and D acceptance keeps its own registry_snapshot_id plus physical producer revision. A replacement therefore invalidates only actions and incomplete attempts bound to the superseded pointer; evidence already accepted by D remains verifiable against its historical snapshot and producer. None of the referenced manifests may contain execution_contract_id, directly or transitively.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_kind",
+    "canonicalization",
+    "source_baseline_id",
+    "test_plan_revision_id",
+    "execution_environment_snapshot_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ExecutionContractManifest.v1"
+    },
+    "manifest_kind": {
+      "const": "EXECUTION_CONTRACT"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "execution_environment_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    }
+  }
+}

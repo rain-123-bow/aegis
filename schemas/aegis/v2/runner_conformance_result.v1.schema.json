@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/runner_conformance_result.v1.schema.json",
+  "title": "RunnerConformanceResult.v1",
+  "description": "Auditable outer-runner result for one RunnerConformanceInvocation.v1.",
+  "$comment": "This result is disjoint from EvaluationRunnerOutput.v1. It binds invocation_jcs_sha256, records the fail-closed outer-runner state, and cannot contain a SutDecision or process execution record. result_sha256 is SHA-256 over the UTF-8 RFC 8785 JCS bytes of this object with result_sha256 omitted. Current release conformance states all block before spawn, so output_artifact_raw_sha256 is null.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "conformance_execution_id",
+    "case_id",
+    "runner_contract_id",
+    "input_binding_id",
+    "invocation_jcs_sha256",
+    "runner_state",
+    "spawn_attempted",
+    "comparison_performed",
+    "pass_eligible",
+    "output_artifact_raw_sha256",
+    "reason_ids",
+    "evidence_ids",
+    "structural_assertion_results",
+    "observed_at_utc",
+    "result_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "RunnerConformanceResult.v1"
+    },
+    "conformance_execution_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "case_id": {
+      "$ref": "common.v1.schema.json#/$defs/caseId"
+    },
+    "runner_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "input_binding_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "invocation_jcs_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "runner_state": {
+      "type": "string",
+      "enum": [
+        "BLOCKED_INVALID_RUNNER_INPUT",
+        "BLOCKED_INVALID_RUNNER_CONTRACT",
+        "BLOCKED_UNSUPPORTED_PLATFORM",
+        "BLOCKED_INVALID_PYTHON_BINDING",
+        "BLOCKED_FIXTURE_PREPARATION",
+        "BLOCKED_UNVERIFIED_ISOLATION"
+      ]
+    },
+    "spawn_attempted": {
+      "const": false
+    },
+    "comparison_performed": {
+      "const": false
+    },
+    "pass_eligible": {
+      "const": false
+    },
+    "output_artifact_raw_sha256": {
+      "type": "null"
+    },
+    "reason_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/stableId"
+      }
+    },
+    "evidence_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/contentId"
+      }
+    },
+    "isolation_binding": {
+      "$ref": "evaluation_isolation_binding.v1.schema.json"
+    },
+    "structural_assertion_results": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/assertionResult"
+      }
+    },
+    "observed_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "result_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "const": "BLOCKED_UNVERIFIED_ISOLATION"
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "isolation_binding"
+        ],
+        "properties": {
+          "isolation_binding": {
+            "type": "object",
+            "required": [
+              "state",
+              "execution_authorized"
+            ],
+            "properties": {
+              "state": {
+                "const": "UNVERIFIED_ISOLATION"
+              },
+              "execution_authorized": {
+                "const": false
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "isolation_binding": false
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "assertionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assertion_id",
+        "outcome",
+        "evidence_ids"
+      ],
+      "properties": {
+        "assertion_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "SATISFIED",
+            "VIOLATED"
+          ]
+        },
+        "evidence_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          }
+        }
+      }
+    }
+  }
+}

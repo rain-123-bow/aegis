@@ -1,0 +1,902 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/evidence_record.v1.schema.json",
+  "title": "EvidenceRecord.v1",
+  "description": "Immutable index record for local, remote, command, tool, or authoritative-event evidence.",
+  "$comment": "evidence_record_content_id, when referenced by DReviewSnapshot, is sha256:<SHA-256(UTF-8 JCS RFC8785 bytes of this complete schema-valid EvidenceRecord object)>; no field is omitted because the derived content ID is not stored inside this object. The evidence gate must read referenced bytes, recompute hashes, validate the producer against this record's registry snapshot and physical instance revision, validate the environment and replacement-stable execution contract, enforce runtime-root containment, and prove authoritative event origin. It must not require the producer to remain the current registry pointer after D acceptance: a DReviewSnapshot may retain an already accepted record only when the historical registry preimage, action, receipts, authority events, and producer identity all remain loadable and exact. Replacement invalidates affected incomplete attempts, never the provenance of a previously accepted immutable record. A path, return-code claim, or agent statement alone is never evidence. Writes must use a temporary file plus atomic rename before this record is committed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_id",
+    "record_revision",
+    "supersedes_record_id",
+    "evidence_id",
+    "evidence_kind",
+    "campaign_id",
+    "run_id",
+    "case_ids",
+    "source_baseline_id",
+    "registry_snapshot_id",
+    "test_plan_revision_id",
+    "execution_environment_snapshot_id",
+    "execution_contract_id",
+    "attempt_id",
+    "origin",
+    "producer_identity",
+    "collector_identity",
+    "acquisition",
+    "locator",
+    "content",
+    "retention",
+    "validity",
+    "created_event_id",
+    "created_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "EvidenceRecord.v1"
+    },
+    "record_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "record_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "supersedes_record_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_id": {
+      "$ref": "common.v1.schema.json#/$defs/evidenceId"
+    },
+    "evidence_kind": {
+      "type": "string",
+      "enum": [
+        "LOCAL_FILE",
+        "REMOTE_FILE",
+        "REMOTE_OBJECT",
+        "COMMAND_RESULT",
+        "TOOL_RESULT",
+        "AUTHORITATIVE_EVENT"
+      ]
+    },
+    "campaign_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "case_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/caseId"
+      }
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "registry_snapshot_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "$comment": "ACTION_RESULT evidence requires the exact snapshot used by its action and receipts. Pre-test platform and environment capture evidence may be null only when no registry existed."
+    },
+    "test_plan_revision_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_environment_snapshot_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_contract_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "attempt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "origin": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/actionResultOrigin"
+        },
+        {
+          "$ref": "#/$defs/pretestPlatformOrigin"
+        },
+        {
+          "$ref": "#/$defs/environmentCaptureOrigin"
+        }
+      ]
+    },
+    "producer_identity": {
+      "$ref": "#/$defs/principal"
+    },
+    "collector_identity": {
+      "$ref": "#/$defs/principal"
+    },
+    "acquisition": {
+      "$ref": "#/$defs/acquisition"
+    },
+    "locator": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/localLocator"
+        },
+        {
+          "$ref": "#/$defs/remoteLocator"
+        },
+        {
+          "$ref": "#/$defs/eventLocator"
+        }
+      ]
+    },
+    "content": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/hashedContent"
+        },
+        {
+          "$ref": "#/$defs/verifiableSummary"
+        }
+      ]
+    },
+    "retention": {
+      "$ref": "#/$defs/retention"
+    },
+    "validity": {
+      "$ref": "#/$defs/validity"
+    },
+    "created_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "created_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "record_revision": {
+            "const": 1
+          }
+        },
+        "required": [
+          "record_revision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "supersedes_record_id": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "supersedes_record_id": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evidence_kind": {
+            "const": "AUTHORITATIVE_EVENT"
+          }
+        },
+        "required": [
+          "evidence_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "locator": {
+            "$ref": "#/$defs/eventLocator"
+          },
+          "content": {
+            "$ref": "#/$defs/hashedContent"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "origin": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "ACTION_RESULT"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "then": {
+        "properties": {
+          "registry_snapshot_id": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          },
+          "producer_identity": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "AGENT"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "$comment": "evidence_kind must agree with locator.kind; schema cannot compare sibling values. For ACTION_RESULT, top-level registry_snapshot_id must equal origin.registry_snapshot_id and the embedded DispatchAction/COMPLETE/INGEST receipts; producer_identity.identity must equal the action target thread/session/generation/revision. COMPLETE accepted required-case evidence must use hashed bytes unless the approved test contract explicitly defines a sufficient verifiable-summary algorithm. Records are immutable append-only revisions: invalidation writes a new record_id with the same evidence_id, record_revision + 1, and supersedes_record_id pointing to the prior record. The gate verifies that chain."
+    }
+  ],
+  "$defs": {
+    "actionResultOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "registry_snapshot_id",
+        "action_id",
+        "completion_receipt_id",
+        "ingest_receipt_id",
+        "authority_event_ids"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ACTION_RESULT"
+        },
+        "registry_snapshot_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "action_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "completion_receipt_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "ingest_receipt_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "authority_event_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        }
+      },
+      "$comment": "The gate requires COMPLETE and INGEST receipts to reference the same action, registry snapshot, result bytes, producer identity, and child-result authority chain."
+    },
+    "pretestPlatformOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "registry_snapshot_id",
+        "action_id",
+        "completion_receipt_id",
+        "ingest_receipt_id",
+        "authority_event_ids",
+        "capability_receipt_ids"
+      ],
+      "properties": {
+        "kind": {
+          "const": "PRETEST_PLATFORM"
+        },
+        "registry_snapshot_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/contentId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "action_id": {
+          "type": "null"
+        },
+        "completion_receipt_id": {
+          "type": "null"
+        },
+        "ingest_receipt_id": {
+          "type": "null"
+        },
+        "authority_event_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        },
+        "capability_receipt_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        }
+      }
+    },
+    "environmentCaptureOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "registry_snapshot_id",
+        "action_id",
+        "completion_receipt_id",
+        "ingest_receipt_id",
+        "authority_event_ids",
+        "capture_authorization_event_id"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ENVIRONMENT_CAPTURE"
+        },
+        "registry_snapshot_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/contentId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "action_id": {
+          "type": "null"
+        },
+        "completion_receipt_id": {
+          "type": "null"
+        },
+        "ingest_receipt_id": {
+          "type": "null"
+        },
+        "authority_event_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        },
+        "capture_authorization_event_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        }
+      }
+    },
+    "acquisition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "complete_invocation",
+        "return_code",
+        "started_at_utc",
+        "ended_at_utc",
+        "environment_fingerprint"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "COMMAND",
+            "TOOL_CALL",
+            "FILE_SNAPSHOT",
+            "EVENT_READ"
+          ]
+        },
+        "complete_invocation": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "return_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "started_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "ended_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        },
+        "environment_fingerprint": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "COMMAND"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "return_code": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "The program gate must prove ended_at_utc >= started_at_utc and preserve raw stdout/stderr or tool/event bytes. Text resembling success cannot override a nonzero return code."
+    },
+    "principal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "identity"
+          ],
+          "properties": {
+            "kind": {
+              "const": "AGENT"
+            },
+            "identity": {
+              "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "task_id",
+            "thread_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "MASTER"
+            },
+            "task_id": {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            "thread_id": {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "kernel_instance_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "KERNEL"
+            },
+            "kernel_instance_id": {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "authority",
+            "authority_event_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "PLATFORM"
+            },
+            "authority": {
+              "const": "CODEX_APP_SERVER"
+            },
+            "authority_event_id": {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            }
+          }
+        }
+      ]
+    },
+    "localLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "absolute_path",
+        "run_relative_path",
+        "canonical_casefold_key"
+      ],
+      "properties": {
+        "kind": {
+          "const": "LOCAL"
+        },
+        "absolute_path": {
+          "$ref": "common.v1.schema.json#/$defs/runtimeAbsolutePath"
+        },
+        "run_relative_path": {
+          "$ref": "common.v1.schema.json#/$defs/runRelativePath"
+        },
+        "canonical_casefold_key": {
+          "$ref": "common.v1.schema.json#/$defs/runtimeCanonicalPathKey"
+        }
+      },
+      "$comment": "The absolute and relative locators must resolve to the same file under this run root without symlink, junction, case-fold, or TOCTOU escape."
+    },
+    "remoteLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "host_identity",
+        "absolute_path",
+        "object_id",
+        "access_method"
+      ],
+      "properties": {
+        "kind": {
+          "const": "REMOTE"
+        },
+        "host_identity": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "absolute_path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "object_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "access_method": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "absolute_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "object_id": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "absolute_path": {
+              "type": "null"
+            },
+            "object_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ],
+      "$comment": "host_identity must be a captured stable machine fingerprint, not a mutable alias. The gate must re-read or preserve sufficient local raw material before accepting reproducibility."
+    },
+    "eventLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "authority",
+        "authority_event_id",
+        "raw_record_kind",
+        "raw_record_sha256",
+        "thread_id",
+        "turn_id",
+        "tool_call_id"
+      ],
+      "properties": {
+        "kind": {
+          "const": "AUTHORITATIVE_EVENT"
+        },
+        "authority": {
+          "const": "CODEX_APP_SERVER"
+        },
+        "authority_event_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "raw_record_kind": {
+          "type": "string",
+          "enum": [
+            "REQUEST_RESPONSE",
+            "ITEM_STARTED",
+            "ITEM_COMPLETED",
+            "TURN_COMPLETED"
+          ]
+        },
+        "raw_record_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "thread_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "$comment": "For AUTHORITATIVE_EVENT evidence the gate requires content.sha256 == raw_record_sha256 and an exact matching raw_records entry in the referenced CodexAuthorityEvent."
+    },
+    "hashedContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "byte_size",
+        "sha256"
+      ],
+      "properties": {
+        "mode": {
+          "const": "SHA256"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      }
+    },
+    "verifiableSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "algorithm",
+        "algorithm_version",
+        "summary"
+      ],
+      "properties": {
+        "mode": {
+          "const": "VERIFIABLE_SUMMARY"
+        },
+        "algorithm": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "algorithm_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "summary": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "retention_class",
+        "expires_at_utc",
+        "access_method",
+        "responsible_party"
+      ],
+      "properties": {
+        "retention_class": {
+          "type": "string",
+          "enum": [
+            "RUN_LIFETIME",
+            "CAMPAIGN_LIFETIME",
+            "FIXED_UNTIL"
+          ]
+        },
+        "expires_at_utc": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "access_method": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "responsible_party": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "retention_class": {
+                "const": "FIXED_UNTIL"
+              }
+            },
+            "required": [
+              "retention_class"
+            ]
+          },
+          "then": {
+            "properties": {
+              "expires_at_utc": {
+                "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "expires_at_utc": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "validity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "invalidated_event_id",
+        "reason"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "ACTIVE",
+            "STALE",
+            "INVALID",
+            "UNAVAILABLE"
+          ]
+        },
+        "invalidated_event_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/uuidV7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 32768
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "ACTIVE"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "invalidated_event_id": {
+                "type": "null"
+              },
+              "reason": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "invalidated_event_id": {
+                "$ref": "common.v1.schema.json#/$defs/uuidV7"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

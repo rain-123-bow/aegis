@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/property_materialization_bundle.v1.schema.json",
+  "title": "PropertyMaterializationBundle.v1",
+  "description": "Evaluator-only materialization of one property envelope into a complete runner input and exact SUT-visible fixture bytes.",
+  "$comment": "This bundle is produced solely from PropertyInstanceEnvelope.v1 by the source-bound materializer. It cannot contain expected or oracle data. The outer evaluator validates runner_input, its bound production subject, every decoded fixture, the exact fixture-ref set, sut_materialized_fixtures_jcs_sha256, and bundle_sha256 before creating the isolation mount. Only sut_materialized_fixtures are mounted; this bundle, the source envelope, the evaluation corpus, and the expected store remain inaccessible to the SUT.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "ordinal",
+    "instance_id",
+    "case_id",
+    "envelope_sha256",
+    "runner_input",
+    "sut_materialized_fixtures",
+    "sut_materialized_fixtures_jcs_sha256",
+    "bundle_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "PropertyMaterializationBundle.v1"
+    },
+    "suite_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "ordinal": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "instance_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "case_id": {
+      "$ref": "common.v1.schema.json#/$defs/caseId"
+    },
+    "envelope_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "runner_input": {
+      "$ref": "evaluation_runner_input.v1.schema.json"
+    },
+    "sut_materialized_fixtures": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/materializedFixture"
+      }
+    },
+    "sut_materialized_fixtures_jcs_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "bundle_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    }
+  },
+  "$defs": {
+    "materializedFixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixture_id",
+        "logical_runtime_path",
+        "media_type",
+        "encoding",
+        "byte_domain",
+        "raw_base64",
+        "byte_size",
+        "raw_sha256",
+        "jcs_sha256",
+        "content_id",
+        "access_mode"
+      ],
+      "properties": {
+        "fixture_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "logical_runtime_path": {
+          "$ref": "common.v1.schema.json#/$defs/runtimeAbsolutePath"
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "encoding": {
+          "type": "string",
+          "enum": [
+            "UTF-8",
+            "BINARY"
+          ]
+        },
+        "byte_domain": {
+          "const": "INLINE_BASE64_DECODED_EXACT_BYTES"
+        },
+        "raw_base64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "jcs_sha256": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "access_mode": {
+          "const": "READ_ONLY"
+        }
+      },
+      "$comment": "content_id must equal sha256:raw_sha256. For JSON, jcs_sha256 is mandatory and is recomputed after strict UTF-8 parsing with duplicate-member rejection; for non-JSON bytes it is null."
+    }
+  }
+}

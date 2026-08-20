@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/graph_decision.v1.schema.json",
+  "title": "GraphDecision.v1",
+  "description": "Closed output union of the deterministic VerdictInput.v1 decision function.",
+  "$comment": "The program gate must derive this object solely from the exact canonical VerdictInput.v1 bytes using the reviewed priority table. A REQUESTED or QUIESCING cancellation first suspends every ordinary verdict route and yields KERNEL_CANCEL_COORDINATOR even when integrity, upstream, side-effect, blocker, or phase facts also exist; those facts remain recorded for convergence/reporting. After convergence only QUIESCENT or TERMINATED_WITH_ACTIVE_WORK may yield a cancellation terminal. Exact ROUTE reasons are: cancellation [RULE:CANCEL_REQUESTED] or [RULE:CANCEL_QUIESCING]; ordinary phase [the one matching RULE:PHASE_*]; blocking process [RULE:BLOCKING_PROCESS_BLOCKER, FACT:BLOCKER:<winning blocker_id>]. The winning blocker is the least (stage_rank, opened_event_id, blocker_id). No extra reason is allowed. reason_ids must resolve to facts in that same input; JSON Schema cannot compare two documents or establish derivation, priority, and determinism.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "target_node",
+        "reason_ids"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ROUTE"
+        },
+        "target_node": {
+          "$ref": "common.v1.schema.json#/$defs/graphNode"
+        },
+        "reason_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/graphDecisionReasonId"
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "verdict"
+      ],
+      "properties": {
+        "kind": {
+          "const": "TERMINAL"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "FAIL_PRODUCT",
+            "BLOCKED_ENVIRONMENT",
+            "CANCELLED_BY_USER",
+            "CANCELLED_WITH_ACTIVE_EXTERNAL_WORK",
+            "NEEDS_MASTER_USER_DISCUSSION",
+            "INTERNAL_INTEGRITY_ERROR"
+          ]
+        }
+      }
+    }
+  ]
+}

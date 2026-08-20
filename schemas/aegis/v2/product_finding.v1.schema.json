@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/product_finding.v1.schema.json",
+  "title": "ProductFinding.v1",
+  "description": "Product behavior that may conflict with an approved requirement.",
+  "$comment": "A PRODUCT_FINDING is never closed by an implementation author inside the graph. D alone verifies it from accepted evidence. The gate must prove case membership, requirement binding, producer/reviewer identity, evidence hashes, and exact baseline equality.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "finding_id",
+    "fact_type",
+    "case_id",
+    "requirement_id",
+    "severity",
+    "claim",
+    "expected_behavior",
+    "observed_behavior",
+    "verification_state",
+    "evidence_refs",
+    "producer_identity",
+    "verification_identity",
+    "source_baseline_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "opened_attempt_id",
+    "opened_event_id",
+    "verification_event_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ProductFinding.v1"
+    },
+    "finding_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "fact_type": {
+      "const": "PRODUCT_FINDING"
+    },
+    "case_id": {
+      "$ref": "common.v1.schema.json#/$defs/caseId"
+    },
+    "requirement_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "severity": {
+      "$ref": "common.v1.schema.json#/$defs/severity"
+    },
+    "claim": {
+      "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+    },
+    "expected_behavior": {
+      "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+    },
+    "observed_behavior": {
+      "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+    },
+    "verification_state": {
+      "type": "string",
+      "enum": [
+        "PROPOSED",
+        "CONFIRMED",
+        "REJECTED"
+      ]
+    },
+    "evidence_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/evidenceId"
+      }
+    },
+    "producer_identity": {
+      "allOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role_slot_id": {
+              "const": "C"
+            },
+            "role": {
+              "const": "TEST_EXECUTOR"
+            }
+          }
+        }
+      ]
+    },
+    "verification_identity": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "const": "D"
+                },
+                "role": {
+                  "const": "TEST_RESULT_REVIEWER"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "execution_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "opened_attempt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "opened_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "verification_event_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "verification_state": {
+            "enum": [
+              "CONFIRMED",
+              "REJECTED"
+            ]
+          }
+        },
+        "required": [
+          "verification_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1
+          },
+          "verification_identity": {
+            "allOf": [
+              {
+                "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "role_slot_id": {
+                    "const": "D"
+                  },
+                  "role": {
+                    "const": "TEST_RESULT_REVIEWER"
+                  }
+                }
+              }
+            ]
+          },
+          "verification_event_id": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "verification_identity": {
+            "type": "null"
+          },
+          "verification_event_id": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

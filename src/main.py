@@ -110,7 +110,7 @@ def initialize_state(
             ),
             "review_pass_score": values.get(
                 "review_pass_score",
-                int(os.environ.get("AEGIS_REVIEW_PASS_SCORE", "90")),
+                int(os.environ.get("AEGIS_REVIEW_PASS_SCORE", "95")),
             ),
             "stop_reason": values.get("stop_reason"),
             "gate_violations": values.get("gate_violations", []),

@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/evaluation_runner_input.v1.schema.json",
+  "title": "EvaluationRunnerInput.v1",
+  "description": "Closed runner envelope separating a scenario subject, production context, fixtures, mutation, and observed state from expected output.",
+  "$comment": "runner_contract_id resolves to the frozen input-schema/SUT-entrypoint/output-schema/comparator contract. The outer runner resolves input_binding_id to exactly one EvaluationRunnerContract.input_bindings entry, validates this entire input and subject against that binding, then excludes input_binding_id with all other case metadata from the five-member SUT input projection. The runner receives no expected label through this object. A valid production object is included only by direct $ref and must pass its production schema. Deliberately invalid input is wrapped in UnvalidatedCandidate.v1; a reduced object may not impersonate a production schema_version. fixture_refs resolve through the frozen EvaluationFixtureCatalog and exact bytes are verified before execution.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "runner_contract_id",
+    "input_binding_id",
+    "case_id",
+    "subject",
+    "context_objects",
+    "fixture_refs",
+    "mutation",
+    "observed_state"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "EvaluationRunnerInput.v1"
+    },
+    "runner_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "input_binding_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "case_id": {
+      "$ref": "common.v1.schema.json#/$defs/caseId"
+    },
+    "subject": {
+      "$ref": "#/$defs/runnerObject"
+    },
+    "context_objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "object_role",
+          "value"
+        ],
+        "properties": {
+          "object_role": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          },
+          "value": {
+            "$ref": "#/$defs/runnerObject"
+          }
+        }
+      }
+    },
+    "fixture_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/stableId"
+      }
+    },
+    "mutation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/mutation"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observed_state": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/runnerObject"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "runnerObject": {
+      "oneOf": [
+        {
+          "$ref": "unvalidated_candidate.v1.schema.json"
+        },
+        {
+          "$ref": "verdict_input.v1.schema.json"
+        },
+        {
+          "$ref": "graph_decision.v1.schema.json"
+        },
+        {
+          "$ref": "blocker_record.v1.schema.json"
+        },
+        {
+          "$ref": "blocker_closure_event.v1.schema.json"
+        },
+        {
+          "$ref": "dispatch_action.v1.schema.json"
+        },
+        {
+          "$ref": "agent_receipt.v1.schema.json"
+        },
+        {
+          "$ref": "codex_authority_event.v1.schema.json"
+        },
+        {
+          "$ref": "agent_identity.v1.schema.json"
+        },
+        {
+          "$ref": "agent_registry.v1.schema.json"
+        },
+        {
+          "$ref": "provision_batch.v1.schema.json"
+        },
+        {
+          "$ref": "capacity_certification.v1.schema.json"
+        },
+        {
+          "$ref": "capacity_certification_binding.v1.schema.json"
+        },
+        {
+          "$ref": "cancel_dispatch.v1.schema.json"
+        },
+        {
+          "$ref": "cancel_dispatch_reference.v1.schema.json"
+        },
+        {
+          "$ref": "cancel_control.v1.schema.json"
+        },
+        {
+          "$ref": "evidence_record.v1.schema.json"
+        },
+        {
+          "$ref": "source_baseline_manifest.v1.schema.json"
+        },
+        {
+          "$ref": "registry_snapshot_manifest.v1.schema.json"
+        },
+        {
+          "$ref": "registry_state_preimage.v1.schema.json"
+        },
+        {
+          "$ref": "test_plan_revision_manifest.v1.schema.json"
+        },
+        {
+          "$ref": "execution_environment_snapshot_manifest.v1.schema.json"
+        },
+        {
+          "$ref": "execution_contract_manifest.v1.schema.json"
+        },
+        {
+          "$ref": "d_review_snapshot.v1.schema.json"
+        },
+        {
+          "$ref": "report_candidate.v1.schema.json"
+        },
+        {
+          "$ref": "report_candidate_basis.v1.schema.json"
+        },
+        {
+          "$ref": "final_review.v1.schema.json"
+        },
+        {
+          "$ref": "final_review_basis.v1.schema.json"
+        },
+        {
+          "$ref": "report_defect.v1.schema.json"
+        },
+        {
+          "$ref": "recovery_record.v1.schema.json"
+        },
+        {
+          "$ref": "phase0_freeze_record.v1.schema.json"
+        },
+        {
+          "$ref": "evaluation_fixture_catalog.v1.schema.json"
+        },
+        {
+          "$ref": "evaluation_runner_contract.v1.schema.json"
+        },
+        {
+          "$ref": "evaluation_isolation_binding.v1.schema.json"
+        },
+        {
+          "$ref": "certification_trust_anchor.v1.schema.json"
+        }
+      ]
+    },
+    "mutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "target_pointer",
+        "value_or_sequence"
+      ],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "REMOVE",
+            "REPLACE",
+            "INSERT",
+            "REORDER",
+            "TRUNCATE",
+            "DUPLICATE",
+            "CORRUPT_BYTES"
+          ]
+        },
+        "target_pointer": {
+          "type": "string",
+          "pattern": "^(?:/(?:[^~/]|~0|~1)*)*$",
+          "maxLength": 4096
+        },
+        "value_or_sequence": true
+      },
+      "$comment": "value_or_sequence is intentionally arbitrary test data, not a production object. The comparator contract defines the exact operation semantics and requires a single deterministic mutation; target_pointer is RFC 6901 JSON Pointer. Byte corruption targets a fixture and records the resulting bytes separately."
+    }
+  }
+}

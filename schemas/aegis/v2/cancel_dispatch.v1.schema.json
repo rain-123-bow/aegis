@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/cancel_dispatch.v1.schema.json",
+  "title": "CancelDispatch.v1",
+  "description": "Immutable control event targeting one existing NODE_WORK action without creating another action identity.",
+  "$comment": "control_event_id is the cancel command identity; target_action_id remains the original work identity. The gate persists this event before send, rejects any CLAIM/COMPLETE/INGEST receipt that treats it as normal work, and never rewrites the target DispatchAction.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "protocol_version",
+    "control_event_id",
+    "cancellation_id",
+    "campaign_id",
+    "run_id",
+    "target_action",
+    "target_action_id",
+    "target_role_slot_id",
+    "target_role",
+    "target_thread_id",
+    "target_session_id",
+    "target_generation",
+    "target_instance_revision",
+    "reason",
+    "issued_at_utc",
+    "expires_at_utc",
+    "nonce",
+    "state_seq"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "CancelDispatch.v1"
+    },
+    "protocol_version": {
+      "const": "aegis.native-master-relay.cancel.v1"
+    },
+    "control_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "cancellation_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "campaign_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "target_action": {
+      "$ref": "dispatch_action.v1.schema.json"
+    },
+    "target_action_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "target_role_slot_id": {
+      "$ref": "common.v1.schema.json#/$defs/roleSlotId"
+    },
+    "target_role": {
+      "$ref": "common.v1.schema.json#/$defs/roleName"
+    },
+    "target_thread_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "target_session_id": {
+      "$ref": "common.v1.schema.json#/$defs/opaquePlatformId"
+    },
+    "target_generation": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "target_instance_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "reason": {
+      "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+    },
+    "issued_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "expires_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 22,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "state_seq": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "The gate requires every duplicated target field to equal target_action, target_action.action_kind=NODE_WORK, issued_at_utc < expires_at_utc, state_seq at or after dispatch stop, one control_event_id per target_action_id per cancellation, and no automatic retry when the cancel send outcome is unknown."
+    }
+  ]
+}

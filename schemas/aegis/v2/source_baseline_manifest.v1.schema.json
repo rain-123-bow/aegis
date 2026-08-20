@@ -1,0 +1,607 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/source_baseline_manifest.v1.schema.json",
+  "title": "SourceBaselineManifest.v1",
+  "description": "Immutable material frozen before A/B artifacts and agent registry exist.",
+  "$comment": "This document intentionally contains no source_baseline_id. The program gate must serialize the complete schema-valid object as UTF-8 JCS RFC 8785 bytes, persist exactly those bytes, and derive source_baseline_id as sha256:<SHA-256(bytes)>. It must enumerate every non-ignored untracked file and verify repository state directly; executor-selected relevance is forbidden.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_kind",
+    "canonicalization",
+    "frozen_at_utc",
+    "repository",
+    "worktree",
+    "input_documents",
+    "toolchain",
+    "skill_records",
+    "static_environment_contracts",
+    "excluded_material"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "SourceBaselineManifest.v1"
+    },
+    "manifest_kind": {
+      "const": "SOURCE_BASELINE"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "frozen_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_identity",
+        "repository_identity_preimage",
+        "root_path",
+        "canonical_casefold_key",
+        "vcs",
+        "remote_url",
+        "commit"
+      ],
+      "properties": {
+        "repository_identity": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "repository_identity_preimage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "vcs",
+            "canonical_remote_url"
+          ],
+          "properties": {
+            "vcs": {
+              "const": "git"
+            },
+            "canonical_remote_url": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 4096
+            }
+          },
+          "$comment": "repository_identity is sha256:<SHA-256(UTF-8 JCS bytes of this object)>."
+        },
+        "root_path": {
+          "$ref": "common.v1.schema.json#/$defs/sourceHostAbsolutePath"
+        },
+        "canonical_casefold_key": {
+          "$ref": "common.v1.schema.json#/$defs/sourceCanonicalPathKey"
+        },
+        "vcs": {
+          "const": "git"
+        },
+        "remote_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "commit": {
+          "$ref": "common.v1.schema.json#/$defs/gitObjectId"
+        }
+      },
+      "$comment": "The gate requires repository_identity_preimage.canonical_remote_url to be the deterministic canonicalization of remote_url and verifies repository_identity from the exact preimage bytes."
+    },
+    "worktree": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "diff_capture_contract",
+        "staged_diff_raw_sha256",
+        "unstaged_diff_raw_sha256",
+        "untracked_files"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "CLEAN",
+            "DIRTY"
+          ]
+        },
+        "diff_capture_contract": {
+          "$ref": "#/$defs/gitDiffCaptureContract"
+        },
+        "staged_diff_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "unstaged_diff_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "untracked_files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repositoryFile"
+          }
+        }
+      },
+      "$comment": "The gate executes the two exact argv vectors from diff_capture_contract in repository.root_path with the declared environment and captured Git version, hashes the raw stdout bytes without newline conversion, and requires exit code zero plus empty stderr. It must require state=CLEAN exactly when both captured stdout streams are empty and untracked_files is empty. It must enforce unique, sorted repository_relative_path values."
+    },
+    "input_documents": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "$ref": "#/$defs/inputDocument"
+      },
+      "$comment": "At least one REQUIREMENTS and one IMPLEMENTATION_PLAN document are mandatory; JSON Schema cannot require uniqueness by kind without fixing the exact array length, so the program gate enforces it."
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "aegis_version",
+        "codex_cli_version",
+        "codex_desktop_version",
+        "app_server_protocol_semantic_sha256",
+        "app_server_protocol_artifact",
+        "relevant_feature_config",
+        "model",
+        "reasoning_effort"
+      ],
+      "properties": {
+        "aegis_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "codex_cli_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "codex_desktop_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "app_server_protocol_semantic_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "app_server_protocol_artifact": {
+          "$ref": "#/$defs/frozenHostFile",
+          "$comment": "Serialization-sensitive generated bundle bytes retained as Phase 0A local evidence; the bundle need not be committed to the repository."
+        },
+        "relevant_feature_config": {
+          "$ref": "#/$defs/relevantFeatureConfig"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        }
+      }
+    },
+    "skill_records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/skillRecord"
+      }
+    },
+    "static_environment_contracts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/environmentContract"
+      }
+    },
+    "excluded_material": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/exclusion"
+      },
+      "$comment": "Only schema-recognized non-material fields may be excluded. The program gate rejects ad hoc exclusions and verifies the policy_id against the reviewed policy registry."
+    }
+  },
+  "$defs": {
+    "gitDiffCaptureContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "git_version",
+        "object_format",
+        "repository_info_attributes_state",
+        "staged_argv",
+        "unstaged_argv",
+        "working_directory",
+        "environment",
+        "stdin_domain",
+        "stdout_domain",
+        "stderr_policy",
+        "required_exit_code"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "GitDiffCaptureContract.v1"
+        },
+        "git_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "object_format": {
+          "type": "string",
+          "enum": [
+            "sha1",
+            "sha256"
+          ]
+        },
+        "repository_info_attributes_state": {
+          "const": "ABSENT"
+        },
+        "staged_argv": {
+          "const": [
+            "git",
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "core.safecrlf=false",
+            "-c",
+            "core.quotepath=false",
+            "-c",
+            "core.attributesFile=",
+            "-c",
+            "diff.external=",
+            "--no-pager",
+            "diff",
+            "--cached",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--no-color",
+            "--full-index",
+            "--unified=3",
+            "--diff-algorithm=myers",
+            "--no-indent-heuristic",
+            "--submodule=short",
+            "--ignore-submodules=none",
+            "-O/dev/null",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--"
+          ]
+        },
+        "unstaged_argv": {
+          "const": [
+            "git",
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "core.safecrlf=false",
+            "-c",
+            "core.quotepath=false",
+            "-c",
+            "core.attributesFile=",
+            "-c",
+            "diff.external=",
+            "--no-pager",
+            "diff",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--no-color",
+            "--full-index",
+            "--unified=3",
+            "--diff-algorithm=myers",
+            "--no-indent-heuristic",
+            "--submodule=short",
+            "--ignore-submodules=none",
+            "-O/dev/null",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--"
+          ]
+        },
+        "working_directory": {
+          "const": "REPOSITORY_ROOT"
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "LC_ALL",
+            "LANG",
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_EXTERNAL_DIFF",
+            "GIT_ATTR_NOSYSTEM",
+            "GIT_DIFF_OPTS"
+          ],
+          "properties": {
+            "LC_ALL": {
+              "const": "C"
+            },
+            "LANG": {
+              "const": "C"
+            },
+            "GIT_CONFIG_NOSYSTEM": {
+              "const": "1"
+            },
+            "GIT_EXTERNAL_DIFF": {
+              "type": "null"
+            },
+            "GIT_ATTR_NOSYSTEM": {
+              "const": "1"
+            },
+            "GIT_DIFF_OPTS": {
+              "type": "null"
+            }
+          }
+        },
+        "stdin_domain": {
+          "const": "EMPTY"
+        },
+        "stdout_domain": {
+          "const": "RAW_PROCESS_STDOUT_BYTES"
+        },
+        "stderr_policy": {
+          "const": "REQUIRE_EMPTY"
+        },
+        "required_exit_code": {
+          "const": 0
+        }
+      },
+      "$comment": "The collector must first prove $GIT_DIR/info/attributes absent, bypass shell interpolation, and invoke this argv directly. Repository .gitattributes remains source material; system/global/info attributes, external diff, textconv, ambient diff ordering, color, abbreviation, algorithm, indentation heuristic, submodule omission, and GIT_DIFF_OPTS are closed by this contract. It records stdout as uninterpreted bytes; PowerShell or text decoding must not normalize BOM, encoding, or EOL. Any argv/config/version/exit/stderr deviation invalidates the baseline instead of producing an alternative plausible hash."
+    },
+    "repositoryFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_relative_path",
+        "absolute_path",
+        "canonical_casefold_key",
+        "byte_size",
+        "sha256"
+      ],
+      "properties": {
+        "repository_relative_path": {
+          "$ref": "common.v1.schema.json#/$defs/repositoryRelativePath"
+        },
+        "absolute_path": {
+          "$ref": "common.v1.schema.json#/$defs/sourceHostAbsolutePath"
+        },
+        "canonical_casefold_key": {
+          "$ref": "common.v1.schema.json#/$defs/sourceCanonicalPathKey"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      }
+    },
+    "frozenHostFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "absolute_path",
+        "canonical_casefold_key",
+        "byte_size",
+        "raw_sha256"
+      ],
+      "properties": {
+        "absolute_path": {
+          "$ref": "common.v1.schema.json#/$defs/sourceHostAbsolutePath"
+        },
+        "canonical_casefold_key": {
+          "$ref": "common.v1.schema.json#/$defs/sourceCanonicalPathKey"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      }
+    },
+    "relevantFeatureConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonicalization",
+        "multi_agent",
+        "use_agent_identity",
+        "collaboration_transport",
+        "model",
+        "reasoning_effort",
+        "sha256"
+      ],
+      "properties": {
+        "canonicalization": {
+          "const": "JCS-RFC8785"
+        },
+        "multi_agent": {
+          "const": true
+        },
+        "use_agent_identity": {
+          "type": "boolean"
+        },
+        "collaboration_transport": {
+          "const": "CODEX_DESKTOP_NATIVE_PARENT"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        "sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      },
+      "$comment": "sha256 is computed over the UTF-8 JCS bytes of this object with the sha256 member omitted. The gate also requires model and reasoning_effort to equal the enclosing toolchain fields."
+    },
+    "inputDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "file"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "REQUIREMENTS",
+            "IMPLEMENTATION_PLAN"
+          ]
+        },
+        "file": {
+          "$ref": "#/$defs/repositoryFile"
+        }
+      }
+    },
+    "skillRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "skill_id",
+        "role_slot_id",
+        "repository_relative_path",
+        "sha256"
+      ],
+      "properties": {
+        "skill_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "role_slot_id": {
+          "anyOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/roleSlotId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repository_relative_path": {
+          "$ref": "common.v1.schema.json#/$defs/repositoryRelativePath"
+        },
+        "sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      }
+    },
+    "environmentContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_id",
+        "scope",
+        "operating_system",
+        "architecture",
+        "dependency_lock_refs",
+        "build_artifact_refs",
+        "hardware_requirements",
+        "firmware_requirements",
+        "service_requirements"
+      ],
+      "properties": {
+        "contract_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "LOCAL",
+            "REMOTE"
+          ]
+        },
+        "operating_system": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "architecture": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "dependency_lock_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repositoryFile"
+          }
+        },
+        "build_artifact_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repositoryFile"
+          }
+        },
+        "hardware_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+          }
+        },
+        "firmware_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+          }
+        },
+        "service_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+          }
+        }
+      }
+    },
+    "exclusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "json_pointer",
+        "policy_id",
+        "reason"
+      ],
+      "properties": {
+        "json_pointer": {
+          "type": "string",
+          "pattern": "^(?:/(?:[^~/]|~0|~1)*)+$",
+          "maxLength": 1024
+        },
+        "policy_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "reason": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        }
+      }
+    }
+  }
+}

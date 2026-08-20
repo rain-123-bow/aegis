@@ -1,0 +1,653 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/evaluation_runner_contract.v1.schema.json",
+  "title": "EvaluationRunnerContract.v1",
+  "description": "Content-addressed mapping from isolated evaluation inputs to SUT decisions, outer-runner evidence, exact comparators, oracles, and fixture mounts.",
+  "$comment": "runner_contract_id is sha256:<SHA-256(UTF-8 JCS RFC 8785 bytes of this object with runner_contract_id omitted)>. The evaluator validates EvaluationRunnerInput, constructs exactly the five-member SUT projection, materializes only named catalog fixtures read-only, resolves and revalidates the machine-specific PythonExecutableBinding, invokes the fixed direct argv without shell or PATH lookup, validates stdout only as SutDecision.v1, then creates RunnerExecutionRecord.v1 and EvaluationRunnerOutput.v1 outside the SUT. The oracle compares the observed SutDecision self-hash with the frozen expected SutDecision self-hash. case_id, runner_contract_id, input_binding_id, expected data, oracle data, runtime binding, execution record, and comparator result never enter SUT stdin, argv, environment, fixtures, or observed state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "runner_contract_id",
+    "canonicalization",
+    "runner_version",
+    "runner_input_schema_id",
+    "sut_output_schema_id",
+    "runner_output_schema_id",
+    "runner_execution_record_schema_id",
+    "executable_binding_policy",
+    "isolation_policy",
+    "fixture_mount",
+    "input_bindings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "EvaluationRunnerContract.v1"
+    },
+    "runner_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "runner_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "runner_input_schema_id": {
+      "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/evaluation_runner_input.v1.schema.json"
+    },
+    "sut_output_schema_id": {
+      "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/sut_decision.v1.schema.json"
+    },
+    "runner_output_schema_id": {
+      "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/evaluation_runner_output.v1.schema.json"
+    },
+    "runner_execution_record_schema_id": {
+      "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/runner_execution_record.v1.schema.json"
+    },
+    "executable_binding_policy": {
+      "$ref": "#/$defs/executableBindingPolicy"
+    },
+    "isolation_policy": {
+      "$ref": "#/$defs/isolationPolicy"
+    },
+    "fixture_mount": {
+      "$ref": "#/$defs/fixtureMount"
+    },
+    "input_bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/inputBinding"
+      }
+    }
+  },
+  "$defs": {
+    "fixtureMount": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/staticFixtureMount"
+        },
+        {
+          "$ref": "#/$defs/propertyFixtureMount"
+        }
+      ]
+    },
+    "staticFixtureMount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "catalog_id",
+        "catalog_schema_id",
+        "catalog_repository_path",
+        "catalog_sha256",
+        "logical_runtime_root",
+        "materialization",
+        "access_mode"
+      ],
+      "properties": {
+        "source": {
+          "const": "STATIC_CATALOG"
+        },
+        "catalog_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "catalog_schema_id": {
+          "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/evaluation_fixture_catalog.v1.schema.json"
+        },
+        "catalog_repository_path": {
+          "$ref": "common.v1.schema.json#/$defs/repositoryRelativePath"
+        },
+        "catalog_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "logical_runtime_root": {
+          "$ref": "common.v1.schema.json#/$defs/runtimeAbsolutePath"
+        },
+        "materialization": {
+          "const": "COPY_EXACT_GIT_BLOB_BYTES"
+        },
+        "access_mode": {
+          "const": "READ_ONLY"
+        }
+      },
+      "$comment": "catalog_id must equal sha256:catalog_sha256 under the catalog's self-hash omission rule. The materializer refuses overwrite, verifies source and destination bytes, and exposes only fixture_refs named by the current runner input."
+    },
+    "propertyFixtureMount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "materialization_bundle_schema_id",
+        "materializer_algorithm_id",
+        "materializer_source_manifest_entry_sha256",
+        "bundle_self_hash_member",
+        "bundle_self_hash_rule",
+        "bundle_fixture_array_pointer",
+        "bundle_fixture_set_hash_member",
+        "logical_runtime_root",
+        "materialization",
+        "access_mode",
+        "envelope_mount",
+        "expected_store_mount"
+      ],
+      "properties": {
+        "source": {
+          "const": "PROPERTY_INSTANCE_MATERIALIZATION"
+        },
+        "materialization_bundle_schema_id": {
+          "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/property_materialization_bundle.v1.schema.json"
+        },
+        "materializer_algorithm_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "materializer_source_manifest_entry_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "bundle_self_hash_member": {
+          "const": "bundle_sha256"
+        },
+        "bundle_self_hash_rule": {
+          "const": "sha256:JCS(PropertyMaterializationBundle object with bundle_sha256 omitted; every other member retained)"
+        },
+        "bundle_fixture_array_pointer": {
+          "const": "/sut_materialized_fixtures"
+        },
+        "bundle_fixture_set_hash_member": {
+          "const": "sut_materialized_fixtures_jcs_sha256"
+        },
+        "logical_runtime_root": {
+          "$ref": "common.v1.schema.json#/$defs/runtimeAbsolutePath"
+        },
+        "materialization": {
+          "const": "DECODE_VERIFY_AND_COPY_BUNDLE_FIXTURES_ONLY"
+        },
+        "access_mode": {
+          "const": "READ_ONLY"
+        },
+        "envelope_mount": {
+          "const": "FORBIDDEN"
+        },
+        "expected_store_mount": {
+          "const": "FORBIDDEN"
+        }
+      },
+      "$comment": "This branch is used only by a property-specific runner contract. The evaluator verifies the bundle schema, source-bound materializer entry, bundle self-hash, decoded bytes, content IDs, fixture-set hash, and exact equality between runner_input.fixture_refs and the bundle fixture IDs before process creation. Only decoded fixture bytes enter CURRENT_CASE_DECLARED_FIXTURES; the envelope, bundle object, assignment, evaluation corpus, reference sources, and expected store remain outside the SUT filesystem boundary."
+    },
+    "inputBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_binding_id",
+        "input_schema_id",
+        "subject_schema",
+        "sut",
+        "sut_output_schema",
+        "runner_output_schema",
+        "comparator",
+        "oracle"
+      ],
+      "properties": {
+        "input_binding_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "input_schema_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "subject_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_id",
+            "json_pointer"
+          ],
+          "properties": {
+            "schema_id": {
+              "type": "string",
+              "format": "uri"
+            },
+            "json_pointer": {
+              "$ref": "#/$defs/jsonPointer"
+            }
+          }
+        },
+        "sut": {
+          "$ref": "#/$defs/sut"
+        },
+        "sut_output_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_id",
+            "json_pointer"
+          ],
+          "properties": {
+            "schema_id": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/sut_decision.v1.schema.json"
+            },
+            "json_pointer": {
+              "$ref": "#/$defs/jsonPointer"
+            }
+          }
+        },
+        "runner_output_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_id",
+            "json_pointer"
+          ],
+          "properties": {
+            "schema_id": {
+              "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/evaluation_runner_output.v1.schema.json"
+            },
+            "json_pointer": {
+              "$ref": "#/$defs/jsonPointer"
+            }
+          }
+        },
+        "comparator": {
+          "$ref": "#/$defs/comparator"
+        },
+        "oracle": {
+          "$ref": "#/$defs/oracle"
+        }
+      },
+      "$comment": "The gate resolves EvaluationRunnerInput.input_binding_id to exactly one entry and requires unique input_binding_id and input_schema_id values, locally resolvable schema ID/pointer pairs, and deterministic ordering. sut_output_schema validates only the context-free stdout decision; runner_output_schema validates the outer evidence envelope. Negative candidates still map to their intended production schema; UnvalidatedCandidate is an envelope, not the SUT contract."
+    },
+    "sut": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entrypoint_id",
+        "execution_kind",
+        "working_directory",
+        "argv_template",
+        "environment",
+        "environment_inheritance",
+        "input_projection",
+        "stdin_mode",
+        "network_access",
+        "timeout_ms"
+      ],
+      "properties": {
+        "entrypoint_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "execution_kind": {
+          "const": "DIRECT_ARGV"
+        },
+        "working_directory": {
+          "const": "ISOLATED_EXECUTION_ROOT"
+        },
+        "argv_template": {
+          "const": [
+            "{PYTHON_EXECUTABLE}",
+            "-I",
+            "-X",
+            "utf8",
+            "-m",
+            "aegis.sut",
+            "{ENTRYPOINT_ID}"
+          ]
+        },
+        "environment": {
+          "const": [
+            {
+              "name": "AEGIS_RUNNER_MODE",
+              "value": "FROZEN_EVALUATION"
+            },
+            {
+              "name": "LANGGRAPH_STRICT_MSGPACK",
+              "value": "true"
+            }
+          ]
+        },
+        "environment_inheritance": {
+          "const": "NONE"
+        },
+        "input_projection": {
+          "const": [
+            "/subject",
+            "/context_objects",
+            "/fixture_refs",
+            "/mutation",
+            "/observed_state"
+          ]
+        },
+        "stdin_mode": {
+          "const": "SUT_INPUT_PROJECTION_JCS_BYTES"
+        },
+        "network_access": {
+          "const": "DENIED"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        }
+      },
+      "$comment": "The outer evaluator constructs a fresh object with exactly subject, context_objects, fixture_refs, mutation, and observed_state from the five input_projection pointers, preserving that member set before JCS serialization; it must not forward any other EvaluationRunnerInput member. Therefore case_id, runner_contract_id, input_binding_id, expected labels, comparator/oracle metadata, Python binding, execution record, and all other case metadata are absent from SUT stdin, argv, environment, fixtures, or observed state. The process receives exactly the declared environment array and inherits no host variable. The only argv substitutions are {PYTHON_EXECUTABLE}, resolved to the verified repository-external virtual-environment interpreter under executable_binding_policy, and {ENTRYPOINT_ID}, replaced by this exact sut.entrypoint_id. The evaluator passes the resulting seven strings directly to the OS process API. -I and the verified import-origin binding prevent checkout shadowing; shells, launchers, PATH lookup, extra arguments, unknown placeholders, and undeclared environment values are forbidden. Interface projection prevents accidental label leakage; isolation_policy and its certified runtime binding prevent filesystem lookup of expected data during execution. Public corpus preknowledge is not cryptographically hidden."
+    },
+    "executableBindingPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "runtime_binding_schema_id",
+        "source",
+        "required_python_specifier",
+        "required_python_implementation",
+        "supported_platform_profile",
+        "required_distributions",
+        "dependency_source",
+        "path_resolution",
+        "execute_resolved_realpath",
+        "hash_verification",
+        "version_verification",
+        "path_lookup",
+        "shell",
+        "binding_lifetime",
+        "evidence_retention"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "PythonExecutableBindingPolicy.v1"
+        },
+        "runtime_binding_schema_id": {
+          "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/python_executable_binding.v1.schema.json"
+        },
+        "source": {
+          "const": "ISOLATED_VENV_CURRENT_PROCESS_SYS_EXECUTABLE"
+        },
+        "required_python_specifier": {
+          "const": "==3.13.*"
+        },
+        "required_python_implementation": {
+          "const": "CPython"
+        },
+        "supported_platform_profile": {
+          "$ref": "#/$defs/supportedPlatformProfile"
+        },
+        "required_distributions": {
+          "const": [
+            {
+              "name": "jsonschema",
+              "version": "4.26.0"
+            },
+            {
+              "name": "langgraph",
+              "version": "1.2.9"
+            },
+            {
+              "name": "langgraph-checkpoint-sqlite",
+              "version": "3.1.0"
+            },
+            {
+              "name": "rfc8785",
+              "version": "0.1.4"
+            }
+          ]
+        },
+        "dependency_source": {
+          "const": "FROZEN_PYPROJECT_AND_PLATFORM_LOCK"
+        },
+        "path_resolution": {
+          "const": "OS_REALPATH_OF_CURRENT_SYS_EXECUTABLE"
+        },
+        "execute_resolved_realpath": {
+          "const": true
+        },
+        "hash_verification": {
+          "const": "REHASH_EXACT_FILE_BEFORE_EACH_INVOCATION"
+        },
+        "version_verification": {
+          "const": "MATCH_CURRENT_PROCESS_VERSION_BEFORE_EACH_INVOCATION"
+        },
+        "path_lookup": {
+          "const": "FORBIDDEN"
+        },
+        "shell": {
+          "const": "FORBIDDEN"
+        },
+        "binding_lifetime": {
+          "const": "ONE_EVALUATION_EXECUTION"
+        },
+        "evidence_retention": {
+          "const": "PERSIST_BINDING_AND_PER_INVOCATION_REVALIDATION"
+        }
+      },
+      "$comment": "This v1 policy is path-independent but deliberately platform-specific: Windows win32 AMD64, CPython 3.13, wheel tag win_amd64. At evaluation execution start, not contract freeze, the evaluator rejects every other platform before SUT spawn, creates a fresh repository-external virtual environment, installs the content-addressed project wheel and Windows platform lock, starts the evaluator from that environment, creates PythonExecutableBinding.v1 from its current sys.executable, and retains the binding as execution evidence. Before every SUT invocation it repeats platform, interpreter, venv, wheel, lock, sys.path, distribution, and critical module-origin checks and refuses drift. Machine paths, bytes, runtime events, and times never enter runner_contract_id or case_sha256."
+    },
+    "supportedPlatformProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operating_system",
+        "sys_platform",
+        "machine",
+        "python_implementation",
+        "python_major_minor",
+        "wheel_platform_tag"
+      ],
+      "properties": {
+        "operating_system": {
+          "const": "Windows"
+        },
+        "sys_platform": {
+          "const": "win32"
+        },
+        "machine": {
+          "const": "AMD64"
+        },
+        "python_implementation": {
+          "const": "CPython"
+        },
+        "python_major_minor": {
+          "const": "3.13"
+        },
+        "wheel_platform_tag": {
+          "const": "win_amd64"
+        }
+      }
+    },
+    "isolationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "runtime_binding_schema_id",
+        "release_grade_backend_required",
+        "backend_certification_required",
+        "trust_anchor_schema_id",
+        "independently_preauthorized_trust_anchor_required",
+        "evaluator_or_sut_self_authorization",
+        "best_effort_fallback",
+        "working_directory",
+        "filesystem_rules",
+        "network_access",
+        "unavailable_disposition",
+        "public_corpus_confidentiality_claim"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "EvaluationIsolationPolicy.v1"
+        },
+        "runtime_binding_schema_id": {
+          "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/evaluation_isolation_binding.v1.schema.json"
+        },
+        "release_grade_backend_required": {
+          "const": true
+        },
+        "backend_certification_required": {
+          "const": true
+        },
+        "trust_anchor_schema_id": {
+          "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/certification_trust_anchor.v1.schema.json"
+        },
+        "independently_preauthorized_trust_anchor_required": {
+          "const": true
+        },
+        "evaluator_or_sut_self_authorization": {
+          "const": "FORBIDDEN"
+        },
+        "best_effort_fallback": {
+          "const": "FORBIDDEN"
+        },
+        "working_directory": {
+          "const": "ISOLATED_EXECUTION_ROOT"
+        },
+        "filesystem_rules": {
+          "const": [
+            {
+              "resource": "INSTALLED_VIRTUAL_ENVIRONMENT",
+              "access": "READ_EXECUTE"
+            },
+            {
+              "resource": "CURRENT_CASE_DECLARED_FIXTURES",
+              "access": "READ_ONLY"
+            },
+            {
+              "resource": "INVOCATION_OUTBOX",
+              "access": "WRITE_ONLY_CREATE_NEW"
+            },
+            {
+              "resource": "REPOSITORY_ROOT",
+              "access": "DENIED"
+            },
+            {
+              "resource": "EVALUATION_CORPUS",
+              "access": "DENIED"
+            },
+            {
+              "resource": "EXPECTED_DATA",
+              "access": "DENIED"
+            },
+            {
+              "resource": "REFERENCE_SOURCES",
+              "access": "DENIED"
+            },
+            {
+              "resource": "ALL_OTHER_FILESYSTEM",
+              "access": "DENIED"
+            }
+          ]
+        },
+        "network_access": {
+          "const": "DENIED"
+        },
+        "unavailable_disposition": {
+          "const": "BLOCK_CASE_AS_UNVERIFIED_ISOLATION"
+        },
+        "public_corpus_confidentiality_claim": {
+          "const": "NONE_PUBLIC_CORPUS_IS_NOT_SECRET"
+        }
+      },
+      "$comment": "A release-grade evaluator must bind a certified enforcement backend before process creation and prove the exact allow/deny surface. Same-user convention, working-directory choice, environment filtering, and advisory checks are not isolation. When certification or enforcement is unavailable, the evaluator emits a blocked UNVERIFIED_ISOLATION result and does not spawn the SUT. This policy does not claim that a public corpus was secret before implementation; independent authorship, private holdout inputs where available, and exhaustive/property-generated cases reduce preknowledge gaming."
+    },
+    "comparator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "comparator_id",
+        "kind",
+        "spec_sha256",
+        "observed_source",
+        "expected_source",
+        "hash_member",
+        "required_runner_state",
+        "exact_array_order",
+        "exact_reason_order"
+      ],
+      "properties": {
+        "comparator_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "kind": {
+          "const": "SUT_DECISION_SHA256_EXACT"
+        },
+        "spec_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "observed_source": {
+          "const": "EVALUATION_RUNNER_OUTPUT.SUT_DECISION"
+        },
+        "expected_source": {
+          "type": "string",
+          "enum": [
+            "EVALUATION_CASE.EXPECTED",
+            "PROPERTY_EXPECTED_RECORD.EXPECTED"
+          ]
+        },
+        "hash_member": {
+          "const": "sut_decision_sha256"
+        },
+        "required_runner_state": {
+          "const": "SUT_DECISION_READY"
+        },
+        "exact_array_order": {
+          "const": true
+        },
+        "exact_reason_order": {
+          "const": true
+        }
+      }
+    },
+    "oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_source",
+        "sut_input_excludes_expected",
+        "state_oracle",
+        "side_effect_oracle",
+        "event_oracle"
+      ],
+      "properties": {
+        "expected_source": {
+          "type": "string",
+          "enum": [
+            "OUTER_CASE_EXPECTED_ONLY",
+            "PROPERTY_EXPECTED_RECORD_ONLY"
+          ]
+        },
+        "sut_input_excludes_expected": {
+          "const": true
+        },
+        "state_oracle": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "EXACT_STATE_HASH",
+            "REFERENCE_TRACE_STATE_HASH"
+          ]
+        },
+        "side_effect_oracle": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "EXACT_EFFECT_TRACE",
+            "AT_MOST_ONCE_EFFECT_TRACE",
+            "ZERO_REPLAY_TRACE"
+          ]
+        },
+        "event_oracle": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "EXACT_EVENT_TRACE",
+            "REFERENCE_TRACE_EQUIVALENCE"
+          ]
+        }
+      }
+    },
+    "jsonPointer": {
+      "type": "string",
+      "pattern": "^(?:/(?:[^~/]|~0|~1)*)*$",
+      "maxLength": 4096
+    }
+  }
+}

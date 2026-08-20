@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/report_defect.v1.schema.json",
+  "title": "ReportDefect.v1",
+  "description": "Immutable REPORT_DEFECT fact: an E report candidate differs from the D-reviewed fact set.",
+  "$comment": "REPORT_DEFECT remains a distinct fact type. F may wrap an OPEN report defect in a REPORT_PROCESS blocker owned by E; the program gate verifies the exact one-to-one binding. E cannot erase or close the original fact. Resolution appends a new F-reviewed event after a replacement report candidate matches the current D snapshot.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "report_defect_id",
+    "fact_type",
+    "severity",
+    "claim",
+    "d_review_snapshot_id",
+    "report_candidate_id",
+    "report_candidate_basis_id",
+    "expected_fact_ids",
+    "reported_fact_ids",
+    "evidence_refs",
+    "reviewer_identity",
+    "source_baseline_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "opened_attempt_id",
+    "opened_event_id",
+    "status",
+    "resolution_events"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ReportDefect.v1"
+    },
+    "report_defect_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "fact_type": {
+      "const": "REPORT_DEFECT"
+    },
+    "severity": {
+      "$ref": "common.v1.schema.json#/$defs/severity"
+    },
+    "claim": {
+      "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+    },
+    "d_review_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "report_candidate_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "report_candidate_basis_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "expected_fact_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/stableId"
+      }
+    },
+    "reported_fact_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/stableId"
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/evidenceId"
+      }
+    },
+    "reviewer_identity": {
+      "allOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role_slot_id": {
+              "const": "F"
+            },
+            "role": {
+              "const": "FINAL_REVIEWER"
+            }
+          }
+        }
+      ]
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "execution_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "opened_attempt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "opened_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "OPEN",
+        "RESOLVED"
+      ]
+    },
+    "resolution_events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/resolutionEvent"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "RESOLVED"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "resolution_events": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "resolution_events": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "resolutionEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resolution_event_id",
+        "d_review_snapshot_id",
+        "replacement_report_candidate_id",
+        "replacement_report_candidate_basis_id",
+        "final_review_id",
+        "final_review_basis_id",
+        "reviewer_identity",
+        "evidence_refs",
+        "occurred_at_utc"
+      ],
+      "properties": {
+        "resolution_event_id": {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        "d_review_snapshot_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "replacement_report_candidate_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "replacement_report_candidate_basis_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "final_review_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "final_review_basis_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "reviewer_identity": {
+          "allOf": [
+            {
+              "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "const": "F"
+                },
+                "role": {
+                  "const": "FINAL_REVIEWER"
+                }
+              }
+            }
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/evidenceId"
+          }
+        },
+        "occurred_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        }
+      },
+      "$comment": "The program gate requires reviewer_identity to equal the current F registry pointer; d_review_snapshot_id to equal the defect's current D snapshot; the replacement candidate and basis to load as schema-valid current artifacts; final_review_id/final_review_basis_id to bind those exact artifacts and the same normalized facts; and expected_fact_ids/reported_fact_ids to be independently recomputed, sorted, duplicate-free sets. Empty expected facts are valid and still expose an E-fabricated non-empty report set."
+    }
+  }
+}

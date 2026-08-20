@@ -1,0 +1,529 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/python_executable_binding.v1.schema.json",
+  "title": "PythonExecutableBinding.v1",
+  "description": "Machine-specific, content-addressed Python interpreter evidence captured once per evaluation execution.",
+  "$comment": "binding_id is sha256:<SHA-256(UTF-8 JCS RFC8785 bytes of this object with binding_id omitted)>. This runtime evidence is validated and retained by the evaluator but MUST NOT be embedded in EvaluationRunnerContract.v1, an evaluation case, or their hashes. The evaluator independently proves a fresh repository-external virtual environment, the installed project wheel, an absolute regular-file interpreter, the frozen current-platform PEP 751 lock, every locked distribution, sys.path, and critical module origins. The program gate requires the exact ordered module set aegis, jsonschema, langgraph.graph, langgraph.checkpoint.sqlite, rfc8785, and xxhash; every origin must be under the external environment and outside the repository. installed_distribution_snapshot_id and sys_path_snapshot_id resolve to retained sorted snapshots. Before each invocation the evaluator revalidates all facts and emits separate invocation evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "binding_id",
+    "evaluation_execution_id",
+    "source",
+    "reported_sys_executable",
+    "resolved_absolute_realpath",
+    "byte_size",
+    "raw_sha256",
+    "python_version",
+    "python_implementation",
+    "abi_cache_tag",
+    "platform_profile",
+    "dependency_lock",
+    "required_distributions",
+    "installed_distribution_snapshot_id",
+    "virtual_environment",
+    "project_wheel",
+    "module_origins",
+    "sys_path_snapshot_id",
+    "import_isolation_result",
+    "path_resolution",
+    "execute_resolved_realpath",
+    "path_lookup",
+    "shell",
+    "acquisition_event_id",
+    "captured_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "PythonExecutableBinding.v1"
+    },
+    "binding_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "evaluation_execution_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "source": {
+      "const": "ISOLATED_VENV_CURRENT_PROCESS_SYS_EXECUTABLE"
+    },
+    "reported_sys_executable": {
+      "$ref": "#/$defs/portableAbsoluteExecutablePath"
+    },
+    "resolved_absolute_realpath": {
+      "$ref": "#/$defs/portableAbsoluteExecutablePath"
+    },
+    "byte_size": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "raw_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "python_version": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 128,
+      "pattern": "^3\\.13\\.[0-9]+(?:[-+._A-Za-z0-9]*)?$"
+    },
+    "python_implementation": {
+      "const": "CPython"
+    },
+    "abi_cache_tag": {
+      "const": "cpython-313"
+    },
+    "platform_profile": {
+      "$ref": "#/$defs/platformProfile"
+    },
+    "dependency_lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "repository_path",
+        "byte_size",
+        "raw_sha256"
+      ],
+      "properties": {
+        "format": {
+          "const": "PEP-751"
+        },
+        "repository_path": {
+          "const": "pylock.windows-py313.toml"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      }
+    },
+    "required_distributions": {
+      "const": [
+        {
+          "name": "jsonschema",
+          "version": "4.26.0"
+        },
+        {
+          "name": "langgraph",
+          "version": "1.2.9"
+        },
+        {
+          "name": "langgraph-checkpoint-sqlite",
+          "version": "3.1.0"
+        },
+        {
+          "name": "rfc8785",
+          "version": "0.1.4"
+        }
+      ]
+    },
+    "installed_distribution_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "virtual_environment": {
+      "$ref": "#/$defs/virtualEnvironment"
+    },
+    "project_wheel": {
+      "$ref": "#/$defs/projectWheel"
+    },
+    "module_origins": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/moduleOrigin"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "module_name": {
+                  "const": "aegis"
+                },
+                "distribution_name": {
+                  "const": "aegis-quality-kernel"
+                },
+                "distribution_version": {
+                  "const": "0.2.0a0"
+                }
+              },
+              "required": [
+                "module_name",
+                "distribution_name",
+                "distribution_version"
+              ]
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/moduleOrigin"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "module_name": {
+                  "const": "jsonschema"
+                },
+                "distribution_name": {
+                  "const": "jsonschema"
+                },
+                "distribution_version": {
+                  "const": "4.26.0"
+                }
+              },
+              "required": [
+                "module_name",
+                "distribution_name",
+                "distribution_version"
+              ]
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/moduleOrigin"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "module_name": {
+                  "const": "langgraph.graph"
+                },
+                "distribution_name": {
+                  "const": "langgraph"
+                },
+                "distribution_version": {
+                  "const": "1.2.9"
+                }
+              },
+              "required": [
+                "module_name",
+                "distribution_name",
+                "distribution_version"
+              ]
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/moduleOrigin"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "module_name": {
+                  "const": "langgraph.checkpoint.sqlite"
+                },
+                "distribution_name": {
+                  "const": "langgraph-checkpoint-sqlite"
+                },
+                "distribution_version": {
+                  "const": "3.1.0"
+                }
+              },
+              "required": [
+                "module_name",
+                "distribution_name",
+                "distribution_version"
+              ]
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/moduleOrigin"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "module_name": {
+                  "const": "rfc8785"
+                },
+                "distribution_name": {
+                  "const": "rfc8785"
+                },
+                "distribution_version": {
+                  "const": "0.1.4"
+                }
+              },
+              "required": [
+                "module_name",
+                "distribution_name",
+                "distribution_version"
+              ]
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/moduleOrigin"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "module_name": {
+                  "const": "xxhash"
+                },
+                "distribution_name": {
+                  "const": "xxhash"
+                },
+                "distribution_version": {
+                  "const": "3.8.1"
+                }
+              },
+              "required": [
+                "module_name",
+                "distribution_name",
+                "distribution_version"
+              ]
+            }
+          ]
+        }
+      ],
+      "minItems": 6,
+      "maxItems": 6,
+      "items": false,
+      "$comment": "The program gate requires this exact order and tuple set: aegis/aegis-quality-kernel/0.2.0a0; jsonschema/jsonschema/4.26.0; langgraph.graph/langgraph/1.2.9; langgraph.checkpoint.sqlite/langgraph-checkpoint-sqlite/3.1.0; rfc8785/rfc8785/0.1.4; xxhash/xxhash/3.8.1."
+    },
+    "sys_path_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "import_isolation_result": {
+      "const": "EXACT_MATCH"
+    },
+    "path_resolution": {
+      "const": "OS_REALPATH_OF_CURRENT_SYS_EXECUTABLE"
+    },
+    "execute_resolved_realpath": {
+      "const": true
+    },
+    "path_lookup": {
+      "const": "FORBIDDEN"
+    },
+    "shell": {
+      "const": "FORBIDDEN"
+    },
+    "acquisition_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "captured_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "$defs": {
+    "platformProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operating_system",
+        "sys_platform",
+        "machine",
+        "python_implementation",
+        "python_major_minor",
+        "wheel_platform_tag"
+      ],
+      "properties": {
+        "operating_system": {
+          "const": "Windows"
+        },
+        "sys_platform": {
+          "const": "win32"
+        },
+        "machine": {
+          "const": "AMD64"
+        },
+        "python_implementation": {
+          "const": "CPython"
+        },
+        "python_major_minor": {
+          "const": "3.13"
+        },
+        "wheel_platform_tag": {
+          "const": "win_amd64"
+        }
+      }
+    },
+    "virtualEnvironment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "environment_root",
+        "repository_root",
+        "environment_root_outside_repository",
+        "sys_prefix",
+        "sys_base_prefix",
+        "is_virtual_environment",
+        "pyvenv_cfg_path",
+        "pyvenv_cfg_byte_size",
+        "pyvenv_cfg_raw_sha256",
+        "required_invocation_flags",
+        "user_site_enabled",
+        "pythonpath_present",
+        "sitecustomize_state"
+      ],
+      "properties": {
+        "kind": {
+          "const": "FRESH_REPOSITORY_EXTERNAL_VENV"
+        },
+        "environment_root": {
+          "$ref": "#/$defs/portableAbsoluteExecutablePath"
+        },
+        "repository_root": {
+          "$ref": "#/$defs/portableAbsoluteExecutablePath"
+        },
+        "environment_root_outside_repository": {
+          "const": true
+        },
+        "sys_prefix": {
+          "$ref": "#/$defs/portableAbsoluteExecutablePath"
+        },
+        "sys_base_prefix": {
+          "$ref": "#/$defs/portableAbsoluteExecutablePath"
+        },
+        "is_virtual_environment": {
+          "const": true
+        },
+        "pyvenv_cfg_path": {
+          "$ref": "#/$defs/portableAbsoluteExecutablePath"
+        },
+        "pyvenv_cfg_byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pyvenv_cfg_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "required_invocation_flags": {
+          "const": [
+            "-I",
+            "-X",
+            "utf8"
+          ]
+        },
+        "user_site_enabled": {
+          "const": false
+        },
+        "pythonpath_present": {
+          "const": false
+        },
+        "sitecustomize_state": {
+          "const": "ABSENT_IN_FROZEN_ENVIRONMENT"
+        }
+      },
+      "$comment": "The program gate resolves every path, proves environment_root and sys_prefix are the same external tree, sys_prefix differs from sys_base_prefix, pyvenv.cfg belongs to that tree, no repository path occurs in sys.path, and importlib cannot resolve sitecustomize or usercustomize."
+    },
+    "projectWheel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "distribution_name",
+        "distribution_version",
+        "wheel_path",
+        "byte_size",
+        "raw_sha256",
+        "source_snapshot_id",
+        "installed_into_environment"
+      ],
+      "properties": {
+        "distribution_name": {
+          "const": "aegis-quality-kernel"
+        },
+        "distribution_version": {
+          "const": "0.2.0a0"
+        },
+        "wheel_path": {
+          "$ref": "#/$defs/portableAbsoluteExecutablePath"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "source_snapshot_id": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "installed_into_environment": {
+          "const": true
+        }
+      }
+    },
+    "moduleOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "module_name",
+        "distribution_name",
+        "distribution_version",
+        "origin_path",
+        "origin_byte_size",
+        "origin_raw_sha256",
+        "origin_under_environment_root",
+        "origin_outside_repository",
+        "file_kind"
+      ],
+      "properties": {
+        "module_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+        },
+        "distribution_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "distribution_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "origin_path": {
+          "$ref": "#/$defs/portableAbsoluteExecutablePath"
+        },
+        "origin_byte_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "origin_raw_sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "origin_under_environment_root": {
+          "const": true
+        },
+        "origin_outside_repository": {
+          "const": true
+        },
+        "file_kind": {
+          "const": "REGULAR_FILE"
+        }
+      }
+    },
+    "portableAbsoluteExecutablePath": {
+      "oneOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/sourceHostAbsolutePath"
+        },
+        {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32767,
+          "pattern": "^/(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*[\\u0000\\r\\n])(?:[^/]+/)*[^/]+$"
+        }
+      ]
+    }
+  }
+}

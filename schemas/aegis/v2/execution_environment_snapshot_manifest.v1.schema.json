@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/execution_environment_snapshot_manifest.v1.schema.json",
+  "title": "ExecutionEnvironmentSnapshotManifest.v1",
+  "description": "Observed execution environment captured immediately before C starts.",
+  "$comment": "This document contains no execution_environment_snapshot_id. The gate derives it from exact UTF-8 JCS bytes, compares each observation to the static source-baseline contract, and stops C-F on drift. Agent claims cannot replace independently captured observations.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_kind",
+    "canonicalization",
+    "source_baseline_id",
+    "registry_snapshot_id",
+    "test_plan_revision_id",
+    "collector_identity",
+    "environments",
+    "captured_at_utc",
+    "capture_event_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ExecutionEnvironmentSnapshotManifest.v1"
+    },
+    "manifest_kind": {
+      "const": "EXECUTION_ENVIRONMENT_SNAPSHOT"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "registry_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "collector_identity": {
+      "$ref": "evidence_record.v1.schema.json#/$defs/principal"
+    },
+    "environments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/environmentObservation"
+      }
+    },
+    "captured_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    },
+    "capture_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    }
+  },
+  "$defs": {
+    "environmentObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment_id",
+        "scope",
+        "host_identity",
+        "operating_system",
+        "architecture",
+        "dependency_fingerprint",
+        "build_artifact_fingerprint",
+        "hardware_fingerprint",
+        "firmware_fingerprint",
+        "service_configuration_fingerprint",
+        "observation_evidence_refs"
+      ],
+      "properties": {
+        "environment_id": {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "LOCAL",
+            "REMOTE"
+          ]
+        },
+        "host_identity": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "operating_system": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "architecture": {
+          "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+        },
+        "dependency_fingerprint": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "build_artifact_fingerprint": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "hardware_fingerprint": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "firmware_fingerprint": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "service_configuration_fingerprint": {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        "observation_evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/evidenceId"
+          }
+        }
+      }
+    }
+  }
+}

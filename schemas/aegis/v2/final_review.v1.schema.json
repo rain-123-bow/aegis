@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/final_review.v1.schema.json",
+  "title": "FinalReview.v1",
+  "description": "Content-addressed F decision over the current D snapshot, E candidate, and kernel candidate basis.",
+  "$comment": "final_review_id is sha256:<SHA-256(UTF-8 JCS RFC8785 bytes of this object with final_review_id omitted)>. The gate requires producer_identity to equal the current F registry pointer, loads all three referenced artifacts, recomputes reviewed_fact_ids, and verifies evidence_refs. APPROVED requires a MATCH candidate basis and no report defect or blocker; REJECTED requires at least one exact production defect/blocker binding.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "final_review_id",
+    "canonicalization",
+    "run_id",
+    "source_baseline_id",
+    "registry_snapshot_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "state_seq",
+    "d_review_snapshot_id",
+    "report_candidate_id",
+    "report_candidate_basis_id",
+    "producer_identity",
+    "review_decision",
+    "reviewed_fact_ids",
+    "report_defect_ids",
+    "blocker_ids",
+    "evidence_refs",
+    "produced_attempt_id",
+    "produced_event_id",
+    "produced_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "FinalReview.v1"
+    },
+    "final_review_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "run_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "registry_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "execution_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "state_seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "d_review_snapshot_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "report_candidate_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "report_candidate_basis_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "producer_identity": {
+      "allOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role_slot_id": {
+              "const": "F"
+            },
+            "role": {
+              "const": "FINAL_REVIEWER"
+            }
+          }
+        }
+      ]
+    },
+    "review_decision": {
+      "type": "string",
+      "enum": [
+        "APPROVED",
+        "REJECTED"
+      ]
+    },
+    "reviewed_fact_ids": {
+      "$ref": "#/$defs/stableIdSet"
+    },
+    "report_defect_ids": {
+      "$ref": "#/$defs/stableIdSet"
+    },
+    "blocker_ids": {
+      "$ref": "#/$defs/stableIdSet"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/evidenceId"
+      }
+    },
+    "produced_attempt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "produced_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "produced_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "review_decision": {
+            "const": "APPROVED"
+          }
+        },
+        "required": [
+          "review_decision"
+        ]
+      },
+      "then": {
+        "properties": {
+          "report_defect_ids": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "blocker_ids": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      },
+      "else": {
+        "anyOf": [
+          {
+            "properties": {
+              "report_defect_ids": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "blocker_ids": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "stableIdSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/stableId"
+      }
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/property_expected_record.v1.schema.json",
+  "title": "PropertyExpectedRecord.v1",
+  "description": "Evaluator-only expected decision for one property instance, stored separately from all SUT-readable material.",
+  "$comment": "The oracle consumes only the immutable PropertyInstanceEnvelope.v1. The outer evaluator freezes the SUT output artifact first, invokes the independent oracle without exposing that artifact, then assembles this record. This record and its store are never mounted, projected, placed in argv/environment, or otherwise exposed to the SUT. record_sha256 is SHA-256 over the UTF-8 RFC 8785 JCS bytes of this object with record_sha256 omitted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "ordinal",
+    "instance_id",
+    "case_id",
+    "envelope_sha256",
+    "oracle_algorithm_id",
+    "oracle_source_manifest_entry_sha256",
+    "generated_after_sut_output_freeze",
+    "sut_output_artifact_raw_sha256",
+    "expected",
+    "record_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "PropertyExpectedRecord.v1"
+    },
+    "suite_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "ordinal": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "instance_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "case_id": {
+      "$ref": "common.v1.schema.json#/$defs/caseId"
+    },
+    "envelope_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "oracle_algorithm_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "oracle_source_manifest_entry_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "generated_after_sut_output_freeze": {
+      "const": true
+    },
+    "sut_output_artifact_raw_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "expected": {
+      "$ref": "sut_decision.v1.schema.json"
+    },
+    "record_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    }
+  }
+}

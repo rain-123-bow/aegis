@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/environment_gap.v1.schema.json",
+  "title": "EnvironmentGap.v1",
+  "description": "Environment condition that prevents acquisition or reproduction of valid evidence for one approved case.",
+  "$comment": "Required/optional is intentionally absent; the kernel derives it by intersecting case_id with VerdictInput case sets. A gap resolves only from later D-accepted evidence, never explanatory text. The gate must prove the case is approved, all evidence and identities match the execution contract, and resolution evidence is temporally later.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "gap_id",
+    "fact_type",
+    "case_id",
+    "claim",
+    "environment_component",
+    "unavailable_evidence",
+    "resolution",
+    "opening_evidence_refs",
+    "resolution_evidence_refs",
+    "producer_identity",
+    "reviewer_identity",
+    "source_baseline_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "opened_attempt_id",
+    "opened_event_id",
+    "resolved_event_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "EnvironmentGap.v1"
+    },
+    "gap_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "fact_type": {
+      "const": "ENVIRONMENT_GAP"
+    },
+    "case_id": {
+      "$ref": "common.v1.schema.json#/$defs/caseId"
+    },
+    "claim": {
+      "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+    },
+    "environment_component": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "unavailable_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+      }
+    },
+    "resolution": {
+      "type": "string",
+      "enum": [
+        "OPEN",
+        "RESOLVED"
+      ]
+    },
+    "opening_evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/evidenceId"
+      }
+    },
+    "resolution_evidence_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/evidenceId"
+      }
+    },
+    "producer_identity": {
+      "allOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role_slot_id": {
+              "const": "C"
+            },
+            "role": {
+              "const": "TEST_EXECUTOR"
+            }
+          }
+        }
+      ]
+    },
+    "reviewer_identity": {
+      "allOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role_slot_id": {
+              "const": "D"
+            },
+            "role": {
+              "const": "TEST_RESULT_REVIEWER"
+            }
+          }
+        }
+      ]
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "execution_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "opened_attempt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "opened_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "resolved_event_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/uuidV7"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "resolution": {
+            "const": "RESOLVED"
+          }
+        },
+        "required": [
+          "resolution"
+        ]
+      },
+      "then": {
+        "properties": {
+          "resolution_evidence_refs": {
+            "type": "array",
+            "minItems": 1
+          },
+          "resolved_event_id": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "resolution_evidence_refs": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "resolved_event_id": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

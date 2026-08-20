@@ -1,0 +1,571 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/common.v1.schema.json",
+  "title": "Aegis v2 Common Contract Definitions",
+  "description": "Closed, reusable primitives for Aegis v2 machine contracts.",
+  "$comment": "Formats are necessary but not sufficient. Program gates must also verify referential integrity, JCS hashes, path containment after realpath resolution, append-only history, and authoritative event origin. Validators must preload the complete frozen local schema bundle keyed by $id, disable network resolution, and verify bundle/root hashes before validation; the HTTPS $id is an identifier, not permission to fetch mutable main-branch content.",
+  "$defs": {
+    "uuidV7": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "Canonical lowercase UUIDv7."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Lowercase hexadecimal SHA-256 digest without an algorithm prefix."
+    },
+    "contentId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Content-addressed identity over the contract-defined canonical bytes."
+    },
+    "gitObjectId": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "stableId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Z][A-Z0-9]*(?:[-_.:][A-Z0-9][A-Z0-9]*)+$",
+      "description": "Permanent, case-sensitive domain identity. Display labels are not identities."
+    },
+    "graphDecisionReasonId": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "RULE:CANCEL_REQUESTED",
+            "RULE:CANCEL_QUIESCING",
+            "RULE:BLOCKING_PROCESS_BLOCKER",
+            "RULE:PHASE_PLAN_AUTHOR",
+            "RULE:PHASE_PLAN_REVIEW",
+            "RULE:PHASE_TEST_EXECUTION",
+            "RULE:PHASE_RESULT_REVIEW",
+            "RULE:PHASE_REPORT_DRAFT",
+            "RULE:PHASE_FINAL_REVIEW"
+          ]
+        },
+        {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^FACT:(?:BLOCKER|FINDING|GAP|UPSTREAM_DEFECT|JOB|CASE):[A-Z][A-Z0-9]*(?:[-_.:][A-Z0-9][A-Z0-9]*)+$"
+        }
+      ],
+      "$comment": "ROUTE reason_ids are ordered deterministically: governing RULE first; fact references next. Blocking blocker references sort by numeric stage_rank, opened_event_id UUID bytes, then blocker_id Unicode code-point order. Other fact references sort by the complete reason string. The program gate must enforce this because JSON Schema cannot compare array order to referenced objects."
+    },
+    "receiptRejectionId": {
+      "type": "string",
+      "enum": [
+        "REJECT_SCHEMA_INVALID",
+        "REJECT_ACTION_NOT_FOUND",
+        "REJECT_ACTION_EXPIRED",
+        "REJECT_RUN_MISMATCH",
+        "REJECT_NODE_MISMATCH",
+        "REJECT_ROLE_MISMATCH",
+        "REJECT_AGENT_MISMATCH",
+        "REJECT_PARENT_TASK_MISMATCH",
+        "REJECT_SOURCE_BASELINE_MISMATCH",
+        "REJECT_SOURCE_GENERATION_MISMATCH",
+        "REJECT_ROLE_SLOT_MISMATCH",
+        "REJECT_INSTANCE_REVISION_MISMATCH",
+        "REJECT_REGISTRY_SNAPSHOT_MISMATCH",
+        "REJECT_TEST_PLAN_REVISION_MISMATCH",
+        "REJECT_EXECUTION_CONTRACT_MISMATCH",
+        "REJECT_STATE_SEQ_MISMATCH",
+        "REJECT_NONCE_REPLAY",
+        "REJECT_PAYLOAD_HASH_MISMATCH",
+        "REJECT_AUTHORITY_EVENT_MISMATCH",
+        "REJECT_PROVISIONAL_TARGET",
+        "REJECT_SUPERSEDED_TARGET"
+      ]
+    },
+    "opaquePlatformId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9_./:@-]+$",
+      "description": "Opaque platform identifier; consumers must compare the exact string and must not derive identity from a display label."
+    },
+    "utcDateTime": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "runtimeAbsolutePath": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 32767,
+      "pattern": "^(?!.*(?:^|\\\\)\\.{1,2}(?:\\\\|$))[A-Za-z]:\\\\(?:[^\\\\/:*?\"<>|\\r\\n]+\\\\)*[^\\\\/:*?\"<>|\\r\\n]+$",
+      "description": "Drive-qualified local Windows runtime path. UNC paths are rejected for the v2 runtime mailbox.",
+      "$comment": "The program gate must resolve the path without following an untrusted symlink or junction, compare the normalized case-fold key, and prove containment in the configured run root. Regex alone cannot do this."
+    },
+    "sourceHostAbsolutePath": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/runtimeAbsolutePath"
+        },
+        {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 32767,
+          "pattern": "^\\\\\\\\(?!.*(?:^|\\\\)\\.{1,2}(?:\\\\|$))[^\\\\/:*?\"<>|\\r\\n]+\\\\[^\\\\/:*?\"<>|\\r\\n]+(?:\\\\[^\\\\/:*?\"<>|\\r\\n]+)*$"
+        }
+      ],
+      "description": "Frozen source-host path. Drive-qualified and UNC paths are accepted; runtime mailbox paths use runtimeAbsolutePath instead."
+    },
+    "repositoryRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)[^\\\\:\\r\\n]+$",
+      "$comment": "Uses forward slashes. The program gate must reject symlink, junction, submodule, and case-fold escapes after resolving it against the frozen repository root."
+    },
+    "runRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)[^\\\\:\\r\\n]+$",
+      "$comment": "Uses forward slashes and is relative to campaigns/<campaign_id>/runs/<run_id>. Program containment checks remain mandatory."
+    },
+    "runtimeCanonicalPathKey": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 32767,
+      "pattern": "^[a-z]:/[^\\r\\n]+$",
+      "description": "Slash-normalized, Unicode-normalized, case-folded drive path key for runtime artifacts."
+    },
+    "sourceCanonicalPathKey": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/runtimeCanonicalPathKey"
+        },
+        {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 32767,
+          "pattern": "^//[^/\\r\\n]+/[^/\\r\\n]+(?:/[^/\\r\\n]+)*$"
+        }
+      ],
+      "description": "Slash-normalized, Unicode-normalized, case-folded key for a drive-qualified or UNC source-host path."
+    },
+    "roleSlotId": {
+      "type": "string",
+      "enum": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F"
+      ]
+    },
+    "roleName": {
+      "type": "string",
+      "enum": [
+        "TEST_PLAN_AUTHOR",
+        "TEST_PLAN_REVIEWER",
+        "TEST_EXECUTOR",
+        "TEST_RESULT_REVIEWER",
+        "TEST_REPORT_WRITER",
+        "FINAL_REVIEWER"
+      ]
+    },
+    "graphNode": {
+      "type": "string",
+      "enum": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "KERNEL_CANCEL_COORDINATOR"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "P0",
+        "P1",
+        "P2",
+        "P3"
+      ]
+    },
+    "caseId": {
+      "$ref": "#/$defs/stableId"
+    },
+    "evidenceId": {
+      "$ref": "#/$defs/stableId"
+    },
+    "pathIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "absolute_path",
+        "repository_relative_path",
+        "canonical_casefold_key"
+      ],
+      "properties": {
+        "absolute_path": {
+          "$ref": "#/$defs/runtimeAbsolutePath"
+        },
+        "repository_relative_path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/repositoryRelativePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "canonical_casefold_key": {
+          "$ref": "#/$defs/runtimeCanonicalPathKey"
+        }
+      }
+    },
+    "fileRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "byte_size",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/pathIdentity"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "run_relative_path",
+        "sha256"
+      ],
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "run_relative_path": {
+          "$ref": "#/$defs/runRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "agentIdentityRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role_slot_id",
+        "role",
+        "source_generation_id",
+        "instance_revision",
+        "agent_handle",
+        "handle_source",
+        "thread_id",
+        "session_id"
+      ],
+      "properties": {
+        "role_slot_id": {
+          "$ref": "#/$defs/roleSlotId"
+        },
+        "role": {
+          "$ref": "#/$defs/roleName"
+        },
+        "source_generation_id": {
+          "$ref": "#/$defs/uuidV7"
+        },
+        "instance_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "agent_handle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/opaquePlatformId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional human-usable Codex agent path/handle. It is not a physical identity key."
+        },
+        "handle_source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "THREAD_SPAWN_AGENT_PATH",
+            null
+          ]
+        },
+        "thread_id": {
+          "$ref": "#/$defs/opaquePlatformId"
+        },
+        "session_id": {
+          "$ref": "#/$defs/opaquePlatformId"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "agent_handle": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "agent_handle"
+            ]
+          },
+          "then": {
+            "properties": {
+              "handle_source": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "handle_source": {
+                "const": "THREAD_SPAWN_AGENT_PATH"
+              }
+            }
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "A"
+                },
+                "role": {
+                  "const": "TEST_PLAN_AUTHOR"
+                }
+              }
+            },
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "B"
+                },
+                "role": {
+                  "const": "TEST_PLAN_REVIEWER"
+                }
+              }
+            },
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "C"
+                },
+                "role": {
+                  "const": "TEST_EXECUTOR"
+                }
+              }
+            },
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "D"
+                },
+                "role": {
+                  "const": "TEST_RESULT_REVIEWER"
+                }
+              }
+            },
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "E"
+                },
+                "role": {
+                  "const": "TEST_REPORT_WRITER"
+                }
+              }
+            },
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "F"
+                },
+                "role": {
+                  "const": "FINAL_REVIEWER"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "observedAgentIdentityRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role_slot_id",
+        "role",
+        "source_generation_id",
+        "instance_revision",
+        "agent_handle",
+        "handle_source",
+        "thread_id",
+        "session_id"
+      ],
+      "properties": {
+        "role_slot_id": {
+          "$ref": "#/$defs/roleSlotId"
+        },
+        "role": {
+          "$ref": "#/$defs/roleName"
+        },
+        "source_generation_id": {
+          "$ref": "#/$defs/uuidV7"
+        },
+        "instance_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "agent_handle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/opaquePlatformId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "handle_source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "THREAD_SPAWN_AGENT_PATH",
+            null
+          ]
+        },
+        "thread_id": {
+          "$ref": "#/$defs/opaquePlatformId"
+        },
+        "session_id": {
+          "$ref": "#/$defs/opaquePlatformId"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "agent_handle": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "agent_handle"
+            ]
+          },
+          "then": {
+            "properties": {
+              "handle_source": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "handle_source": {
+                "const": "THREAD_SPAWN_AGENT_PATH"
+              }
+            }
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "A"
+                },
+                "role": {
+                  "const": "TEST_PLAN_AUTHOR"
+                }
+              }
+            },
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "B"
+                },
+                "role": {
+                  "const": "TEST_PLAN_REVIEWER"
+                }
+              }
+            },
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "C"
+                },
+                "role": {
+                  "const": "TEST_EXECUTOR"
+                }
+              }
+            },
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "D"
+                },
+                "role": {
+                  "const": "TEST_RESULT_REVIEWER"
+                }
+              }
+            },
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "E"
+                },
+                "role": {
+                  "const": "TEST_REPORT_WRITER"
+                }
+              }
+            },
+            {
+              "properties": {
+                "role_slot_id": {
+                  "const": "F"
+                },
+                "role": {
+                  "const": "FINAL_REVIEWER"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

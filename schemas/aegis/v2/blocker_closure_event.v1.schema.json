@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/blocker_closure_event.v1.schema.json",
+  "title": "BlockerClosureEvent.v1",
+  "description": "Immutable append-only independent-review decision for one exact BlockerRecord preimage.",
+  "$comment": "closure_event_content_id is sha256:<SHA-256(UTF-8 JCS RFC8785 bytes of this object with closure_event_content_id omitted)>. The program gate loads source_blocker_content_id, requires blocker_id/origin_role/owner_role and all source/plan/execution identities to match, requires owner_identity.role_slot_id == owner_role, and requires reviewer_identity.role_slot_id to be neither origin_role nor owner_role. It validates both evidence sets and dependency propagation before CLOSED. Self-reported independence booleans are forbidden.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "closure_event_content_id",
+    "closure_event_id",
+    "blocker_id",
+    "source_blocker_content_id",
+    "closure_result",
+    "origin_role",
+    "owner_role",
+    "owner_identity",
+    "owner_evidence_refs",
+    "reviewer_identity",
+    "reviewer_evidence_refs",
+    "source_baseline_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "recorded_event_id",
+    "occurred_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "BlockerClosureEvent.v1"
+    },
+    "closure_event_content_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "closure_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "blocker_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "source_blocker_content_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "closure_result": {
+      "type": "string",
+      "enum": [
+        "CLOSED",
+        "REJECTED"
+      ]
+    },
+    "origin_role": {
+      "type": "string",
+      "enum": [
+        "B",
+        "D",
+        "F"
+      ]
+    },
+    "owner_role": {
+      "$ref": "common.v1.schema.json#/$defs/roleSlotId"
+    },
+    "owner_identity": {
+      "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+    },
+    "owner_evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/evidenceId"
+      }
+    },
+    "reviewer_identity": {
+      "allOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role_slot_id": {
+              "enum": [
+                "B",
+                "D",
+                "F"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "reviewer_evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/evidenceId"
+      }
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_contract_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "recorded_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "occurred_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "origin_role": {
+              "const": "B"
+            },
+            "reviewer_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "enum": [
+                    "D",
+                    "F"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "origin_role": {
+              "const": "D"
+            },
+            "reviewer_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "enum": [
+                    "B",
+                    "F"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "origin_role": {
+              "const": "F"
+            },
+            "reviewer_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "enum": [
+                    "B",
+                    "D"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "owner_role": {
+              "const": "A"
+            },
+            "owner_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "const": "A"
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "owner_role": {
+              "const": "B"
+            },
+            "owner_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "const": "B"
+                }
+              }
+            },
+            "reviewer_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "enum": [
+                    "D",
+                    "F"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "owner_role": {
+              "const": "C"
+            },
+            "owner_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "const": "C"
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "owner_role": {
+              "const": "D"
+            },
+            "owner_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "const": "D"
+                }
+              }
+            },
+            "reviewer_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "enum": [
+                    "B",
+                    "F"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "owner_role": {
+              "const": "E"
+            },
+            "owner_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "const": "E"
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "owner_role": {
+              "const": "F"
+            },
+            "owner_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "const": "F"
+                }
+              }
+            },
+            "reviewer_identity": {
+              "type": "object",
+              "properties": {
+                "role_slot_id": {
+                  "enum": [
+                    "B",
+                    "D"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -429,7 +429,7 @@ TEST_PLAN_BLOCKER_CLOSURE.json   # 仅当输入 open_blockers 非空时必须写
 
 ```text
 status == true
-score >= 90
+score >= 95
 open_blockers.length == 0
 不存在 P0 blocker
 previous open blockers 均在 TEST_PLAN_BLOCKER_CLOSURE.json 中显式关闭
@@ -437,7 +437,7 @@ previous open blockers 均在 TEST_PLAN_BLOCKER_CLOSURE.json 中显式关闭
 
 禁止行为：
 
-1. `score < 90` 但写 `status=true`。
+1. `score < 95` 但写 `status=true`。
 2. 有 open blocker 但写 `status=true`。
 3. 用 HUMAN_SUMMARY 或 TEST_PLAN_REVIEW.md 代替 JSON blocker。
 4. 失败但不给 actionable blocker。

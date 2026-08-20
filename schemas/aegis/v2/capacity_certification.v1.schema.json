@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/capacity_certification.v1.schema.json",
+  "title": "CapacityCertification.v1",
+  "description": "Immutable Phase 0B proof for the certified generation, replacement, and physical-instance capacity contract.",
+  "$comment": "This manifest contains no capacity_certification_id. The gate derives it as sha256:<SHA-256(UTF-8 JCS bytes)>. Codex CLI 0.145.0 exposes no declared capacity field; only controlled same-Desktop observations can certify G, R, and P. Any CLI/Desktop/protocol/config/parent-task mismatch invalidates this certification.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_kind",
+    "canonicalization",
+    "source_baseline_id",
+    "parent_task_id",
+    "codex_cli_version",
+    "codex_desktop_version",
+    "app_server_protocol_semantic_sha256",
+    "relevant_feature_config_sha256",
+    "capacity_contract",
+    "scenario_observations",
+    "all_observed_identities",
+    "certification_outcome",
+    "reviewer_evidence_ids",
+    "certified_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "CapacityCertification.v1"
+    },
+    "manifest_kind": {
+      "const": "CAPACITY_CERTIFICATION"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "parent_task_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "codex_cli_version": {
+      "const": "0.145.0"
+    },
+    "codex_desktop_version": {
+      "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+    },
+    "app_server_protocol_semantic_sha256": {
+      "const": "1bc09dedc506075562d4d49b702ecab6d947dd5a8c2a9014a5cde592a0938efb"
+    },
+    "relevant_feature_config_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "capacity_contract": {
+      "$ref": "#/$defs/capacityContract"
+    },
+    "scenario_observations": {
+      "type": "array",
+      "minItems": 12,
+      "items": {
+        "$ref": "#/$defs/scenarioObservation"
+      }
+    },
+    "all_observed_identities": {
+      "type": "array",
+      "minItems": 18,
+      "items": {
+        "$ref": "agent_identity.v1.schema.json"
+      }
+    },
+    "certification_outcome": {
+      "type": "string",
+      "enum": [
+        "CERTIFIED",
+        "FAILED"
+      ]
+    },
+    "reviewer_evidence_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/evidenceId"
+      }
+    },
+    "certified_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "For CERTIFIED, the gate requires exactly one successful observation for GEN_1_CREATE, GEN_2_CREATE, THIRD_GENERATION_BLOCKED_BEFORE_CREATE, REPLACEMENT_A through REPLACEMENT_F, SEVENTH_REPLACEMENT_BLOCKED_BEFORE_CREATE, DESKTOP_RESTART_RECOVERY, and PLATFORM_CONFIRMED_CLOSE_RELEASE. It verifies observed identity uniqueness by thread_id+session_id, 12 retained instances before replacement, 18 after six replacements, zero newly created identity on both blocked scenarios, authoritative close before capacity release, and every authority/evidence reference."
+    }
+  ],
+  "$defs": {
+    "capacityContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_retained_source_generations",
+        "replacement_reserve",
+        "physical_instance_budget"
+      ],
+      "properties": {
+        "max_retained_source_generations": {
+          "type": "integer",
+          "const": 2
+        },
+        "replacement_reserve": {
+          "type": "integer",
+          "const": 6
+        },
+        "physical_instance_budget": {
+          "type": "integer",
+          "const": 18
+        }
+      },
+      "$comment": "CapacityCertification.v1 freezes the base certified contract G=2, R=6, P=18. A higher contract requires a new schema revision with explicit boundary scenarios."
+    },
+    "scenarioObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario_id",
+        "outcome",
+        "occupied_before",
+        "occupied_after",
+        "created_identities",
+        "authority_event_ids",
+        "evidence_ids",
+        "observed_at_utc"
+      ],
+      "properties": {
+        "scenario_id": {
+          "type": "string",
+          "enum": [
+            "GEN_1_CREATE",
+            "GEN_2_CREATE",
+            "THIRD_GENERATION_BLOCKED_BEFORE_CREATE",
+            "REPLACEMENT_A",
+            "REPLACEMENT_B",
+            "REPLACEMENT_C",
+            "REPLACEMENT_D",
+            "REPLACEMENT_E",
+            "REPLACEMENT_F",
+            "SEVENTH_REPLACEMENT_BLOCKED_BEFORE_CREATE",
+            "DESKTOP_RESTART_RECOVERY",
+            "PLATFORM_CONFIRMED_CLOSE_RELEASE"
+          ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "OBSERVED",
+            "BLOCKED_BEFORE_CREATE",
+            "FAILED"
+          ]
+        },
+        "occupied_before": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "occupied_after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "created_identities": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+          }
+        },
+        "authority_event_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/uuidV7"
+          }
+        },
+        "evidence_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/evidenceId"
+          }
+        },
+        "observed_at_utc": {
+          "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "BLOCKED_BEFORE_CREATE"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+          "created_identities": {
+            "type": "array",
+            "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

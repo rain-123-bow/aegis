@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/upstream_defect.v1.schema.json",
+  "title": "UpstreamDefect.v1",
+  "description": "Verified defect in requirements, implementation plan, Master input, or frozen source baseline.",
+  "$comment": "An upstream defect is append-only and cannot close during its active run. The kernel must terminate normal routing to Master/user discussion after independent reviewer verification.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "upstream_defect_id",
+    "fact_type",
+    "defect_kind",
+    "severity",
+    "claim",
+    "violated_requirement",
+    "evidence_refs",
+    "reviewer_identity",
+    "source_baseline_id",
+    "test_plan_revision_id",
+    "execution_contract_id",
+    "opened_attempt_id",
+    "opened_event_id",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "UpstreamDefect.v1"
+    },
+    "upstream_defect_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "fact_type": {
+      "const": "UPSTREAM_DEFECT"
+    },
+    "defect_kind": {
+      "type": "string",
+      "enum": [
+        "REQUIREMENT",
+        "IMPLEMENTATION_PLAN",
+        "MASTER_INPUT",
+        "SOURCE_BASELINE"
+      ]
+    },
+    "severity": {
+      "$ref": "common.v1.schema.json#/$defs/severity"
+    },
+    "claim": {
+      "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+    },
+    "violated_requirement": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/stableId"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "$comment": "Null is allowed when the defective upstream object is the requirement set itself, Master input, implementation plan, or source baseline and no valid requirement identity exists."
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/evidenceId"
+      }
+    },
+    "reviewer_identity": {
+      "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "test_plan_revision_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_contract_id": {
+      "anyOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/contentId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "opened_attempt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "opened_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "status": {
+      "const": "OPEN"
+    }
+  }
+}

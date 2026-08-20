@@ -1,0 +1,805 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/evaluation_runner_output.v1.schema.json",
+  "title": "EvaluationRunnerOutput.v1",
+  "description": "Fail-closed outer-evaluator result for pre-spawn blocks, audited isolated execution failures, or a comparison-ready SUT decision.",
+  "$comment": "runner_output_sha256 is SHA-256 over the UTF-8 JCS RFC 8785 bytes of this object with runner_output_sha256 omitted. Pre-spawn states contain no process record and prove spawn_attempted=false. Executed failure states retain the verified-isolation RunnerExecutionRecord but contain no SutDecision and cannot be compared or pass. Only SUT_DECISION_READY may contain SutDecision.v1 and enter the case comparator. Process facts have one source in RunnerExecutionRecord; state-specific constraints bind the outer state to its termination, return-code, and stdout-decoding facts. The evaluator verifies all mirrored IDs/hashes and every semantic cross-field invariant.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evaluation_execution_id",
+    "runner_contract_id",
+    "case_id",
+    "input_binding_id",
+    "runner_input_jcs_sha256",
+    "runner_state",
+    "runner_output_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "EvaluationRunnerOutput.v1"
+    },
+    "evaluation_execution_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "runner_contract_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "case_id": {
+      "$ref": "common.v1.schema.json#/$defs/caseId"
+    },
+    "input_binding_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "runner_input_jcs_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "runner_state": {
+      "type": "string",
+      "enum": [
+        "SUT_DECISION_READY",
+        "SUT_PROCESS_NONZERO_EXIT",
+        "SUT_PROCESS_TIMEOUT",
+        "SUT_PROCESS_SIGNALLED_OR_TERMINATED",
+        "SUT_SPAWN_FAILED",
+        "SUT_STDOUT_INVALID_UTF8",
+        "SUT_STDOUT_INVALID_JSON",
+        "SUT_DECISION_SCHEMA_INVALID",
+        "SUT_DECISION_SELF_HASH_INVALID",
+        "BLOCKED_INVALID_RUNNER_INPUT",
+        "BLOCKED_INVALID_RUNNER_CONTRACT",
+        "BLOCKED_UNSUPPORTED_PLATFORM",
+        "BLOCKED_INVALID_PYTHON_BINDING",
+        "BLOCKED_FIXTURE_PREPARATION",
+        "BLOCKED_UNVERIFIED_ISOLATION"
+      ]
+    },
+    "sut_input_jcs_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "sut_output_schema_id": {
+      "const": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/sut_decision.v1.schema.json"
+    },
+    "sut_decision": {
+      "$ref": "sut_decision.v1.schema.json"
+    },
+    "sut_decision_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "python_executable_binding_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "runner_execution_record_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "execution_record": {
+      "$ref": "runner_execution_record.v1.schema.json"
+    },
+    "isolation_binding": {
+      "$ref": "evaluation_isolation_binding.v1.schema.json"
+    },
+    "pre_spawn_block": {
+      "$ref": "#/$defs/preSpawnBlock"
+    },
+    "execution_failure": {
+      "$ref": "#/$defs/executionFailure"
+    },
+    "runner_output_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "const": "SUT_DECISION_READY"
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "sut_input_jcs_sha256",
+          "sut_output_schema_id",
+          "sut_decision",
+          "sut_decision_sha256",
+          "python_executable_binding_id",
+          "runner_execution_record_id",
+          "execution_record"
+        ],
+        "properties": {
+          "sut_input_jcs_sha256": true,
+          "sut_output_schema_id": true,
+          "sut_decision": true,
+          "sut_decision_sha256": true,
+          "python_executable_binding_id": true,
+          "runner_execution_record_id": true,
+          "execution_record": {
+            "type": "object",
+            "properties": {
+              "return_code": {
+                "const": 0
+              },
+              "process": {
+                "type": "object",
+                "properties": {
+                  "termination_kind": {
+                    "const": "EXITED"
+                  }
+                },
+                "required": [
+                  "termination_kind"
+                ]
+              },
+              "stdout_decoding": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "const": "VALID_SUT_DECISION"
+                  }
+                },
+                "required": [
+                  "state"
+                ]
+              }
+            },
+            "required": [
+              "return_code",
+              "process",
+              "stdout_decoding"
+            ]
+          },
+          "isolation_binding": false,
+          "pre_spawn_block": false,
+          "execution_failure": false
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "enum": [
+              "SUT_PROCESS_NONZERO_EXIT",
+              "SUT_PROCESS_TIMEOUT",
+              "SUT_PROCESS_SIGNALLED_OR_TERMINATED",
+              "SUT_SPAWN_FAILED",
+              "SUT_STDOUT_INVALID_UTF8",
+              "SUT_STDOUT_INVALID_JSON",
+              "SUT_DECISION_SCHEMA_INVALID",
+              "SUT_DECISION_SELF_HASH_INVALID"
+            ]
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "sut_input_jcs_sha256",
+          "python_executable_binding_id",
+          "runner_execution_record_id",
+          "execution_record",
+          "execution_failure"
+        ],
+        "properties": {
+          "sut_input_jcs_sha256": true,
+          "python_executable_binding_id": true,
+          "runner_execution_record_id": true,
+          "execution_record": true,
+          "execution_failure": true,
+          "sut_output_schema_id": false,
+          "sut_decision": false,
+          "sut_decision_sha256": false,
+          "isolation_binding": false,
+          "pre_spawn_block": false
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "enum": [
+              "BLOCKED_INVALID_RUNNER_INPUT",
+              "BLOCKED_INVALID_RUNNER_CONTRACT",
+              "BLOCKED_UNSUPPORTED_PLATFORM",
+              "BLOCKED_INVALID_PYTHON_BINDING",
+              "BLOCKED_FIXTURE_PREPARATION",
+              "BLOCKED_UNVERIFIED_ISOLATION"
+            ]
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "pre_spawn_block"
+        ],
+        "properties": {
+          "pre_spawn_block": true,
+          "sut_input_jcs_sha256": false,
+          "sut_output_schema_id": false,
+          "sut_decision": false,
+          "sut_decision_sha256": false,
+          "python_executable_binding_id": false,
+          "runner_execution_record_id": false,
+          "execution_record": false,
+          "execution_failure": false
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "const": "BLOCKED_UNVERIFIED_ISOLATION"
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "isolation_binding"
+        ],
+        "properties": {
+          "isolation_binding": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "UNVERIFIED_ISOLATION"
+              },
+              "execution_authorized": {
+                "const": false
+              }
+            },
+            "required": [
+              "state",
+              "execution_authorized"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "enum": [
+              "BLOCKED_INVALID_RUNNER_INPUT",
+              "BLOCKED_INVALID_RUNNER_CONTRACT",
+              "BLOCKED_UNSUPPORTED_PLATFORM",
+              "BLOCKED_INVALID_PYTHON_BINDING",
+              "BLOCKED_FIXTURE_PREPARATION"
+            ]
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "isolation_binding": false
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "const": "SUT_PROCESS_NONZERO_EXIT"
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/nonzeroExitBinding"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "const": "SUT_PROCESS_TIMEOUT"
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/timeoutBinding"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "const": "SUT_PROCESS_SIGNALLED_OR_TERMINATED"
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/signalledBinding"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "const": "SUT_SPAWN_FAILED"
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/spawnFailedBinding"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "const": "SUT_STDOUT_INVALID_UTF8"
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/stdoutInvalidUtf8Binding"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "const": "SUT_STDOUT_INVALID_JSON"
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/stdoutInvalidJsonBinding"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "const": "SUT_DECISION_SCHEMA_INVALID"
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/decisionSchemaInvalidBinding"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runner_state": {
+            "const": "SUT_DECISION_SELF_HASH_INVALID"
+          }
+        },
+        "required": [
+          "runner_state"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/decisionHashInvalidBinding"
+      }
+    }
+  ],
+  "$defs": {
+    "preSpawnBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "spawn_attempted",
+        "comparison_performed",
+        "pass_eligible",
+        "reason_ids",
+        "evidence_ids"
+      ],
+      "properties": {
+        "spawn_attempted": {
+          "const": false
+        },
+        "comparison_performed": {
+          "const": false
+        },
+        "pass_eligible": {
+          "const": false
+        },
+        "reason_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        },
+        "evidence_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          }
+        }
+      }
+    },
+    "executionFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "comparison_performed",
+        "pass_eligible",
+        "reason_ids",
+        "evidence_ids"
+      ],
+      "properties": {
+        "comparison_performed": {
+          "const": false
+        },
+        "pass_eligible": {
+          "const": false
+        },
+        "reason_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        },
+        "evidence_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/contentId"
+          }
+        }
+      }
+    },
+    "executionRecordBinding": {
+      "type": "object",
+      "required": [
+        "execution_record"
+      ],
+      "properties": {
+        "execution_record": {
+          "type": "object",
+          "required": [
+            "process",
+            "return_code",
+            "stdout_decoding"
+          ],
+          "properties": {
+            "process": true,
+            "return_code": true,
+            "stdout_decoding": true
+          }
+        }
+      }
+    },
+    "nonzeroExitBinding": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/executionRecordBinding"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "execution_record": {
+              "type": "object",
+              "properties": {
+                "process": {
+                  "type": "object",
+                  "properties": {
+                    "termination_kind": {
+                      "const": "EXITED"
+                    }
+                  }
+                },
+                "return_code": {
+                  "type": "integer",
+                  "not": {
+                    "const": 0
+                  }
+                },
+                "stdout_decoding": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "const": "INVALID_OR_ABSENT_SUT_DECISION"
+                    },
+                    "failure_reason": {
+                      "const": "PROCESS_DID_NOT_EXIT_ZERO"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "timeoutBinding": {
+      "$ref": "#/$defs/failureByTerminationTimeout"
+    },
+    "signalledBinding": {
+      "$ref": "#/$defs/failureByTerminationSignal"
+    },
+    "spawnFailedBinding": {
+      "$ref": "#/$defs/failureBySpawn"
+    },
+    "stdoutInvalidUtf8Binding": {
+      "$ref": "#/$defs/failureByStdoutUtf8"
+    },
+    "stdoutInvalidJsonBinding": {
+      "$ref": "#/$defs/failureByStdoutJson"
+    },
+    "decisionSchemaInvalidBinding": {
+      "$ref": "#/$defs/failureByDecisionSchema"
+    },
+    "decisionHashInvalidBinding": {
+      "$ref": "#/$defs/failureByDecisionHash"
+    },
+    "failureByTerminationTimeout": {
+      "type": "object",
+      "properties": {
+        "execution_record": {
+          "type": "object",
+          "properties": {
+            "process": {
+              "type": "object",
+              "properties": {
+                "termination_kind": {
+                  "const": "TIMED_OUT_AND_TERMINATED"
+                }
+              }
+            },
+            "stdout_decoding": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "const": "INVALID_OR_ABSENT_SUT_DECISION"
+                },
+                "failure_reason": {
+                  "const": "TIMEOUT"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "failureByTerminationSignal": {
+      "type": "object",
+      "properties": {
+        "execution_record": {
+          "type": "object",
+          "properties": {
+            "process": {
+              "type": "object",
+              "properties": {
+                "termination_kind": {
+                  "const": "SIGNALLED_OR_FORCIBLY_TERMINATED"
+                }
+              }
+            },
+            "stdout_decoding": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "const": "INVALID_OR_ABSENT_SUT_DECISION"
+                },
+                "failure_reason": {
+                  "const": "PROCESS_SIGNALLED_OR_TERMINATED"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "failureBySpawn": {
+      "type": "object",
+      "properties": {
+        "execution_record": {
+          "type": "object",
+          "properties": {
+            "process": {
+              "type": "object",
+              "properties": {
+                "termination_kind": {
+                  "const": "SPAWN_FAILED"
+                }
+              }
+            },
+            "return_code": {
+              "type": "null"
+            },
+            "stdout_decoding": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "const": "INVALID_OR_ABSENT_SUT_DECISION"
+                },
+                "failure_reason": {
+                  "const": "SPAWN_FAILED"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "failureByStdoutUtf8": {
+      "$ref": "#/$defs/zeroExitStdoutFailureUtf8"
+    },
+    "failureByStdoutJson": {
+      "$ref": "#/$defs/zeroExitStdoutFailureJson"
+    },
+    "failureByDecisionSchema": {
+      "$ref": "#/$defs/zeroExitDecisionFailureSchema"
+    },
+    "failureByDecisionHash": {
+      "$ref": "#/$defs/zeroExitDecisionFailureHash"
+    },
+    "zeroExitStdoutFailureUtf8": {
+      "type": "object",
+      "properties": {
+        "execution_record": {
+          "type": "object",
+          "properties": {
+            "process": {
+              "type": "object",
+              "properties": {
+                "termination_kind": {
+                  "const": "EXITED"
+                }
+              }
+            },
+            "return_code": {
+              "const": 0
+            },
+            "stdout_decoding": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "const": "INVALID_OR_ABSENT_SUT_DECISION"
+                },
+                "failure_reason": {
+                  "const": "STDOUT_NOT_UTF8"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "zeroExitStdoutFailureJson": {
+      "type": "object",
+      "properties": {
+        "execution_record": {
+          "type": "object",
+          "properties": {
+            "process": {
+              "type": "object",
+              "properties": {
+                "termination_kind": {
+                  "const": "EXITED"
+                }
+              }
+            },
+            "return_code": {
+              "const": 0
+            },
+            "stdout_decoding": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "const": "INVALID_OR_ABSENT_SUT_DECISION"
+                },
+                "failure_reason": {
+                  "const": "STDOUT_NOT_EXACT_SINGLE_JSON"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "zeroExitDecisionFailureSchema": {
+      "type": "object",
+      "properties": {
+        "execution_record": {
+          "type": "object",
+          "properties": {
+            "process": {
+              "type": "object",
+              "properties": {
+                "termination_kind": {
+                  "const": "EXITED"
+                }
+              }
+            },
+            "return_code": {
+              "const": 0
+            },
+            "stdout_decoding": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "const": "INVALID_OR_ABSENT_SUT_DECISION"
+                },
+                "failure_reason": {
+                  "const": "SUT_DECISION_SCHEMA_INVALID"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "zeroExitDecisionFailureHash": {
+      "type": "object",
+      "properties": {
+        "execution_record": {
+          "type": "object",
+          "properties": {
+            "process": {
+              "type": "object",
+              "properties": {
+                "termination_kind": {
+                  "const": "EXITED"
+                }
+              }
+            },
+            "return_code": {
+              "const": 0
+            },
+            "stdout_decoding": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "const": "INVALID_OR_ABSENT_SUT_DECISION"
+                },
+                "failure_reason": {
+                  "const": "SUT_DECISION_SELF_HASH_INVALID"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

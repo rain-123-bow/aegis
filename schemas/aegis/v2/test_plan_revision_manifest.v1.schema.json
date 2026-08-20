@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/test_plan_revision_manifest.v1.schema.json",
+  "title": "TestPlanRevisionManifest.v1",
+  "description": "B-approved test plan revision on one immutable source baseline.",
+  "$comment": "This document contains no test_plan_revision_id. The gate derives it from exact UTF-8 JCS bytes and freezes it only after B approval. Any case, required flag, objective safety-stop condition, artifact hash, or A/B attempt change produces a new revision and invalidates downstream C-F evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_kind",
+    "canonicalization",
+    "source_baseline_id",
+    "approved_by",
+    "approved_attempt_id",
+    "approved_event_id",
+    "a_b_attempt_ids",
+    "test_plan",
+    "traceability_matrix",
+    "case_index",
+    "approved_cases",
+    "frozen_at_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "TestPlanRevisionManifest.v1"
+    },
+    "manifest_kind": {
+      "const": "TEST_PLAN_REVISION"
+    },
+    "canonicalization": {
+      "const": "JCS-RFC8785"
+    },
+    "source_baseline_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "approved_by": {
+      "allOf": [
+        {
+          "$ref": "common.v1.schema.json#/$defs/agentIdentityRef"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role_slot_id": {
+              "const": "B"
+            },
+            "role": {
+              "const": "TEST_PLAN_REVIEWER"
+            }
+          }
+        }
+      ]
+    },
+    "approved_attempt_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "approved_event_id": {
+      "$ref": "common.v1.schema.json#/$defs/uuidV7"
+    },
+    "a_b_attempt_ids": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/uuidV7"
+      }
+    },
+    "test_plan": {
+      "$ref": "common.v1.schema.json#/$defs/artifactReference"
+    },
+    "traceability_matrix": {
+      "$ref": "common.v1.schema.json#/$defs/artifactReference"
+    },
+    "case_index": {
+      "$ref": "common.v1.schema.json#/$defs/artifactReference"
+    },
+    "approved_cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/approvedCase"
+      },
+      "$comment": "The program gate enforces permanent unique case_id values and deterministic case_id ordering."
+    },
+    "frozen_at_utc": {
+      "$ref": "common.v1.schema.json#/$defs/utcDateTime"
+    }
+  },
+  "$defs": {
+    "approvedCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "requirement_ids",
+        "required",
+        "objective_safety_stop_conditions"
+      ],
+      "properties": {
+        "case_id": {
+          "$ref": "common.v1.schema.json#/$defs/caseId"
+        },
+        "requirement_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/stableId"
+          }
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "objective_safety_stop_conditions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/nonEmptyString"
+          }
+        }
+      }
+    }
+  }
+}

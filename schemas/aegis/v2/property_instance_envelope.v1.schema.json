@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rain-123-bow/aegis/main/schemas/aegis/v2/property_instance_envelope.v1.schema.json",
+  "title": "PropertyInstanceEnvelope.v1",
+  "description": "Evaluator-only identity and assignment envelope for one exhaustive property instance.",
+  "$comment": "This envelope cannot contain expected, oracle output, runner_input, or materialized fixture bytes and is never projected directly to the SUT. The owning PropertySuite freezes the exact domain, domain order, instance_id algorithm, case_id algorithm, materializer, and validation policy. instance_id is a content ID over {suite_id, assignment}; case_id is a stable non-content identifier derived from suite_id and the one-based ordinal. envelope_sha256 is SHA-256 over the UTF-8 RFC 8785 JCS bytes of this object with envelope_sha256 omitted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "ordinal",
+    "instance_id",
+    "case_id",
+    "assignment",
+    "envelope_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "PropertyInstanceEnvelope.v1"
+    },
+    "suite_id": {
+      "$ref": "common.v1.schema.json#/$defs/stableId"
+    },
+    "ordinal": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "instance_id": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    },
+    "case_id": {
+      "$ref": "common.v1.schema.json#/$defs/caseId"
+    },
+    "assignment": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "envelope_sha256": {
+      "$ref": "common.v1.schema.json#/$defs/contentId"
+    }
+  }
+}
