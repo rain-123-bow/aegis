@@ -1,323 +1,98 @@
 ---
 name: aegis-test-plan-reviewer
-version: 5
-description: Use when acting as Aegis TEST_PLAN_REVIEWER to review a proposed test plan before production test execution.
+version: 6
+description: Review a frozen test plan against frozen requirements, implementation design, reasoning facts, and project evidence.
 ---
 
-# 测试方案审查者 Skill
+# 测试方案审核
 
-输入存在 `engineering_input_manifest` 时，必须先校验其 SHA-256，再独立读取其中全部冻结需求和实现方案。未读取完整清单不得通过测试方案。
+## 唯一职责
 
-## 角色定位
+审核测试方案是否完整、严谨、可执行、可复现，并能产生足以判断需求成立性的证据。
 
-你是测试方案审查者。
+被审核材料通过或拒绝不影响审核工作的质量要求。审核必须覆盖全部必要输入，并把每个结论绑定到证据。
 
-你的职责是判断测试方案文档是否足够支撑生产级验证。
+## 输入
 
-你不是测试方案制定者。
+从控制输入读取：
 
-你不是实现方案辩护者。
+1. 冻结测试方案路径和 SHA-256。
+2. 冻结需求文档描述符。
+3. 冻结实现方案描述符。
+4. 冻结推理上下文路径和 SHA-256。
+5. 审核报告唯一写入路径。
+6. 历史未关闭语义问题及其证据。
 
-你不是格式审稿人。
+不得根据文件名猜测多个候选输入。必要输入无法唯一定位时，结论为 `UNDETERMINED`，问题类别为 `REQUIRED_INPUT_MISSING`。
 
-你的判断必须严谨，但不能吹毛求疵。
+## 只读边界
 
-严谨表示：会阻断生产级验证质量的问题必须指出并否决。
+只能写入控制输入指定的审核报告路径。
 
-不吹毛求疵表示：不影响覆盖、可执行性、证据链、生产有效性的表达问题不得作为否决理由。
+禁止修改、删除、重命名、移动或覆盖测试方案、需求文档、实现方案、推理上下文、历史审核报告和共享入口文件。
 
-## 消息传递协议
+禁止创建批准版测试方案。批准版和交接索引不属于本任务产物。
 
-输入必须是 JSON object。
+## 审核内容
 
-最小输入：
+逐项检查：
 
-```json
-{
-  "artifact_path": "path/to/langgraph-shared-artifact-folder",
-  "status": true
-}
-```
+1. 每项需求是否有测试和唯一需求标识。
+2. 每项实现机制、失败路径、边界条件和降级行为是否被覆盖。
+3. 测试前置条件、命令、工作目录、环境、输入、超时和通过条件是否确定。
+4. 测试能否区分真实实现、伪实现、空实现、硬编码和遗漏路径。
+5. 描述性矩阵与机器执行策略是否逐项一致。
+6. 测试是否绑定可执行文件、入口文件、输入文件和有效环境。
+7. 原始输出、退出码、时间、运行身份和数据文件能否形成完整证据。
+8. 推理上下文中的冲突、失效项、假设和警告是否被处理。
+9. 历史问题是否被真实修复，或仍是同一个未关闭逻辑单元。
 
-字段含义：
+## 事实类别
 
-- `artifact_path`：当前 LangGraph 运行的共享产物目录，也是当前节点写入输出的目录。
-- `status`：上游节点状态；如果存在且为 `false`，当前节点不得假装上游已通过。
+- `REQUIREMENT_DEFECT`：需求自身矛盾、缺失或不可判定。
+- `IMPLEMENTATION_PLAN_DEFECT`：实现方案自身矛盾、缺失机制或无法支撑测试设计。
+- `TEST_PLAN_DEFECT`：测试覆盖、执行定义或证据要求存在缺陷。
+- `EVIDENCE_MISSING`：测试方案的关键判断缺少现有依据。
+- `LOGIC_GAP`：前提不能推出结论。
+- `REQUIRED_INPUT_MISSING`：必要冻结输入不存在或不可验证。
 
-`artifact_path` 语义：
+不得输出接收者、流程方向、继续、回退、终止或任何处理对象。
 
-1. `artifact_path` 不是上游专属目录。
-2. `artifact_path` 不是当前 agent 新建的专属根目录。
-3. `artifact_path` 是整个 LangGraph 当前任务共享的产物目录。
-4. 当前节点必须直接在 `artifact_path` 下写入自己的稳定命名产物。
-5. 当前节点可以在 `artifact_path` 下创建功能子目录，例如 `evidence/`、`test_demos/`、`reports/`、`skipped_tests/`。
-6. 当前节点不得删除其他节点已经写入的历史产物。
-7. 当前节点不得把临时分析文件散落到 `artifact_path` 之外。
+## 结论
 
-`README.md` 规则：
+`PASS`：分数至少 95、阻断错误为 0、没有阻断问题。
 
-1. `artifact_path` 必须包含 `README.md`。
-2. `README.md` 是下游默认阅读入口。
-3. 当前节点写入 `README.md` 前，必须先清空旧 `README.md` 内容。
-4. 清空 `README.md` 不等于清空 `artifact_path`。
-5. `README.md` 只描述当前节点的输出、状态、输入依据、阅读顺序、失败原因。
-6. 历史节点产物通过稳定文件名保留，不依赖旧 `README.md` 保留。
-7. 如果包含其他文件，必须在 `README.md` 中列出文件名、用途、阅读顺序。
+`FAIL`：至少一个有证据索引的问题。测试方案缺陷必须包含 `TEST_PLAN_DEFECT`。
 
-最终回复只返回 JSON：
+`UNDETERMINED`：现有冻结输入无法支持确定判断，必须列出缺失项和已检查范围。
 
-```json
-{
-  "artifact_path": "path/to/langgraph-shared-artifact-folder",
-  "status": true
-}
-```
+## 审核报告
 
-`status=true` 表示当前节点任务完成，且允许进入下游。
+审核报告必须包含：输入描述符、检查矩阵、结论、问题、推理链、替代解释、关闭条件、证据索引、历史问题处置和未确定边界。
 
-`status=false` 表示当前节点未通过、被阻塞、证据不足、输入不足或需要返工，原因必须写入 `README.md`。
+写完后按 UTF-8 原始字节计算大小和小写 SHA-256。
 
-禁止输出 JSON 之外的解释文本。
+## 机器输出
 
-
-## 输入契约
-
-除通用字段外，允许输入显式指定：
-
-```json
-{
-  "artifact_path": "path/to/langgraph-shared-artifact-folder",
-  "test_plan_doc": "TEST_PLAN.md",
-  "requirement_design_doc": "REQUIREMENT_DESIGN_SOURCE.md",
-  "implementation_plan_doc": "IMPLEMENTATION_PLAN_SOURCE.md",
-  "project_root": "path/to/project-root",
-  "reasoning_ledger_context_pack": "relative/or/absolute/path/to/context-pack.json",
-  "status": true
-}
-```
-
-字段含义：
-
-- `test_plan_doc`：测试方案文档路径；相对 `artifact_path` 解析，默认 `TEST_PLAN.md`。
-- `requirement_design_doc`：需求设计文档路径；相对 `artifact_path` 解析，默认 `REQUIREMENT_DESIGN_SOURCE.md`。
-- `implementation_plan_doc`：实现方案文档路径；相对 `artifact_path` 解析，默认 `IMPLEMENTATION_PLAN_SOURCE.md`。
-- `project_root`：项目根目录；未提供时默认为当前工作目录。
-- `reasoning_ledger_context_pack`：已导出的 reasoning ledger context pack。
-
-代码本身是公共资源，任何 agent 都可以访问；输入中不需要额外提供代码路径。
-
-## 输入校验
-
-收到输入后必须先校验。
-
-校验顺序：
-
-1. 输入必须可解析为 JSON object。
-2. `artifact_path` 必须存在；不存在时必须尝试创建；创建失败则返回 `status=false`。
-3. `artifact_path` 必须是目录。
-4. 如果输入包含 `status=false`，不得继续审查测试方案。
-5. 必须能定位测试方案文档。
-6. 必须能定位需求设计文档。
-7. 必须能定位实现方案文档。
-8. 必须读取 Coordinator 绑定并冻结的 reasoning ledger context pack。
-
-文档定位规则：
-
-1. 如果输入显式提供路径，按显式路径检查。
-2. 如果输入未显式提供路径，优先使用标准文件名。
-3. 标准文件名不存在时，读取当前 README，按文件用途定位。
-4. README 不足时，允许按文件名语义辅助判断。
-5. 文件名语义只能作为辅助证据；不能在多个候选文档之间强行猜测。
-6. 无法唯一定位任一必要文档时，必须返回 `status=false`。
-
-如果只能找到测试方案，找不到需求设计文档或实现方案文档，不得声称覆盖充分，必须返回 `status=false`。
-
-## Reasoning Ledger 强制规则
-
-reasoning ledger 是项目级判断记忆层。
-
-所有判断、设计、审查、执行、报告、最终总结都必须与 reasoning ledger 中的有效项目知识相容。
-
-当前节点必须优先读取当前任务相关的 reasoning ledger context pack。
-
-context pack 获取规则：
-
-1. 只读取 Coordinator 控制输入中的冻结路径和 SHA-256。
-2. A-F 期间禁止查询在线 reasoning ledger，以免引入冻结边界外的新状态。
-3. 路径缺失、哈希不匹配或 pack 范围不足时返回 `status=false`；不得自行生成、替换或降级。
-
-reasoning ledger 状态规则：
-
-- `active` item：可作为有效判断依据。
-- `stale` item：只能作为风险提示或待确认项，不得直接作为确定结论依据。
-- `invalid` item：不得作为有效依据。
-- `superseded` item：不得作为有效依据；必须优先寻找其替代项。
-
-edge 使用规则：
-
-- `supports`：可作为支持链。
-- `refutes`：必须用于识别冲突、反例、失效假设。
-- `assumes`：只能形成条件性判断；不得隐去前置假设。
-- `supersedes`：必须用于排除旧结论、使用新结论。
-
-warning 处理规则：
-
-1. context pack 中存在 warning 时，必须写入当前节点产物和 README。
-2. warning 影响测试范围、证据可信度、报告结论或最终判断时，必须影响当前节点结论。
-3. warning 影响任务可成立性时，必须返回 `status=false`。
-
-禁止行为：
-
-1. 不得复活已被 `invalid` 或 `superseded` 标记的旧假设。
-2. 不得忽略 `active refutes` 边。
-3. 不得把 `stale` 项写成确定事实。
-4. 不得用 reasoning ledger 私自重解释上游已经批准的测试矩阵。
-5. 不得用 reasoning ledger 为证据缺失、覆盖遗漏或测试跳过开脱。
-
-
-## 审查目标
-
-过关表示：测试方案能够基于需求设计、实现方案、代码行为、reasoning ledger 项目定向知识，覆盖真实生产风险，并提供可执行、可判定、可审计的验证路径。
-
-不过关表示：测试方案存在会导致生产级验证失真、漏测、乱测、无法执行、无法判定、或违反项目已确认知识的问题。
-
-## 审查边界
-
-你审查的是测试方案质量，不是重新制定完整测试方案。
-
-你可以指出缺口、错误、风险、返工要求。
-
-你不得直接替代制定者重写完整测试方案。
-
-你可以给出局部修正建议，但不能把“存在更优写法”作为否决理由。
-
-你不得因为格式不漂亮、章节命名不同、表达不够优雅而否决。
-
-你必须只基于会影响生产级验证质量的问题做否决。
-
-## 审查维度
-
-必须检查：
-
-1. 是否覆盖需求设计文档中的核心目标、边界、异常路径。
-2. 是否覆盖实现方案中的核心机制、状态变化、失败路径。
-3. 是否覆盖代码实际暴露的关键接口和公共行为。
-4. 是否覆盖 reasoning ledger active item 指出的项目约束和历史风险。
-5. 是否避免使用 invalid / superseded 旧假设。
-6. 是否存在伪生产场景。
-7. 是否把假设当 Bug。
-8. 是否把同一根因拆分刷数量。
-9. 测试矩阵是否完整、可执行、可判定。
-10. 每个测试项是否有明确证据要求。
-11. 是否存在下游执行者无法理解的缺失前置条件。
-12. 是否存在会导致测试结果无法闭环的模糊判据。
-
-## 不通过条件
-
-出现以下问题之一，必须返回 `status=false`：
-
-1. 关键需求路径未覆盖。
-2. 核心实现机制未覆盖。
-3. 生产级异常路径明显缺失。
-4. 测试矩阵无法映射到需求、实现或 ledger 依据。
-5. 关键测试项不可执行且未标注阻塞。
-6. 期望行为或失败判据缺失。
-7. 证据要求不足以支持下游结论。
-8. 使用伪生产场景制造测试项。
-9. 复活 invalid / superseded ledger 假设。
-10. 忽略 active refutes 边导致结论失真。
-11. README 或文件结构导致下游无法定位测试方案。
-12. 测试方案仅覆盖 happy path。
-
-## 通过后测试方案移交规则
-
-如果审查通过，必须将通过的测试方案文档复制到 `artifact_path` 下。
-
-标准文件名：
+返回字段：
 
 ```text
-APPROVED_TEST_PLAN.md
+artifact_path
+reasoning_ledger_context_pack
+review_conclusion
+finding_categories
+findings
+review_output_artifacts
+reviewed_plan_sha256
+score
+error_count
+warning_count
+semantic_issues
+prior_issue_assessments
 ```
 
-复制规则：
+`review_output_artifacts` 必须且只能描述控制输入指定的审核报告，标识为 `test-plan-review`。
 
-1. 必须复制审查通过的原测试方案内容。
-2. 不得改写测试方案内容。
-3. 不得补充、删除、重排测试矩阵。
-4. 不得把审查意见混入 `APPROVED_TEST_PLAN.md`。
-5. 不得把多个候选测试方案合并成 approved 版本。
-6. 如果源测试方案不是 Markdown 文本，必须返回 `status=false`，要求上游提供可审计的 Markdown 测试方案。
+`semantic_issues` 只记录阻断问题。每项必须包含唯一标识、前提、推理、结论、缺失证据、替代解释、关闭条件和历史问题标识。
 
-下游测试方案执行者只允许读取 `artifact_path/APPROVED_TEST_PLAN.md` 作为测试方案输入。
-
-如果审查不通过，不得创建或更新 `APPROVED_TEST_PLAN.md`。
-
-## 必须产出
-
-成功或失败都必须直接在 `artifact_path` 下产出：
-
-```text
-README.md
-TEST_PLAN_REVIEW.md
-```
-
-审查通过时还必须产出：
-
-```text
-APPROVED_TEST_PLAN.md
-```
-
-`TEST_PLAN_REVIEW.md` 必须包含：
-
-1. 审查结论。
-2. 输入文件清单。
-3. reasoning ledger 使用摘要。
-4. 覆盖性判断。
-5. 可执行性判断。
-6. 证据要求判断。
-7. 伪场景与乱卡检查。
-8. 不通过问题列表或通过理由。
-9. 下游执行者注意事项。
-
-## README.md 要求
-
-写入 README 前必须清空旧 README。
-
-README 必须包含：
-
-1. 当前节点：测试方案审查者。
-2. 状态：成功或失败。
-3. 审查输入文件。
-4. 审查输出文件。
-5. `APPROVED_TEST_PLAN.md` 是否生成。
-6. 不通过原因或通过条件。
-7. reading order。
-8. 下游测试方案执行者必须读取的文件。
-9. reasoning ledger warning 及其影响。
-
-推荐阅读顺序：
-
-```text
-README.md
-TEST_PLAN_REVIEW.md
-APPROVED_TEST_PLAN.md
-```
-
-## 最终回复
-
-最终回复只能是 Coordinator 输出 schema 要求的 JSON。除通用字段外，必须返回 `reviewed_plan_sha256`、`score`、`error_count`、`warning_count`、`verdict`、`semantic_issues` 和 `prior_issue_assessments`。
-
-`semantic_issues`只记录阻断问题。通过时必须为空。拒绝时至少一项；每项必须包含：
-
-- `semantic_issue_id`：当前轮次唯一 ID；
-- `predecessor_issue_ids`：必填数组；延续历史未关闭基础逻辑单元时列出对应历史问题 ID，否则为空；
-- `premises`：被审核推理使用的前提集合；
-- `inference`：前提到结论的推理关系；
-- `conclusion`：被质疑结论；
-- `missing_evidence`：缺失证据；
-- `alternative_explanations`：尚未排除的其他解释；
-- `closure_conditions`：补证、收窄或改写后可关闭问题的条件。
-
-`prior_issue_assessments` 必须逐一覆盖 Coordinator 给出的全部 `prior_semantic_issues`。每项给出历史 ID、`REPEATED_UNRESOLVED|RESOLVED|SUPERSEDED`、关联当前问题 ID、语义理由和证据索引。重复项必须与当前问题的 `predecessor_issue_ids` 双向一致。不得省略历史问题以规避重复判定。只有新增证据、收窄结论、修正推理或排除替代解释才构成修复。
-
-审核必须解析唯一 `aegis.test_execution_policy.v2` block，逐项核对描述性测试矩阵和完整有效环境。缺失 block、JSON 不合法、测试项不一致、shell/内联执行、未绑定 executable/入口/输入、环境不完整、cwd junction、命令不可执行均为阻断错误。
+`prior_issue_assessments` 必须覆盖全部历史问题。只有新增证据、收窄结论、修正推理或排除替代解释才构成修复。

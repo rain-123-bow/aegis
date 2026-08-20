@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 
-RUN_STATE_SCHEMA = "aegis.run_state.v13"
+RUN_STATE_SCHEMA = "aegis.run_state.v14"
 FINAL_REVIEW_INPUT_MANIFEST_SCHEMA = "aegis.final_review_input_manifest.v2"
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")

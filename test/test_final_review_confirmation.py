@@ -114,7 +114,7 @@ class FinalReviewConfirmationTests(unittest.TestCase):
         )
         verdict_bytes = verdict.read_bytes()
         state = {
-            "schema": "aegis.run_state.v13",
+            "schema": "aegis.run_state.v14",
             "run_id": "run-fail",
             "reservation_token": "a" * 32,
             "status": "terminated",

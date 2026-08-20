@@ -302,46 +302,9 @@ reviewer 不负责直接写代码。
 
 reviewer 不得因个人偏好否决方案。
 
-reviewer 必须按以下格式返回：
+reviewer 必须使用 `skills/aegis_master_reviewer/SKILL.md` 定义的事实审核契约。
 
-```yaml
-verdict: PASS | FAIL
-requirement_alignment_issues:
-  - id: R-001
-    issue: "requirement mismatch"
-    required_fix: "fix needed"
-unconfirmed_assumptions:
-  - id: A-001
-    assumption: "unconfirmed assumption"
-    required_fix: "ask user or remove"
-ledger_issues:
-  - id: L-001
-    issue: "ledger conflict or missing ledger consideration"
-    required_fix: "fix needed"
-codebase_fit_issues:
-  - id: C-001
-    issue: "does not fit current codebase facts"
-    required_fix: "fix needed"
-ambiguities:
-  - id: G-001
-    location: "section or quote"
-    issue: "ambiguous implementation instruction"
-    required_fix: "make unambiguous"
-unverifiable_items:
-  - id: U-001
-    issue: "cannot be tested or verified"
-    required_fix: "make measurable"
-risk_gaps:
-  - id: K-001
-    issue: "missing important risk"
-    required_fix: "add mitigation or test requirement"
-required_fixes:
-  - "blocking fix"
-optional_suggestions:
-  - "non-blocking improvement"
-```
-
-`verdict=PASS` 只表示实现方案没有阻断性歧义和明显缺口，不表示代码已经正确实现。
+`review_conclusion=PASS` 只表示实现方案没有阻断性歧义和明显缺口，不表示代码已经正确实现。
 
 ## Master 修正规则
 
@@ -481,7 +444,7 @@ If `User Decisions Required` is not empty, the final plan must not be generated.
 ```text
 - iteration number
 - draft version
-- reviewer verdict
+- reviewer review_conclusion
 - accepted fixes
 - rejected fixes with reason
 - user confirmations
@@ -527,7 +490,7 @@ If `User Decisions Required` is not empty, the final plan must not be generated.
 只在以下条件全部满足时生成：
 
 1. `REQUIREMENT_DESIGN_FINAL.md` 已存在且用户已确认。
-2. reviewer 最新 `verdict` 为 `PASS`。
+2. reviewer 最新 `review_conclusion` 为 `PASS`。
 3. 没有未确认关键假设。
 4. 没有未解决 ledger 冲突。
 5. 没有阻断性代码事实缺口。
@@ -580,7 +543,7 @@ IMPLEMENTATION_PLAN_FINAL.md 已写入 artifact_path。
 USER_IMPLEMENTATION_CONFIRMATION.md 已写入 artifact_path。
 IMPLEMENTATION_PLAN_HISTORY.md 已写入 artifact_path。
 IMPLEMENTATION_DECISION_RECORD.md 已写入 artifact_path。
-最近一次 IMPLEMENTATION_PLAN_REVIEW_REPORT.md 的 verdict 为 PASS。
+最近一次 IMPLEMENTATION_PLAN_REVIEW_REPORT.md 的 review_conclusion 为 PASS。
 最终方案不依赖聊天上下文。
 用户已确认最终方案。
 ```

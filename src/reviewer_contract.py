@@ -64,6 +64,15 @@ _FINDING_FIELDS = frozenset(
 _ARTIFACT_FIELDS = frozenset({"artifact_id", "path", "size", "sha256"})
 _ARTIFACT_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_FORBIDDEN_WORKFLOW_SEMANTICS_PATTERN = re.compile(
+    r"\b(?:"
+    r"RETURN_TO_[A-Z0-9_]+|"
+    r"ROUTE_TO|NEXT_(?:NODE|ROLE)|TARGET_(?:NODE|ROLE)|"
+    r"MASTER_PROCESSING|TEST_PLAN_AUTHORING|TEST_EXECUTION|TEST_REPORTING|"
+    r"REVIEW_BLOCKED|TEST_PLAN_AUTHOR|TEST_EXECUTOR|TEST_REPORT_WRITER"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 class ReviewContractError(ValueError):
@@ -283,6 +292,18 @@ def _validate_finding(
         raise ReviewContractError(
             "finding evidence_ids must be a unique non-empty string array"
         )
+    textual_values = [
+        raw.get("finding_id"),
+        raw.get("summary"),
+        raw.get("reasoning"),
+        *evidence_ids,
+    ]
+    if any(
+        isinstance(value, str)
+        and _FORBIDDEN_WORKFLOW_SEMANTICS_PATTERN.search(value) is not None
+        for value in textual_values
+    ):
+        raise ReviewContractError("review finding contains workflow semantics")
     return {
         "finding_id": _nonempty_string(raw.get("finding_id"), "finding_id"),
         "category": str(category),

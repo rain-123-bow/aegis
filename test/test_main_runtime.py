@@ -69,6 +69,102 @@ class PassthroughCoordinator:
         return operation(state)
 
 
+def reviewer_response(
+    role_key: str,
+    *,
+    conclusion: str = "PASS",
+    categories: tuple[str, ...] = (),
+) -> dict[str, object]:
+    findings = [
+        {
+            "finding_id": f"finding-{index:04d}",
+            "category": category,
+            "summary": f"{category} was identified.",
+            "reasoning": "The frozen evidence does not satisfy the reviewed claim.",
+            "evidence_ids": [f"evidence-{index:04d}"],
+        }
+        for index, category in enumerate(categories, start=1)
+    ]
+    artifacts = [
+        {
+            "artifact_id": "test-result-review",
+            "path": "C:/artifacts/TEST_RESULT_REVIEW.md",
+            "size": 128,
+            "sha256": "ab" * 32,
+        }
+    ]
+    if role_key == main.TEST_PLAN_REVIEWER_ROLE:
+        artifacts = [
+            {
+                "artifact_id": "test-plan-review",
+                "path": "C:/artifacts/TEST_PLAN_REVIEW.md",
+                "size": 128,
+                "sha256": "ab" * 32,
+            }
+        ]
+    if role_key == main.FINAL_REVIEWER_ROLE:
+        artifacts = [
+            {
+                "artifact_id": "final-review",
+                "path": "C:/artifacts/FINAL_REVIEW.md",
+                "size": 128,
+                "sha256": "ab" * 32,
+            },
+            {
+                "artifact_id": "final-review-verdict",
+                "path": "C:/artifacts/FINAL_REVIEW_VERDICT.json",
+                "size": 128,
+                "sha256": "cd" * 32,
+            },
+        ]
+    return {
+        "artifact_path": "C:/artifacts",
+        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+        "review_conclusion": conclusion,
+        "finding_categories": list(categories),
+        "findings": findings,
+        "review_output_artifacts": artifacts,
+    }
+
+
+def planning_reviewer_response(
+    *,
+    conclusion: str,
+    score: int,
+    error_count: int,
+    categories: tuple[str, ...],
+) -> dict[str, object]:
+    payload = reviewer_response(
+        main.TEST_PLAN_REVIEWER_ROLE,
+        conclusion=conclusion,
+        categories=categories,
+    )
+    payload.update(
+        reviewed_plan_sha256="ab" * 32,
+        score=score,
+        error_count=error_count,
+        warning_count=0,
+        semantic_issues=(
+            []
+            if conclusion == "PASS"
+            else [
+                {
+                    "semantic_issue_id": "semantic-0001",
+                    "premises": ["The approved matrix is incomplete."],
+                    "inference": "Missing coverage cannot prove the requirement.",
+                    "conclusion": "The test plan is incomplete.",
+                    "missing_evidence": ["A required test case."],
+                    "alternative_explanations": [],
+                    "closure_conditions": ["Add the missing test case."],
+                    "predecessor_issue_ids": [],
+                }
+            ]
+        ),
+        prior_issue_assessments=[],
+    )
+    return payload
+
+
 class MainRuntimeIntegrationTests(unittest.TestCase):
     def test_default_runtime_root_is_project_scoped_and_outside_project_aegis(
         self,
@@ -127,12 +223,11 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                     "status": True,
                 }
                 if role_key == main.TEST_PLAN_REVIEWER_ROLE:
-                    payload.update(
-                        reviewed_plan_sha256="ab" * 32,
+                    payload = planning_reviewer_response(
+                        conclusion="PASS",
                         score=95,
                         error_count=0,
-                        warning_count=1,
-                        verdict="PASS",
+                        categories=(),
                     )
                 return json.dumps(payload)
 
@@ -168,7 +263,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 return bool(
                     node_output["score"] >= 95
                     and node_output["error_count"] == 0
-                    and node_output["verdict"] == "PASS"
+                    and node_output["review_conclusion"] == "PASS"
                 )
 
             def complete_planning_stage(self) -> None:
@@ -265,7 +360,9 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
         self.assertIn("Aegis Test Plan Author", planning_events[0][3])
         self.assertNotIn("Do not use Aegis-specific skills", planning_events[0][3])
         self.assertIn("planning_author_control", planning_events[0][2])
-        self.assertIn("planning_review_control", planning_events[1][2])
+        self.assertIn("review_input_control", planning_events[1][2])
+        self.assertNotIn("round_id", planning_events[1][2])
+        self.assertNotIn("job_id", planning_events[1][2])
         self.assertIn("executor role", events[-1][3])
         self.assertIn("Aegis Global Quality Law", events[-1][3])
         self.assertIn("Aegis Test Executor", events[-1][3])
@@ -292,6 +389,11 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             ) -> str:
                 del output_schema, timeout_seconds
                 execution_calls.append((role_key, developer_instructions))
+                if role_key in {
+                    main.TEST_RESULT_REVIEWER_ROLE,
+                    main.FINAL_REVIEWER_ROLE,
+                }:
+                    return json.dumps(reviewer_response(role_key))
                 return json.dumps(
                     {
                         "artifact_path": "C:/artifacts",
@@ -377,7 +479,16 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
         ):
             for field, value in cases:
                 with self.subTest(node=node.__name__, field=field):
-                    response = {**state, field: value}
+                    response = (
+                        reviewer_response(role)
+                        if role
+                        in {
+                            main.TEST_RESULT_REVIEWER_ROLE,
+                            main.FINAL_REVIEWER_ROLE,
+                        }
+                        else dict(state)
+                    )
+                    response[field] = value
                     with (
                         patch.object(
                             main,
@@ -403,8 +514,8 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                         ),
                     ):
                         with self.assertRaisesRegex(
-                            RuntimeError,
-                            "changed coordinator-owned|non-boolean status",
+                            (RuntimeError, ValueError),
+                            "changed coordinator-owned|non-boolean status|unsupported fields",
                         ):
                             node(state)
 
@@ -429,12 +540,18 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             ) -> str:
                 del prompt, output_schema, developer_instructions, timeout_seconds
                 execution_calls.append(role_key)
-                status = (
-                    next(reviewer_statuses)
-                    if role_key == main.TEST_RESULT_REVIEWER_ROLE
-                    else True
-                )
-                return json.dumps({**state, "status": status})
+                if role_key == main.TEST_RESULT_REVIEWER_ROLE:
+                    accepted = next(reviewer_statuses)
+                    return json.dumps(
+                        reviewer_response(
+                            role_key,
+                            conclusion="PASS" if accepted else "FAIL",
+                            categories=() if accepted else ("EVIDENCE_MISSING",),
+                        )
+                    )
+                if role_key == main.FINAL_REVIEWER_ROLE:
+                    return json.dumps(reviewer_response(role_key))
+                return json.dumps({**state, "status": True})
 
         configs = {
             role: {"role_key": role, "role_description": role}
@@ -546,16 +663,12 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             def run_planning_agent(self, *args: object, **kwargs: object) -> str:
                 del args, kwargs
                 return json.dumps(
-                    {
-                        "artifact_path": "C:/artifacts",
-                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
-                        "status": True,
-                        "reviewed_plan_sha256": "ab" * 32,
-                        "score": 94,
-                        "error_count": 0,
-                        "warning_count": 0,
-                        "verdict": "PASS",
-                    }
+                    planning_reviewer_response(
+                        conclusion="PASS",
+                        score=94,
+                        error_count=0,
+                        categories=(),
+                    )
                 )
 
             def record_planning_review(
@@ -565,7 +678,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 return bool(
                     node_output["score"] >= 95
                     and node_output["error_count"] == 0
-                    and node_output["verdict"] == "PASS"
+                    and node_output["review_conclusion"] == "PASS"
                 )
 
             def complete_planning_stage(self) -> None:
@@ -580,15 +693,15 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             ),
             patch.object(main, "load_agent_config", return_value=config),
         ):
-            result = main.test_plan_reviewer_node(
-                {
-                    "artifact_path": "C:/artifacts",
-                    "reasoning_ledger_context_pack": "C:/artifacts/context.json",
-                    "status": True,
-                }
-            )
+            with self.assertRaisesRegex(RuntimeError, "contradicts Coordinator policy"):
+                main.test_plan_reviewer_node(
+                    {
+                        "artifact_path": "C:/artifacts",
+                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                        "status": True,
+                    }
+                )
 
-        self.assertFalse(result["status"])
         self.assertFalse(closed["value"])
 
     def test_planning_completion_gate_failure_stops_before_executor(self) -> None:
@@ -608,16 +721,12 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             def run_planning_agent(self, *args: object, **kwargs: object) -> str:
                 del args, kwargs
                 return json.dumps(
-                    {
-                        "artifact_path": "C:/artifacts",
-                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
-                        "status": True,
-                        "reviewed_plan_sha256": "ab" * 32,
-                        "score": 95,
-                        "error_count": 0,
-                        "warning_count": 0,
-                        "verdict": "PASS",
-                    }
+                    planning_reviewer_response(
+                        conclusion="PASS",
+                        score=95,
+                        error_count=0,
+                        categories=(),
+                    )
                 )
 
             def record_planning_review(
@@ -690,16 +799,12 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
             ) -> str:
                 del role_key, prompt, kwargs
                 return json.dumps(
-                    {
-                        "artifact_path": "C:/artifacts",
-                        "reasoning_ledger_context_pack": "C:/artifacts/context.json",
-                        "status": False,
-                        "reviewed_plan_sha256": "ab" * 32,
-                        "score": 90,
-                        "error_count": 1,
-                        "warning_count": 0,
-                        "verdict": "FAIL",
-                    }
+                    planning_reviewer_response(
+                        conclusion="FAIL",
+                        score=90,
+                        error_count=1,
+                        categories=("TEST_PLAN_DEFECT",),
+                    )
                 )
 
             def record_planning_review(
@@ -799,7 +904,12 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                     calls.append(name)
                     if name == "B" and fail_b["value"]:
                         raise RuntimeError("B failed")
-                    return {**state, "status": True, "current_node": name}
+                    result = {**state, "status": True, "current_node": name}
+                    if name == "B":
+                        result["coordinator_review_stage"] = "TEST_EXECUTION"
+                    if name == "D":
+                        result["coordinator_review_stage"] = "TEST_REPORTING"
+                    return result
 
                 return operation
 
@@ -962,7 +1072,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 return FakeGraph()
 
             saved = {
-                "schema": "aegis.run_state.v13",
+                "schema": "aegis.run_state.v14",
                 "run_id": "run-resume",
                 "status": "failed",
                 "project_root": str(root.resolve()),
@@ -1055,7 +1165,7 @@ class MainRuntimeIntegrationTests(unittest.TestCase):
                 yield object()
 
             saved = {
-                "schema": "aegis.run_state.v13",
+                "schema": "aegis.run_state.v14",
                 "run_id": "run-resume-after-planning",
                 "status": "failed",
                 "project_root": str(root.resolve()),

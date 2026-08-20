@@ -90,6 +90,13 @@ class ReviewerContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ReviewContractError, "unsupported fields"):
             validate_reviewer_output(TEST_RESULT_REVIEWER, payload)
 
+    def test_reviewer_cannot_embed_a_routing_instruction_in_a_finding(self) -> None:
+        payload = _payload(conclusion="FAIL", categories=["TEST_PLAN_DEFECT"])
+        payload["findings"][0]["reasoning"] = "RETURN_TO_A after this review."
+
+        with self.assertRaisesRegex(ReviewContractError, "workflow semantics"):
+            validate_reviewer_output(TEST_RESULT_REVIEWER, payload)
+
     def test_complete_review_can_reject_the_material(self) -> None:
         payload = _payload(
             conclusion="FAIL",

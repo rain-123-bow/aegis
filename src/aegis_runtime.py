@@ -80,6 +80,14 @@ from reasoning_ledger_provenance import (
     export_live_reasoning_ledger_snapshot,
     verify_context_pack_against_live_snapshot,
 )
+from reviewer_contract import (
+    FINAL_REVIEWER as REVIEW_CONTRACT_FINAL_REVIEWER,
+    TEST_PLAN_REVIEWER as REVIEW_CONTRACT_TEST_PLAN_REVIEWER,
+    TEST_RESULT_REVIEWER as REVIEW_CONTRACT_TEST_RESULT_REVIEWER,
+    ReviewContractError,
+    coordinator_review_stage,
+    validate_reviewer_output,
+)
 from test_evidence_manifest import (
     TestEvidenceManifestError,
     validate_test_evidence_manifest,
@@ -140,6 +148,10 @@ EXECUTION_REQUIRED_OUTPUTS = {
         "final-review-verdict": "FINAL_REVIEW_VERDICT.json",
     },
 }
+EXECUTION_REVIEWER_CONTRACT_ROLES = {
+    "D": REVIEW_CONTRACT_TEST_RESULT_REVIEWER,
+    "F": REVIEW_CONTRACT_FINAL_REVIEWER,
+}
 EXECUTION_AGENT_STATUSES = frozenset({"allocating", "ready"})
 EXECUTION_TURN_STATUSES = frozenset(
     {"preparing", "submitting", "inProgress", "completed"}
@@ -165,6 +177,31 @@ class FrozenInputMutationError(RuntimeStateError):
 
 class FreezeContinuityLostError(RuntimeStateError):
     pass
+
+
+def _validated_execution_response(
+    node: str,
+    payload: Mapping[str, object],
+) -> tuple[dict[str, object] | None, list[Mapping[str, object]]]:
+    reviewer_role = EXECUTION_REVIEWER_CONTRACT_ROLES.get(node)
+    if reviewer_role is not None:
+        try:
+            validated = validate_reviewer_output(reviewer_role, payload)
+        except ReviewContractError as error:
+            raise RuntimeStateError(
+                f"{node} returned an invalid reviewer result: {error}"
+            ) from error
+        raw_outputs = validated["review_output_artifacts"]
+        assert isinstance(raw_outputs, list)
+        return validated, [
+            item for item in raw_outputs if isinstance(item, Mapping)
+        ]
+    raw_outputs = payload.get("output_artifacts")
+    if not isinstance(raw_outputs, list) or not all(
+        isinstance(item, Mapping) for item in raw_outputs
+    ):
+        raise RuntimeStateError(f"{node} returned no output artifact descriptors")
+    return None, list(raw_outputs)
 
 
 def new_run_id() -> str:
@@ -389,9 +426,10 @@ class RuntimeCoordinator:
             "aegis.run_state.v10",
             "aegis.run_state.v11",
             "aegis.run_state.v12",
+            "aegis.run_state.v13",
         }:
             raise RuntimeStateError(
-                "run state predates the v13 authority and recursive-evidence contract; "
+                "run state predates the v14 reviewer-authority contract; "
                 "start a new run"
             )
         if state.get("schema") != RUN_STATE_SCHEMA:
@@ -1091,6 +1129,23 @@ class RuntimeCoordinator:
                     raise RuntimeStateError(
                         f"{node_name} returned a non-boolean node status"
                     )
+                if node_name == "D":
+                    expected_status = (
+                        execution_attempt.get("coordinator_review_stage")
+                        == "TEST_REPORTING"
+                    )
+                    if node_status is not expected_status:
+                        raise RuntimeStateError(
+                            "D graph status differs from Coordinator review policy"
+                        )
+                if node_name == "F":
+                    expected_status = (
+                        execution_attempt.get("review_conclusion") == "PASS"
+                    )
+                    if node_status is not expected_status:
+                        raise RuntimeStateError(
+                            "F graph status differs from its persisted review conclusion"
+                        )
                 if node_name == "C" and node_status is not True:
                     raise RuntimeStateError("C cannot complete with status=false")
                 if execution_attempt["status"] == "completed":
@@ -2534,6 +2589,10 @@ class RuntimeCoordinator:
             "error_count": None,
             "warning_count": None,
             "verdict": None,
+            "review_conclusion": None,
+            "finding_categories": None,
+            "findings": None,
+            "review_result": None,
             "semantic_issues": None,
             "prior_issue_assessments": [],
             "repeated_unresolved_issue_ids": [],
@@ -2585,6 +2644,12 @@ class RuntimeCoordinator:
             status = "approved"
         if status == "approved":
             self._validate_published_planning_handoff(record)
+        persisted_review_stage = None
+        if status in {"rejected", "publishing", "approved"}:
+            persisted_review_stage = coordinator_review_stage(
+                REVIEW_CONTRACT_TEST_PLAN_REVIEWER,
+                _validate_recorded_planning_review(record),
+            )
         control = {
             "schema": "aegis.planning_review_control.v1",
             "run_id": self.run_id,
@@ -2608,12 +2673,14 @@ class RuntimeCoordinator:
             "instructions": (
                 "Review only plan_path at reviewed_plan_sha256. Write the complete "
                 "review to review_report_path. Return reviewed_plan_sha256, score, "
-                "error_count, warning_count, verdict, semantic_issues, and one "
+                "error_count, warning_count, review_conclusion, finding_categories, "
+                "findings, semantic_issues, review_output_artifacts, and one "
                 "evidence-backed prior_issue_assessment for every prior semantic "
-                "issue. Do not modify the plan or any prior round."
+                "issue. Do not modify any reviewed material."
             ),
             "skip_turn": status in {"rejected", "approved"},
             "accepted": status == "approved",
+            "coordinator_review_stage": persisted_review_stage,
         }
         self._refresh_run_wide_freeze()
         return control
@@ -2628,6 +2695,35 @@ class RuntimeCoordinator:
         self._validate_planning_context(record)
         self._validate_planning_project_seal(record)
         self._validate_frozen_plan(record)
+        semantic_fields = {
+            "artifact_path",
+            "reasoning_ledger_context_pack",
+            "review_conclusion",
+            "finding_categories",
+            "findings",
+            "review_output_artifacts",
+        }
+        planning_fields = {
+            "reviewed_plan_sha256",
+            "score",
+            "error_count",
+            "warning_count",
+            "semantic_issues",
+            "prior_issue_assessments",
+        }
+        unsupported = sorted(set(node_output) - semantic_fields - planning_fields)
+        if unsupported:
+            raise RuntimeStateError(
+                "planning review contains unsupported fields: "
+                + ", ".join(unsupported)
+            )
+        try:
+            review = validate_reviewer_output(
+                REVIEW_CONTRACT_TEST_PLAN_REVIEWER,
+                {field: node_output[field] for field in semantic_fields},
+            )
+        except (KeyError, ReviewContractError) as error:
+            raise RuntimeStateError(f"planning review result is invalid: {error}") from error
         reviewed_plan_sha256 = _require_sha256(
             node_output.get("reviewed_plan_sha256"), "reviewed_plan_sha256"
         )
@@ -2640,14 +2736,21 @@ class RuntimeCoordinator:
         warning_count = _require_bounded_integer(
             node_output.get("warning_count"), "warning_count", 0, None
         )
-        verdict = node_output.get("verdict")
-        if verdict not in {"PASS", "FAIL"}:
-            raise RuntimeStateError("planning review verdict must be PASS or FAIL")
+        review_conclusion = str(review["review_conclusion"])
+        if not same_path(str(review["artifact_path"]), self.artifact_path):
+            raise RuntimeStateError("planning reviewer changed the artifact path")
+        if not same_path(
+            str(review["reasoning_ledger_context_pack"]),
+            str(record["context_pack_path"]),
+        ):
+            raise RuntimeStateError("planning reviewer changed the reasoning context path")
         semantic_issues = _validate_semantic_issues(
             node_output.get("semantic_issues", [])
         )
         if accepted_candidate := (
-            verdict == "PASS" and score >= PLANNING_REVIEW_THRESHOLD and error_count == 0
+            review_conclusion == "PASS"
+            and score >= PLANNING_REVIEW_THRESHOLD
+            and error_count == 0
         ):
             if semantic_issues:
                 raise RuntimeStateError(
@@ -2656,6 +2759,10 @@ class RuntimeCoordinator:
         elif not semantic_issues:
             raise RuntimeStateError(
                 "a rejected planning review must contain at least one semantic issue"
+            )
+        if review_conclusion == "PASS" and not accepted_candidate:
+            raise RuntimeStateError(
+                "planning review PASS contradicts the mechanical acceptance threshold"
             )
         prior_round = self._planning_rounds[-2] if len(self._planning_rounds) > 1 else None
         prior_issues = {
@@ -2691,7 +2798,7 @@ class RuntimeCoordinator:
             prior_issue_id = str(assessment["prior_semantic_issue_id"])
             current_ids = assessment["current_semantic_issue_ids"]
             assert isinstance(current_ids, list)
-            if assessment["disposition"] == "REPEATED_UNRESOLVED":
+            if assessment["issue_status"] == "REPEATED_UNRESOLVED":
                 for current_id in current_ids:
                     current_issue = next(
                         issue
@@ -2708,6 +2815,24 @@ class RuntimeCoordinator:
         report_path = Path(str(record["review_report_path"]))
         self._lock_run_wide_files([report_path])
         report_bytes = _read_required_file(report_path, "planning review report")
+        raw_artifacts = review["review_output_artifacts"]
+        assert isinstance(raw_artifacts, list)
+        if len(raw_artifacts) != 1 or not isinstance(raw_artifacts[0], Mapping):
+            raise RuntimeStateError(
+                "planning review must declare exactly one review report"
+            )
+        report_descriptor = raw_artifacts[0]
+        if (
+            report_descriptor.get("artifact_id") != "test-plan-review"
+            or not isinstance(report_descriptor.get("path"), str)
+            or not same_path(str(report_descriptor["path"]), report_path)
+            or report_descriptor.get("size") != len(report_bytes)
+            or report_descriptor.get("sha256")
+            != hashlib.sha256(report_bytes).hexdigest()
+        ):
+            raise RuntimeStateError(
+                "planning review report does not match its declared descriptor"
+            )
         accepted = accepted_candidate
         record.update(
             status="publishing" if accepted else "rejected",
@@ -2716,7 +2841,11 @@ class RuntimeCoordinator:
             score=score,
             error_count=error_count,
             warning_count=warning_count,
-            verdict=verdict,
+            verdict=review_conclusion,
+            review_conclusion=review_conclusion,
+            finding_categories=list(review["finding_categories"]),
+            findings=list(review["findings"]),
+            review_result=dict(review),
             semantic_issues=semantic_issues,
             prior_issue_assessments=assessments,
             repeated_unresolved_issue_ids=sorted(set(repeated_issue_ids)),
@@ -2877,6 +3006,22 @@ class RuntimeCoordinator:
         self._validate_closed_planning_rounds()
 
     def _validate_review_decision(self, record: Mapping[str, object]) -> None:
+        review = _validate_recorded_planning_review(record)
+        if not same_path(str(review["artifact_path"]), self.artifact_path):
+            raise RuntimeStateError("planning review facts changed the artifact path")
+        if not same_path(
+            str(review["reasoning_ledger_context_pack"]),
+            str(record["context_pack_path"]),
+        ):
+            raise RuntimeStateError("planning review facts changed the context path")
+        report_path = Path(str(record["review_report_path"]))
+        report_bytes = _read_required_file(report_path, "planning review report")
+        artifacts = review["review_output_artifacts"]
+        assert isinstance(artifacts, list)
+        descriptor = artifacts[0]
+        assert isinstance(descriptor, Mapping)
+        if descriptor.get("size") != len(report_bytes):
+            raise RuntimeStateError("planning review facts changed the report size")
         if record.get("reviewed_plan_sha256") != record.get("plan_sha256"):
             raise RuntimeStateError("reviewed plan SHA-256 does not match frozen plan")
         accepted = _planning_review_is_accepted(record)
@@ -2913,6 +3058,10 @@ class RuntimeCoordinator:
             "error_count": record["error_count"],
             "warning_count": record["warning_count"],
             "verdict": record["verdict"],
+            "review_conclusion": record["review_conclusion"],
+            "finding_categories": record["finding_categories"],
+            "findings": record["findings"],
+            "review_result": record["review_result"],
             "semantic_issues": record["semantic_issues"],
         }
 
@@ -4632,15 +4781,40 @@ class RuntimeCoordinator:
             ) from error
         if not isinstance(response_payload, dict):
             raise RuntimeStateError(f"{node} completed GPT response is not an object")
-        raw_outputs = response_payload.get("output_artifacts")
-        if state.get("output_artifacts") != raw_outputs:
+        review, raw_outputs = _validated_execution_response(node, response_payload)
+        output_field = (
+            "review_output_artifacts" if review is not None else "output_artifacts"
+        )
+        if state.get(output_field) != raw_outputs:
             raise RuntimeStateError(
                 f"{node} graph output artifacts differ from the persisted GPT response"
             )
-        if not isinstance(raw_outputs, list) or not all(
-            isinstance(item, Mapping) for item in raw_outputs
-        ):
-            raise RuntimeStateError(f"{node} returned no output artifact descriptors")
+        if review is not None:
+            for field_name in (
+                "artifact_path",
+                "reasoning_ledger_context_pack",
+                "review_conclusion",
+                "finding_categories",
+                "findings",
+            ):
+                if state.get(field_name) != review[field_name]:
+                    raise RuntimeStateError(
+                        f"{node} graph reviewer result differs from the persisted GPT response"
+                    )
+            review_stage = coordinator_review_stage(
+                EXECUTION_REVIEWER_CONTRACT_ROLES[node], review
+            )
+            if state.get("coordinator_review_stage") != review_stage:
+                raise RuntimeStateError(
+                    f"{node} graph review stage differs from Coordinator policy"
+                )
+            attempt.update(
+                review_result=dict(review),
+                review_conclusion=review["review_conclusion"],
+                finding_categories=list(review["finding_categories"]),
+                findings=list(review["findings"]),
+                coordinator_review_stage=review_stage,
+            )
         by_id: dict[str, Mapping[str, object]] = {}
         for raw in raw_outputs:
             artifact_id = raw.get("artifact_id")
@@ -6396,11 +6570,9 @@ class RuntimeCoordinator:
             ) from error
         if not isinstance(response_payload, dict):
             raise RuntimeStateError(f"{node} completed GPT response is not an object")
-        raw_outputs = response_payload.get("output_artifacts")
-        if not isinstance(raw_outputs, list) or not all(
-            isinstance(item, Mapping) for item in raw_outputs
-        ):
-            raise RuntimeStateError(f"{node} returned no output artifact descriptors")
+        _review, raw_outputs = _validated_execution_response(
+            node, response_payload
+        )
         by_id: dict[str, Mapping[str, object]] = {}
         for raw in raw_outputs:
             artifact_id = raw.get("artifact_id")
@@ -6764,7 +6936,15 @@ class RuntimeCoordinator:
                     "Aegis run has an incomplete C-F App Server turn"
                 )
         terminal_node = state.get("current_node")
-        if state.get("status") is True:
+        review_stage = state.get("coordinator_review_stage")
+        if (
+            state.get("status") is False
+            and terminal_node == "D"
+            and review_stage
+            in {"TEST_PLAN_AUTHORING", "MASTER_PROCESSING", "REVIEW_BLOCKED"}
+        ):
+            expected_terminal_node = "D"
+        elif state.get("status") is True:
             expected_terminal_node = "F"
         elif state.get("status") is False and terminal_node in {"E", "F"}:
             expected_terminal_node = str(terminal_node)
@@ -6799,6 +6979,67 @@ class RuntimeCoordinator:
                 expected_status=state.get("status") is True,
             )
         self._validate_persisted_execution_receipts()
+
+    def _validate_planning_review_terminal(
+        self, state: Mapping[str, Any]
+    ) -> None:
+        review_stage = state.get("coordinator_review_stage")
+        if (
+            state.get("current_node") != "B"
+            or state.get("status") is not False
+            or review_stage not in {"MASTER_PROCESSING", "REVIEW_BLOCKED"}
+            or self._last_completed_node != "B"
+            or not isinstance(self._last_state, dict)
+            or _state_sha256(self._last_state) != _state_sha256(state)
+        ):
+            raise RuntimeStateError("Aegis run has no valid planning-review terminal state")
+        if self._planning_stage_status == "completed" or self._execution_attempts:
+            raise RuntimeStateError(
+                "planning-review terminal state cannot contain completed execution"
+            )
+        if (
+            not self._planning_rounds
+            or self._planning_rounds[-1].get("status") != "rejected"
+        ):
+            raise RuntimeStateError(
+                "planning-review terminal state has no rejected review record"
+            )
+        record = self._planning_rounds[-1]
+        review = _validate_recorded_planning_review(record)
+        derived_stage = coordinator_review_stage(
+            REVIEW_CONTRACT_TEST_PLAN_REVIEWER,
+            review,
+        )
+        if derived_stage != review_stage:
+            raise RuntimeStateError(
+                "planning-review terminal stage differs from persisted review facts"
+            )
+        for field_name in (
+            "review_conclusion",
+            "finding_categories",
+            "findings",
+            "review_output_artifacts",
+        ):
+            if state.get(field_name) != review.get(field_name):
+                raise RuntimeStateError(
+                    "planning-review terminal graph state differs from persisted facts"
+                )
+        self._validate_closed_planning_rounds()
+        self._validate_frozen_project_inputs()
+        self._validate_all_planning_evidence_complete()
+        if any(
+            turn.get("status") != "completed" for turn in self._planning_turns
+        ):
+            raise RuntimeStateError(
+                "planning-review terminal state has an incomplete App Server turn"
+            )
+        if any(
+            agent.get("status") != "ready" for agent in self._planning_agents.values()
+        ):
+            raise RuntimeStateError(
+                "planning-review terminal state has an unresolved thread allocation"
+            )
+        self._validate_persisted_planning_evidence_cache()
 
     def _ensure_planning_app_server(self) -> AppServerClient:
         if self._planning_stage_status == "completed":
@@ -7339,7 +7580,15 @@ class RuntimeCoordinator:
     def complete(self, state: dict[str, Any]) -> None:
         try:
             self.finish_planning_stage()
-            self._validate_execution_stage_complete(state)
+            if (
+                state.get("current_node") == "B"
+                and state.get("status") is False
+                and state.get("coordinator_review_stage")
+                in {"MASTER_PROCESSING", "REVIEW_BLOCKED"}
+            ):
+                self._validate_planning_review_terminal(state)
+            else:
+                self._validate_execution_stage_complete(state)
         except FrozenInputMutationError as error:
             error = self._enrich_mutation_error(error)
             self._write_state("terminated", error)
@@ -7714,6 +7963,9 @@ def _workflow_outcome(
     graph_state: Mapping[str, object] | None,
 ) -> dict[str, object]:
     current_node = graph_state.get("current_node") if graph_state else None
+    review_stage = (
+        graph_state.get("coordinator_review_stage") if graph_state else None
+    )
     if status == "completed":
         return {
             "workflow_state": "SUCCEEDED",
@@ -7722,6 +7974,19 @@ def _workflow_outcome(
             "master_review_status": "NOT_REQUIRED",
         }
     if status == "terminated":
+        if current_node in {"B", "D"} and review_stage in {
+            "TEST_PLAN_AUTHORING",
+            "MASTER_PROCESSING",
+            "REVIEW_BLOCKED",
+        }:
+            return {
+                "workflow_state": "REQUIRES_FOLLOW_UP",
+                "engineering_verdict": "INCOMPLETE",
+                "delivery_eligible": False,
+                "master_review_status": "NOT_REQUIRED",
+                "termination_reason_code": "REVIEW_FINDING",
+                "next_required_stage": review_stage,
+            }
         return {
             "workflow_state": "TERMINATED",
             "engineering_verdict": "FAIL" if current_node == "F" else "INCOMPLETE",
@@ -9087,6 +9352,44 @@ def _validate_execution_attempts(
                 raise RuntimeStateError(
                     "completed execution attempt has no boolean node status"
                 )
+            reviewer_role = EXECUTION_REVIEWER_CONTRACT_ROLES.get(str(node))
+            if reviewer_role is not None:
+                review_result = attempt.get("review_result")
+                if not isinstance(review_result, Mapping):
+                    raise RuntimeStateError(
+                        "completed reviewer attempt has no semantic result"
+                    )
+                try:
+                    validated_review = validate_reviewer_output(
+                        reviewer_role, review_result
+                    )
+                except ReviewContractError as error:
+                    raise RuntimeStateError(
+                        f"completed reviewer attempt is invalid: {error}"
+                    ) from error
+                expected_stage = coordinator_review_stage(
+                    reviewer_role, validated_review
+                )
+                if (
+                    attempt.get("review_conclusion")
+                    != validated_review["review_conclusion"]
+                    or attempt.get("finding_categories")
+                    != validated_review["finding_categories"]
+                    or attempt.get("findings") != validated_review["findings"]
+                    or attempt.get("coordinator_review_stage") != expected_stage
+                ):
+                    raise RuntimeStateError(
+                        "completed reviewer attempt semantic checkpoint changed"
+                    )
+                expected_node_status = (
+                    expected_stage == "TEST_REPORTING"
+                    if node == "D"
+                    else validated_review["review_conclusion"] == "PASS"
+                )
+                if attempt.get("node_status") is not expected_node_status:
+                    raise RuntimeStateError(
+                        "completed reviewer attempt status contradicts its result"
+                    )
             outputs = attempt.get("output_artifacts")
             required_outputs = EXECUTION_REQUIRED_OUTPUTS[str(node)]
             if not isinstance(outputs, list) or len(outputs) != len(required_outputs):
@@ -9214,7 +9517,12 @@ def _allowed_next_execution_nodes(
     if node == "C":
         return frozenset({"D"}) if node_status is True else frozenset()
     if node == "D":
-        return frozenset({"E"}) if node_status is True else frozenset({"C"})
+        review_stage = latest.get("coordinator_review_stage")
+        if review_stage == "TEST_REPORTING" and node_status is True:
+            return frozenset({"E"})
+        if review_stage == "TEST_EXECUTION" and node_status is False:
+            return frozenset({"C"})
+        return frozenset()
     if node == "E":
         return frozenset({"F"}) if node_status is True else frozenset()
     return frozenset()
@@ -9564,6 +9872,7 @@ def _validate_planning_rounds(rounds: Sequence[Mapping[str, object]]) -> None:
             )
             if record.get("verdict") not in {"PASS", "FAIL"}:
                 raise RuntimeStateError("prior planning round has an invalid verdict")
+            _validate_recorded_planning_review(record)
             semantic_issues = _validate_semantic_issues(
                 record.get("semantic_issues", [])
             )
@@ -9630,6 +9939,41 @@ def _validate_planning_rounds(rounds: Sequence[Mapping[str, object]]) -> None:
             raise RuntimeStateError(
                 "only a rejected planning round may have a successor"
             )
+
+
+def _validate_recorded_planning_review(
+    record: Mapping[str, object],
+) -> dict[str, object]:
+    raw_review = record.get("review_result")
+    if not isinstance(raw_review, Mapping):
+        raise RuntimeStateError("planning review facts are missing")
+    try:
+        review = validate_reviewer_output(
+            REVIEW_CONTRACT_TEST_PLAN_REVIEWER,
+            raw_review,
+        )
+    except ReviewContractError as error:
+        raise RuntimeStateError(f"planning review facts are invalid: {error}") from error
+    if (
+        record.get("verdict") != review["review_conclusion"]
+        or record.get("review_conclusion") != review["review_conclusion"]
+        or record.get("finding_categories") != review["finding_categories"]
+        or record.get("findings") != review["findings"]
+    ):
+        raise RuntimeStateError("planning review facts do not match the round record")
+    artifacts = review["review_output_artifacts"]
+    assert isinstance(artifacts, list)
+    if len(artifacts) != 1 or not isinstance(artifacts[0], Mapping):
+        raise RuntimeStateError("planning review facts have invalid output artifacts")
+    descriptor = artifacts[0]
+    if (
+        descriptor.get("artifact_id") != "test-plan-review"
+        or not isinstance(descriptor.get("path"), str)
+        or not same_path(str(descriptor["path"]), str(record["review_report_path"]))
+        or descriptor.get("sha256") != record.get("review_report_sha256")
+    ):
+        raise RuntimeStateError("planning review facts do not match the review report")
+    return review
 
 
 def _planning_review_is_accepted(record: Mapping[str, object]) -> bool:
@@ -9746,7 +10090,7 @@ def _validate_prior_issue_assessments(
 ) -> list[dict[str, object]]:
     required_fields = {
         "prior_semantic_issue_id",
-        "disposition",
+        "issue_status",
         "current_semantic_issue_ids",
         "rationale",
         "evidence",
@@ -9768,14 +10112,14 @@ def _validate_prior_issue_assessments(
         if prior_id in seen:
             raise RuntimeStateError("prior issue assessment IDs must be unique")
         seen.add(prior_id)
-        disposition = assessment["disposition"]
-        if disposition not in {
+        issue_status = assessment["issue_status"]
+        if issue_status not in {
             "REPEATED_UNRESOLVED",
             "RESOLVED",
             "SUPERSEDED",
         }:
             raise RuntimeStateError(
-                f"prior issue assessment {index} has an invalid disposition"
+                f"prior issue assessment {index} has an invalid issue status"
             )
         linked = assessment["current_semantic_issue_ids"]
         if (
@@ -9789,11 +10133,11 @@ def _validate_prior_issue_assessments(
             raise RuntimeStateError(
                 f"prior issue assessment {index} has invalid current issue links"
             )
-        if disposition == "REPEATED_UNRESOLVED" and not linked:
+        if issue_status == "REPEATED_UNRESOLVED" and not linked:
             raise RuntimeStateError(
                 f"prior issue assessment {index} omits the repeated current issue"
             )
-        if disposition != "REPEATED_UNRESOLVED" and linked:
+        if issue_status != "REPEATED_UNRESOLVED" and linked:
             raise RuntimeStateError(
                 f"prior issue assessment {index} links current issues despite closure"
             )
@@ -9814,7 +10158,7 @@ def _validate_prior_issue_assessments(
         normalized.append(
             {
                 "prior_semantic_issue_id": prior_id,
-                "disposition": disposition,
+                "issue_status": issue_status,
                 "current_semantic_issue_ids": list(linked),
                 "rationale": rationale,
                 "evidence": list(evidence),

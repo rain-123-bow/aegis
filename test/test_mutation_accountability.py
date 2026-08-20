@@ -23,7 +23,7 @@ class MutationAccountabilityTests(unittest.TestCase):
             artifacts = run_root / "artifacts"
             artifacts.mkdir(parents=True)
             state = {
-                "schema": "aegis.run_state.v13",
+                "schema": "aegis.run_state.v14",
                 "run_id": "run-mutated",
                 "reservation_token": "b" * 32,
                 "status": "terminated",

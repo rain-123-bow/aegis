@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -1408,20 +1408,50 @@ class ExecutionAppServer:
                 }
             )
         status = self.harness.turn_statuses.pop(0) if self.harness.turn_statuses else True
+        response: dict[str, object] = {
+            "artifact_path": str(self.harness.root / "artifacts"),
+            "reasoning_ledger_context_pack": str(
+                self.harness.root / "artifacts" / "context.json"
+            ),
+        }
+        if node in {"D", "F"}:
+            response.update(
+                review_conclusion="PASS" if status else "FAIL",
+                finding_categories=(
+                    []
+                    if status
+                    else [
+                        "EXECUTION_INCOMPLETE"
+                        if node == "D"
+                        else "GOVERNANCE_DEFECT"
+                    ]
+                ),
+                findings=(
+                    []
+                    if status
+                    else [
+                        {
+                            "finding_id": "review-finding-1",
+                            "category": (
+                                "EXECUTION_INCOMPLETE"
+                                if node == "D"
+                                else "GOVERNANCE_DEFECT"
+                            ),
+                            "summary": "Required review evidence is incomplete.",
+                            "reasoning": "The supplied evidence does not close the review.",
+                            "evidence_ids": [outputs[0]["artifact_id"]],
+                        }
+                    ]
+                ),
+                review_output_artifacts=outputs,
+            )
+        else:
+            response.update(output_artifacts=outputs, status=status)
         return SimpleNamespace(
             thread_id=thread_id,
             turn_id=turn_id,
             status="completed",
-            final_message=json.dumps(
-                {
-                    "artifact_path": str(self.harness.root / "artifacts"),
-                    "reasoning_ledger_context_pack": str(
-                        self.harness.root / "artifacts" / "context.json"
-                    ),
-                    "output_artifacts": outputs,
-                    "status": status,
-                }
-            ),
+            final_message=json.dumps(response),
         )
 
 
@@ -2207,6 +2237,58 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         )
         return project
 
+    def planning_review_result(
+        self,
+        coordinator: aegis_runtime.RuntimeCoordinator,
+        review_control: Mapping[str, object],
+        *,
+        reviewed_plan_sha256: str,
+        score: int,
+        error_count: int,
+        warning_count: int,
+        review_conclusion: str,
+        semantic_issues: list[dict[str, object]] | None = None,
+        prior_issue_assessments: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
+        report_path = Path(str(review_control["review_report_path"]))
+        report_bytes = report_path.read_bytes()
+        has_findings = review_conclusion != "PASS"
+        return {
+            "artifact_path": str(coordinator.artifact_path),
+            "reasoning_ledger_context_pack": str(
+                review_control["context_pack_path"]
+            ),
+            "review_conclusion": review_conclusion,
+            "finding_categories": ["TEST_PLAN_DEFECT"] if has_findings else [],
+            "findings": (
+                [
+                    {
+                        "finding_id": "test-plan-defect-1",
+                        "category": "TEST_PLAN_DEFECT",
+                        "summary": "The test plan does not close a required condition.",
+                        "reasoning": "The review report records the unresolved condition.",
+                        "evidence_ids": ["reviewed-test-plan"],
+                    }
+                ]
+                if has_findings
+                else []
+            ),
+            "review_output_artifacts": [
+                {
+                    "artifact_id": "test-plan-review",
+                    "path": str(report_path.resolve()),
+                    "size": len(report_bytes),
+                    "sha256": hashlib.sha256(report_bytes).hexdigest(),
+                }
+            ],
+            "reviewed_plan_sha256": reviewed_plan_sha256,
+            "score": score,
+            "error_count": error_count,
+            "warning_count": warning_count,
+            "semantic_issues": semantic_issues or [],
+            "prior_issue_assessments": prior_issue_assessments or [],
+        }
+
     def approve_planning_round(
         self,
         coordinator: aegis_runtime.RuntimeCoordinator,
@@ -2238,13 +2320,15 @@ class RuntimeCoordinatorTests(unittest.TestCase):
         )
         accepted = coordinator.record_planning_review(
             str(review["round_id"]),
-            {
-                "reviewed_plan_sha256": frozen["plan_sha256"],
-                "score": 95,
-                "error_count": 0,
-                "warning_count": 0,
-                "verdict": "PASS",
-            },
+            self.planning_review_result(
+                coordinator,
+                review,
+                reviewed_plan_sha256=str(frozen["plan_sha256"]),
+                score=95,
+                error_count=0,
+                warning_count=0,
+                review_conclusion="PASS",
+            ),
         )
         self.assertTrue(accepted)
         if not coordinator._planning_turns:
@@ -2446,9 +2530,28 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 developer_instructions=f"persistent {role}",
                 timeout_seconds=5,
             )
+            response_data = json.loads(response)
+            if node == "D":
+                review_stage = aegis_runtime.coordinator_review_stage(
+                    aegis_runtime.REVIEW_CONTRACT_TEST_RESULT_REVIEWER,
+                    response_data,
+                )
+                response_data.update(
+                    coordinator_review_stage=review_stage,
+                    status=review_stage == "TEST_REPORTING",
+                )
+            elif node == "F":
+                review_stage = aegis_runtime.coordinator_review_stage(
+                    aegis_runtime.REVIEW_CONTRACT_FINAL_REVIEWER,
+                    response_data,
+                )
+                response_data.update(
+                    coordinator_review_stage=review_stage,
+                    status=response_data["review_conclusion"] == "PASS",
+                )
             return {
                 **node_state,
-                **json.loads(response),
+                **response_data,
                 "response": response,
                 "current_node": node,
             }
@@ -6138,13 +6241,15 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 self.assertTrue(
                     coordinator.record_planning_review(
                         str(review_control["round_id"]),
-                        {
-                            "reviewed_plan_sha256": frozen["plan_sha256"],
-                            "score": 95,
-                            "error_count": 0,
-                            "warning_count": 0,
-                            "verdict": "PASS",
-                        },
+                        self.planning_review_result(
+                            coordinator,
+                            review_control,
+                            reviewed_plan_sha256=str(frozen["plan_sha256"]),
+                            score=95,
+                            error_count=0,
+                            warning_count=0,
+                            review_conclusion="PASS",
+                        ),
                     )
                 )
                 coordinator.complete_planning_stage()
@@ -6243,14 +6348,15 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             )
             accepted = coordinator.record_planning_review(
                 "round-0001",
-                {
-                    "status": True,
-                    "reviewed_plan_sha256": frozen["plan_sha256"],
-                    "score": 94,
-                    "error_count": 1,
-                    "warning_count": 0,
-                    "verdict": "PASS",
-                    "semantic_issues": [
+                self.planning_review_result(
+                    coordinator,
+                    review,
+                    reviewed_plan_sha256=str(frozen["plan_sha256"]),
+                    score=94,
+                    error_count=1,
+                    warning_count=0,
+                    review_conclusion="FAIL",
+                    semantic_issues=[
                         {
                             "semantic_issue_id": "issue-a-to-b-evidence",
                             "premises": ["A is asserted."],
@@ -6263,7 +6369,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                             ],
                         }
                     ],
-                },
+                ),
             )
             self.assertFalse(accepted)
 
@@ -6280,23 +6386,24 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             second_report.write_text("# Review\n\nApproved.\n", encoding="utf-8")
             accepted = coordinator.record_planning_review(
                 "round-0002",
-                {
-                    "status": False,
-                    "reviewed_plan_sha256": second_frozen["plan_sha256"],
-                    "score": 95,
-                    "error_count": 0,
-                    "warning_count": 2,
-                    "verdict": "PASS",
-                    "prior_issue_assessments": [
+                self.planning_review_result(
+                    coordinator,
+                    second_review,
+                    reviewed_plan_sha256=str(second_frozen["plan_sha256"]),
+                    score=95,
+                    error_count=0,
+                    warning_count=2,
+                    review_conclusion="PASS",
+                    prior_issue_assessments=[
                         {
                             "prior_semantic_issue_id": "issue-a-to-b-evidence",
-                            "disposition": "RESOLVED",
+                            "issue_status": "RESOLVED",
                             "current_semantic_issue_ids": [],
                             "rationale": "The revised plan adds the missing bridge.",
                             "evidence": ["TEST_PLAN.md section for A-to-B evidence"],
                         }
                     ],
-                },
+                ),
             )
 
             self.assertTrue(accepted)
@@ -6416,13 +6523,15 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             self.assertFalse(
                 coordinator.record_planning_review(
                     "round-0001",
-                    {
-                        "reviewed_plan_sha256": frozen["plan_sha256"],
-                        "score": 90,
-                        "error_count": 1,
-                        "warning_count": 0,
-                        "verdict": "FAIL",
-                        "semantic_issues": [
+                    self.planning_review_result(
+                        coordinator,
+                        review,
+                        reviewed_plan_sha256=str(frozen["plan_sha256"]),
+                        score=90,
+                        error_count=1,
+                        warning_count=0,
+                        review_conclusion="FAIL",
+                        semantic_issues=[
                             {
                                 "semantic_issue_id": "issue-a-to-b-evidence",
                                 "premises": ["A is asserted."],
@@ -6435,7 +6544,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                                 ],
                             }
                         ],
-                    },
+                    ),
                 )
             )
             with self.assertRaises(PermissionError):
@@ -6495,7 +6604,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                     assessments = [
                         {
                             "prior_semantic_issue_id": "issue-a-to-b-evidence",
-                            "disposition": "REPEATED_UNRESOLVED",
+                            "issue_status": "REPEATED_UNRESOLVED",
                             "current_semantic_issue_ids": [
                                 "issue-renamed-with-same-logic"
                             ],
@@ -6506,15 +6615,17 @@ class RuntimeCoordinatorTests(unittest.TestCase):
                 self.assertFalse(
                     coordinator.record_planning_review(
                         str(review["round_id"]),
-                        {
-                            "reviewed_plan_sha256": frozen["plan_sha256"],
-                            "score": 80,
-                            "error_count": 1,
-                            "warning_count": 0,
-                            "verdict": "FAIL",
-                            "semantic_issues": [reviewed_issue],
-                            "prior_issue_assessments": assessments,
-                        },
+                        self.planning_review_result(
+                            coordinator,
+                            review,
+                            reviewed_plan_sha256=str(frozen["plan_sha256"]),
+                            score=80,
+                            error_count=1,
+                            warning_count=0,
+                            review_conclusion="FAIL",
+                            semantic_issues=[reviewed_issue],
+                            prior_issue_assessments=assessments,
+                        ),
                     )
                 )
                 if index == 2:
@@ -6898,13 +7009,15 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             ):
                 first.record_planning_review(
                     "round-0001",
-                    {
-                        "reviewed_plan_sha256": frozen["plan_sha256"],
-                        "score": 95,
-                        "error_count": 0,
-                        "warning_count": 0,
-                        "verdict": "PASS",
-                    },
+                    self.planning_review_result(
+                        first,
+                        review,
+                        reviewed_plan_sha256=str(frozen["plan_sha256"]),
+                        score=95,
+                        error_count=0,
+                        warning_count=0,
+                        review_conclusion="PASS",
+                    ),
                 )
             first.fail(failure)
             saved = aegis_runtime.load_run_state(
@@ -6931,13 +7044,29 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             final_state = json.loads(resumed.run_state_path.read_text(encoding="utf-8"))
             self.assertEqual(final_state["planning_rounds"][0]["status"], "approved")
 
+            tampered_review = json.loads(json.dumps(final_state))
+            tampered_review["planning_rounds"][0]["review_conclusion"] = "FAIL"
+            with self.assertRaisesRegex(
+                aegis_runtime.RuntimeStateError,
+                "planning review facts",
+            ):
+                aegis_runtime.RuntimeCoordinator(
+                    project_root=project,
+                    artifact_path=artifact_path,
+                    run_id="planning-publish-recovery",
+                    upstream_port=7899,
+                    relay_client=FakeRelayClient(),
+                    start_node="A",
+                    prior_state=tampered_review,
+                )
+
             inconsistent = json.loads(json.dumps(final_state))
             inconsistent["planning_rounds"][0]["score"] = 10
             inconsistent["planning_rounds"][0]["error_count"] = 3
             inconsistent["planning_rounds"][0]["verdict"] = "FAIL"
             with self.assertRaisesRegex(
                 aegis_runtime.RuntimeStateError,
-                "approved planning round violates approval rules",
+                "planning review facts",
             ):
                 aegis_runtime.RuntimeCoordinator(
                     project_root=project,
@@ -7461,7 +7590,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
                 with self.assertRaisesRegex(
                     aegis_runtime.RuntimeStateError,
-                    "predates the v13 authority and recursive-evidence contract",
+                    "predates the v14 reviewer-authority contract",
                 ):
                         aegis_runtime.RuntimeCoordinator(
                             project_root=project,

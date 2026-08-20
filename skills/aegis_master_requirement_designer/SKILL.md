@@ -175,38 +175,9 @@ reviewer 不负责实现设计。
 
 reviewer 不负责替用户做关键业务决策。
 
-reviewer 必须按以下格式返回：
+reviewer 必须使用 `skills/aegis_master_reviewer/SKILL.md` 定义的事实审核契约。
 
-```yaml
-verdict: PASS | FAIL
-ambiguities:
-  - id: A-001
-    location: "section name or quote"
-    issue: "ambiguous point"
-    required_fix: "required clarification or rewrite"
-missing_information:
-  - id: M-001
-    issue: "missing requirement or constraint"
-    required_fix: "what must be added"
-conflicts:
-  - id: C-001
-    issue: "conflict between sections / ledger / user statement"
-    required_fix: "how to resolve"
-unverifiable_items:
-  - id: U-001
-    issue: "requirement cannot be verified"
-    required_fix: "make it measurable or remove it"
-context_dependency_risks:
-  - id: X-001
-    issue: "requires chat context to understand"
-    required_fix: "make document self-contained"
-required_fixes:
-  - "blocking fix"
-optional_suggestions:
-  - "non-blocking improvement"
-```
-
-`verdict=PASS` 只表示没有阻断性歧义，不表示实现方案正确。
+`review_conclusion=PASS` 只表示需求文档不存在阻断缺陷，不表示实现方案正确。
 
 ## Master 修正规则
 
@@ -331,7 +302,7 @@ REQUIREMENT_DESIGN_FINAL.md 将作为后续设计、实现、测试、审核的�
 ```text
 - iteration number
 - draft version
-- reviewer verdict
+- reviewer review_conclusion
 - accepted fixes
 - rejected fixes with reason
 - user confirmations
@@ -357,7 +328,7 @@ REQUIREMENT_DESIGN_FINAL.md 将作为后续设计、实现、测试、审核的�
 
 只在以下条件全部满足时生成：
 
-1. reviewer 最新 verdict 为 `PASS`。
+1. reviewer 最新 `review_conclusion` 为 `PASS`。
 2. `Open Questions` 为空。
 3. Master 已确认文档不依赖聊天上下文。
 4. 用户已明确确认最终版。
@@ -402,7 +373,7 @@ artifact_path 已创建或已确认存在。
 REQUIREMENT_DESIGN_FINAL.md 已写入 artifact_path。
 USER_CONFIRMATION.md 已写入 artifact_path。
 REQUIREMENT_DESIGN_HISTORY.md 已写入 artifact_path。
-最近一次 REQUIREMENT_REVIEW_REPORT.md 的 verdict 为 PASS。
+最近一次 REQUIREMENT_REVIEW_REPORT.md 的 review_conclusion 为 PASS。
 最终文档不依赖聊天上下文。
 用户已确认最终文档。
 ```

@@ -74,6 +74,14 @@ from project_seal_store import (
 from final_review_confirmation import record_final_review_confirmation
 from mutation_accountability import record_frozen_input_mutation_reason
 from remote_seal_witness import assert_remote_witness_not_published
+from reviewer_contract import (
+    FINAL_REVIEWER as REVIEW_CONTRACT_FINAL_REVIEWER,
+    TEST_PLAN_REVIEWER as REVIEW_CONTRACT_TEST_PLAN_REVIEWER,
+    TEST_RESULT_REVIEWER as REVIEW_CONTRACT_TEST_RESULT_REVIEWER,
+    coordinator_review_stage,
+    reviewer_output_schema,
+    validate_reviewer_output,
+)
 from skill_binding import all_role_skill_bindings, load_role_skill_bundle
 
 
@@ -114,6 +122,13 @@ EXECUTION_APP_SERVER_ROLES = {
     TEST_REPORT_WRITER_ROLE,
     FINAL_REVIEWER_ROLE,
 }
+REVIEWER_ROLE_KEYS = frozenset(
+    {
+        TEST_PLAN_REVIEWER_ROLE,
+        TEST_RESULT_REVIEWER_ROLE,
+        FINAL_REVIEWER_ROLE,
+    }
+)
 
 
 def load_agent_thread_map(config_path: Path = AGENT_REGISTRY_PATH) -> dict[str, str]:
@@ -246,10 +261,9 @@ def log_node_event(node_name: str, event: str) -> None:
 
 
 def build_node_prompt(node_input: State) -> str:
-    schema = load_node_message_schema()
     payload = {
         field_name: node_input.get(field_name)
-        for field_name in schema.get("properties", {})
+        for field_name in ("artifact_path", "reasoning_ledger_context_pack")
     }
     return json.dumps(payload, ensure_ascii=False)
 
@@ -258,17 +272,22 @@ def build_planning_prompt(node_input: State, control: dict[str, object]) -> str:
     schema_name = control.get("schema")
     if not isinstance(schema_name, str) or not schema_name:
         raise RuntimeError("planning control has no schema identifier")
+    control_key = (
+        "review_input_control"
+        if schema_name == "aegis.review_input_control.v1"
+        else schema_name
+    )
     return json.dumps(
         {
             "node_message": json.loads(build_node_prompt(node_input)),
-            schema_name: control,
+            control_key: control,
         },
         ensure_ascii=False,
     )
 
 
 def planning_review_output_schema() -> dict[str, Any]:
-    schema = json.loads(json.dumps(load_node_message_schema()))
+    schema = reviewer_output_schema(REVIEW_CONTRACT_TEST_PLAN_REVIEWER)
     properties = schema.setdefault("properties", {})
     properties.update(
         {
@@ -279,7 +298,6 @@ def planning_review_output_schema() -> dict[str, Any]:
             "score": {"type": "integer", "minimum": 0, "maximum": 100},
             "error_count": {"type": "integer", "minimum": 0},
             "warning_count": {"type": "integer", "minimum": 0},
-            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
             "semantic_issues": {
                 "type": "array",
                 "items": {
@@ -332,7 +350,7 @@ def planning_review_output_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                     "required": [
                         "prior_semantic_issue_id",
-                        "disposition",
+                        "issue_status",
                         "current_semantic_issue_ids",
                         "rationale",
                         "evidence",
@@ -342,7 +360,7 @@ def planning_review_output_schema() -> dict[str, Any]:
                             "type": "string",
                             "minLength": 1,
                         },
-                        "disposition": {
+                        "issue_status": {
                             "type": "string",
                             "enum": [
                                 "REPEATED_UNRESOLVED",
@@ -372,7 +390,6 @@ def planning_review_output_schema() -> dict[str, Any]:
         "score",
         "error_count",
         "warning_count",
-        "verdict",
         "semantic_issues",
         "prior_issue_assessments",
     ):
@@ -380,6 +397,14 @@ def planning_review_output_schema() -> dict[str, Any]:
             required.append(field_name)
     schema["required"] = required
     return schema
+
+
+def execution_reviewer_output_schema(role_key: str) -> dict[str, Any]:
+    if role_key == TEST_RESULT_REVIEWER_ROLE:
+        return reviewer_output_schema(REVIEW_CONTRACT_TEST_RESULT_REVIEWER)
+    if role_key == FINAL_REVIEWER_ROLE:
+        return reviewer_output_schema(REVIEW_CONTRACT_FINAL_REVIEWER)
+    raise ValueError(f"unsupported execution reviewer role: {role_key}")
 
 
 def build_planning_role_instructions(agent_config: dict[str, Any]) -> str:
@@ -396,6 +421,72 @@ def build_planning_role_instructions(agent_config: dict[str, Any]) -> str:
         "or coverage for speed."
     )
     return load_role_skill_bundle(str(role_key), agent_config).compose(boundary)
+
+
+def build_reviewer_role_instructions(agent_config: dict[str, Any]) -> str:
+    role_key = str(agent_config.get("role_key", "unknown"))
+    description = str(agent_config.get("role_description", ""))
+    if role_key not in REVIEWER_ROLE_KEYS:
+        raise ValueError(f"unsupported reviewer role: {role_key}")
+    boundary = (
+        f"Your assigned review responsibility is: {description}\n"
+        "Read only the frozen control envelope and indexed reviewed materials. "
+        "Write only the declared review artifacts. Return factual review conclusions, "
+        "finding categories, evidence indexes, and output descriptors matching the "
+        "provided schema. Any additional output field is invalid. Use only the provided "
+        "task interface."
+    )
+    return load_role_skill_bundle(role_key, agent_config).compose(boundary)
+
+
+def reviewer_input_control(control: dict[str, object]) -> dict[str, object]:
+    """Expose reviewed material without exposing workflow or role topology."""
+
+    result: dict[str, object] = {"schema": "aegis.review_input_control.v1"}
+    for field_name in (
+        "project_root",
+        "artifact_path",
+        "project_seal",
+        "context_pack_path",
+        "context_pack_sha256",
+        "engineering_input_manifest",
+        "plan_path",
+        "reviewed_plan_sha256",
+        "review_report_path",
+        "acceptance_threshold",
+        "prior_semantic_issues",
+        "planning_handoff",
+        "approved_test_plan",
+        "reasoning_ledger_context_pack",
+        "final_review_input_manifest",
+    ):
+        if field_name in control:
+            result[field_name] = control[field_name]
+
+    evidence_manifests: list[dict[str, object]] = []
+    for value in control.get("test_evidence_manifests", []):
+        if not isinstance(value, dict):
+            continue
+        evidence_manifests.append(
+            {
+                field_name: value[field_name]
+                for field_name in ("path", "sha256", "test_ids")
+                if field_name in value
+            }
+        )
+    if evidence_manifests:
+        result["reviewed_evidence_manifests"] = evidence_manifests
+
+    reviewed_artifacts: list[dict[str, object]] = []
+    for output_group in control.get("prior_role_outputs", []):
+        if not isinstance(output_group, dict):
+            continue
+        for artifact in output_group.get("artifacts", []):
+            if isinstance(artifact, dict):
+                reviewed_artifacts.append(dict(artifact))
+    if reviewed_artifacts:
+        result["reviewed_artifacts"] = reviewed_artifacts
+    return result
 
 
 def build_execution_role_instructions(agent_config: dict[str, Any]) -> str:
@@ -431,7 +522,11 @@ def send_planning_prompt(
         role_key,
         prompt,
         output_schema=output_schema or load_node_message_schema(),
-        developer_instructions=build_planning_role_instructions(agent_config),
+        developer_instructions=(
+            build_reviewer_role_instructions(agent_config)
+            if role_key == TEST_PLAN_REVIEWER_ROLE
+            else build_planning_role_instructions(agent_config)
+        ),
         job_id=job_id,
     )
 
@@ -446,8 +541,16 @@ def send_execution_prompt(role_key: str, prompt: str) -> str:
     return coordinator.run_execution_agent(
         role_key,
         prompt,
-        output_schema=execution_output_schema(),
-        developer_instructions=build_execution_role_instructions(agent_config),
+        output_schema=(
+            execution_reviewer_output_schema(role_key)
+            if role_key in REVIEWER_ROLE_KEYS
+            else execution_output_schema()
+        ),
+        developer_instructions=(
+            build_reviewer_role_instructions(agent_config)
+            if role_key in REVIEWER_ROLE_KEYS
+            else build_execution_role_instructions(agent_config)
+        ),
         timeout_seconds=NODE_TIMEOUT_SECONDS,
     )
 
@@ -464,6 +567,52 @@ def require_control_envelope_unchanged(
             raise RuntimeError(f"{node_name} changed coordinator-owned {field_name}")
     if not isinstance(node_output.get("status"), bool):
         raise RuntimeError(f"{node_name} returned a non-boolean status")
+
+
+def validate_reviewer_envelope(
+    role_key: str,
+    node_input: State,
+    node_output: State,
+) -> dict[str, object]:
+    contract_role = {
+        TEST_PLAN_REVIEWER_ROLE: REVIEW_CONTRACT_TEST_PLAN_REVIEWER,
+        TEST_RESULT_REVIEWER_ROLE: REVIEW_CONTRACT_TEST_RESULT_REVIEWER,
+        FINAL_REVIEWER_ROLE: REVIEW_CONTRACT_FINAL_REVIEWER,
+    }.get(role_key)
+    if contract_role is None:
+        raise ValueError(f"unsupported reviewer role: {role_key}")
+    semantic_fields = set(reviewer_output_schema(contract_role)["properties"])
+    allowed_extensions = (
+        {
+            "reviewed_plan_sha256",
+            "score",
+            "error_count",
+            "warning_count",
+            "semantic_issues",
+            "prior_issue_assessments",
+        }
+        if role_key == TEST_PLAN_REVIEWER_ROLE
+        else set()
+    )
+    unsupported = sorted(set(node_output) - semantic_fields - allowed_extensions)
+    if unsupported:
+        raise ValueError(
+            "review output contains unsupported fields: " + ", ".join(unsupported)
+        )
+    semantic_payload = {
+        field_name: node_output[field_name]
+        for field_name in semantic_fields
+        if field_name in node_output
+    }
+    validated = validate_reviewer_output(contract_role, semantic_payload)
+    for field_name in ("artifact_path", "reasoning_ledger_context_pack"):
+        expected = node_input.get(field_name)
+        actual = validated.get(field_name)
+        if not isinstance(expected, str) or not isinstance(actual, str):
+            raise RuntimeError(f"reviewer returned an invalid {field_name}")
+        if Path(actual).resolve() != Path(expected).resolve():
+            raise RuntimeError(f"reviewer changed coordinator-owned {field_name}")
+    return validated
 
 
 def test_plan_author_node(state: State) -> State:
@@ -518,9 +667,22 @@ def test_plan_reviewer_node(state: State) -> State:
         control = coordinator.prepare_planning_review()
         if control.get("skip_turn") is True:
             accepted = control.get("accepted") is True
-            node_output = {"status": accepted}
+            review_stage = control.get("coordinator_review_stage")
+            if review_stage not in {
+                "TEST_PLAN_AUTHORING",
+                "TEST_EXECUTION",
+                "MASTER_PROCESSING",
+                "REVIEW_BLOCKED",
+            }:
+                raise RuntimeError("persisted planning review stage is invalid")
+            node_output = {
+                "coordinator_review_stage": str(review_stage),
+                "status": accepted,
+            }
         else:
-            prompt = build_planning_prompt(node_input, control)
+            prompt = build_planning_prompt(
+                node_input, reviewer_input_control(control)
+            )
             response = send_planning_prompt(
                 TEST_PLAN_REVIEWER_ROLE,
                 prompt,
@@ -528,24 +690,41 @@ def test_plan_reviewer_node(state: State) -> State:
                 job_id=str(control["job_id"]),
             )
             node_output = json.loads(response)
-            require_control_envelope_unchanged(
-                TEST_PLAN_REVIEWER_NODE, node_input, node_output
+            validated = validate_reviewer_envelope(
+                TEST_PLAN_REVIEWER_ROLE, node_input, node_output
             )
             accepted = coordinator.record_planning_review(
                 str(control["round_id"]), node_output
             )
+            review_stage = coordinator_review_stage(
+                REVIEW_CONTRACT_TEST_PLAN_REVIEWER, validated
+            )
+            if accepted is not (review_stage == "TEST_EXECUTION"):
+                raise RuntimeError(
+                    "planning review decision contradicts Coordinator policy"
+                )
             node_output = {
-                field_name: node_output[field_name]
-                for field_name in load_node_message_schema().get("properties", {})
-                if field_name in node_output
+                **validated,
+                "coordinator_review_stage": review_stage,
+                "status": accepted,
             }
-            node_output["status"] = accepted
         if accepted:
             coordinator.complete_planning_stage()
     else:
         prompt = build_node_prompt(node_input)
         response = send_planning_prompt(TEST_PLAN_REVIEWER_ROLE, prompt)
-        node_output = json.loads(response)
+        raw_output = json.loads(response)
+        validated = validate_reviewer_envelope(
+            TEST_PLAN_REVIEWER_ROLE, node_input, raw_output
+        )
+        review_stage = coordinator_review_stage(
+            REVIEW_CONTRACT_TEST_PLAN_REVIEWER, validated
+        )
+        node_output = {
+            **validated,
+            "coordinator_review_stage": review_stage,
+            "status": review_stage == "TEST_EXECUTION",
+        }
     log_node_event(TEST_PLAN_REVIEWER_NODE, "done")
     return {
         **node_input,
@@ -594,19 +773,26 @@ def test_result_reviewer_node(state: State) -> State:
         prompt = json.dumps(
             {
                 "node_message": json.loads(build_node_prompt(node_input)),
-                "execution_control": coordinator.execution_node_control(),
+                "review_input_control": reviewer_input_control(
+                    coordinator.execution_node_control()
+                ),
             },
             ensure_ascii=False,
         )
     response = send_execution_prompt(TEST_RESULT_REVIEWER_ROLE, prompt)
     node_output = json.loads(response)
-    require_control_envelope_unchanged(
-        TEST_RESULT_REVIEWER_NODE, node_input, node_output
+    validated = validate_reviewer_envelope(
+        TEST_RESULT_REVIEWER_ROLE, node_input, node_output
+    )
+    review_stage = coordinator_review_stage(
+        REVIEW_CONTRACT_TEST_RESULT_REVIEWER, validated
     )
     log_node_event(TEST_RESULT_REVIEWER_NODE, "done")
     return {
         **node_input,
-        **node_output,
+        **validated,
+        "coordinator_review_stage": review_stage,
+        "status": review_stage == "TEST_REPORTING",
         "current_node": TEST_RESULT_REVIEWER_NODE,
     }
 
@@ -650,23 +836,46 @@ def final_reviewer_node(state: State) -> State:
         prompt = json.dumps(
             {
                 "node_message": json.loads(build_node_prompt(node_input)),
-                "execution_control": coordinator.execution_node_control(),
+                "review_input_control": reviewer_input_control(
+                    coordinator.execution_node_control()
+                ),
             },
             ensure_ascii=False,
         )
     response = send_execution_prompt(FINAL_REVIEWER_ROLE, prompt)
     node_output = json.loads(response)
-    require_control_envelope_unchanged(FINAL_REVIEWER_NODE, node_input, node_output)
+    validated = validate_reviewer_envelope(
+        FINAL_REVIEWER_ROLE, node_input, node_output
+    )
+    review_stage = coordinator_review_stage(
+        REVIEW_CONTRACT_FINAL_REVIEWER, validated
+    )
     log_node_event(FINAL_REVIEWER_NODE, "done")
     return {
         **node_input,
-        **node_output,
+        **validated,
+        "coordinator_review_stage": review_stage,
+        "status": validated["review_conclusion"] == "PASS",
         "current_node": FINAL_REVIEWER_NODE,
     }
 
 
 def route_by_status(state: State) -> bool:
     return bool(state["status"])
+
+
+def route_by_review_stage(state: State) -> str:
+    stage = state.get("coordinator_review_stage")
+    if stage not in {
+        "TEST_PLAN_AUTHORING",
+        "TEST_EXECUTION",
+        "TEST_REPORTING",
+        "MASTER_PROCESSING",
+        "REVIEW_BLOCKED",
+        "END",
+    }:
+        raise RuntimeError("Coordinator review stage is invalid")
+    return str(stage)
 
 
 def create_graph(
@@ -720,18 +929,23 @@ def create_graph(
     graph.add_edge(FINAL_REVIEWER_NODE, END)
     graph.add_conditional_edges(
         TEST_PLAN_REVIEWER_NODE,
-        route_by_status,
+        route_by_review_stage,
         {
-            True: TEST_EXECUTOR_NODE,
-            False: TEST_PLAN_AUTHOR_NODE,
+            "TEST_EXECUTION": TEST_EXECUTOR_NODE,
+            "TEST_PLAN_AUTHORING": TEST_PLAN_AUTHOR_NODE,
+            "MASTER_PROCESSING": END,
+            "REVIEW_BLOCKED": END,
         },
     )
     graph.add_conditional_edges(
         TEST_RESULT_REVIEWER_NODE,
-        route_by_status,
+        route_by_review_stage,
         {
-            True: TEST_REPORT_WRITER_NODE,
-            False: TEST_EXECUTOR_NODE,
+            "TEST_REPORTING": TEST_REPORT_WRITER_NODE,
+            "TEST_EXECUTION": TEST_EXECUTOR_NODE,
+            "TEST_PLAN_AUTHORING": END,
+            "MASTER_PROCESSING": END,
+            "REVIEW_BLOCKED": END,
         },
     )
     graph.add_conditional_edges(
