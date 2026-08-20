@@ -1,0 +1,73 @@
+{
+  "schema_version": "aegis.agent_registry.v2",
+  "role_enum": {
+    "TEST_PLAN_AUTHOR": 1,
+    "TEST_PLAN_REVIEWER": 2,
+    "TEST_EXECUTOR": 3,
+    "TEST_RESULT_REVIEWER": 4,
+    "TEST_REPORT_WRITER": 5,
+    "FINAL_REVIEWER": 6
+  },
+  "agents": [
+    {
+      "role_id": 1,
+      "role_key": "TEST_PLAN_AUTHOR",
+      "graph_node": "A",
+      "role_description": "Test plan author. Receives the requirement document and design document, then writes a complete requirement-oriented test plan.",
+      "thread_id": "019f3638-3bb0-7221-926f-b1cbdf067e9a",
+      "name": "Bohr",
+      "role_spec_name": "Plato",
+      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+    },
+    {
+      "role_id": 2,
+      "role_key": "TEST_PLAN_REVIEWER",
+      "graph_node": "B",
+      "role_description": "Test plan reviewer. Reviews the test plan; passes only when score is at least 95 and no error-level issue remains. Warnings may be recorded without blocking.",
+      "thread_id": "019f3638-6008-75e3-a22b-5aabdcbc050c",
+      "name": "Locke",
+      "role_spec_name": "Hume",
+      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+    },
+    {
+      "role_id": 3,
+      "role_key": "TEST_EXECUTOR",
+      "graph_node": "C",
+      "role_description": "Test executor. Executes the approved test plan in the real target environment and preserves complete raw test data and evidence.",
+      "thread_id": "019f3638-90a3-7f72-b28f-92b9fa17eee9",
+      "name": "Kant",
+      "role_spec_name": "Russell",
+      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+    },
+    {
+      "role_id": 4,
+      "role_key": "TEST_RESULT_REVIEWER",
+      "graph_node": "D",
+      "role_description": "Test result reviewer. First checks whether the approved test plan was fully executed, then checks whether the evidence logically closes every claim. Sends incomplete work back to the test executor.",
+      "thread_id": "019f3638-b9ae-7330-af6d-0497bd154053",
+      "name": "Lorentz",
+      "role_spec_name": "Wegener",
+      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+    },
+    {
+      "role_id": 5,
+      "role_key": "TEST_REPORT_WRITER",
+      "graph_node": "E",
+      "role_description": "Test report writer. Writes the final test report package from the approved plan, complete raw test data, and reviewed evidence.",
+      "thread_id": "019f3638-dc73-7190-8692-1b5d63e95aba",
+      "name": "Wegener",
+      "role_spec_name": "Parfit",
+      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+    },
+    {
+      "role_id": 6,
+      "role_key": "FINAL_REVIEWER",
+      "graph_node": "F",
+      "role_description": "Final reviewer. Performs the final gate review over requirements, design, implementation plan, final code, test plan, raw test data, and test report.",
+      "thread_id": "019f3639-0ce7-7360-aec2-b08a45448610",
+      "name": "Singer",
+      "role_spec_name": "Kepler",
+      "artifact_path": "C:\\Users\\playm\\Documents\\self-git\\calculator-validation\\communication"
+    }
+  ]
+}

@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aegis.langgraph.control_files.v1",
+  "title": "Aegis LangGraph Control File Schemas",
+  "description": "Reference schema fragments for JSON-first LangGraph control files.",
+  "$defs": {
+    "blocker": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "blocker_id",
+        "severity",
+        "finding",
+        "required_files",
+        "required_change"
+      ],
+      "properties": {
+        "blocker_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3",
+            "error",
+            "warning"
+          ]
+        },
+        "requirement_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finding": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_change": {
+          "type": "string",
+          "minLength": 1
+        },
+        "forbidden_substitute": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_atoms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "review_result": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "status",
+        "score",
+        "open_blockers"
+      ],
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "status": {
+          "type": "boolean"
+        },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "open_blockers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/blocker"
+          }
+        }
+      }
+    },
+    "author_patch_claim": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "resolution_type",
+        "blocker_claims"
+      ],
+      "properties": {
+        "node": {
+          "const": "A"
+        },
+        "resolution_type": {
+          "type": "string",
+          "not": {
+            "enum": [
+              "argument_only",
+              "reinterpretation",
+              "traceability_only",
+              "reuse_old_tp",
+              "documentation_only"
+            ]
+          }
+        },
+        "blocker_claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": [
+              "blocker_id",
+              "modified_files",
+              "new_or_modified_test_ids",
+              "evidence_contract"
+            ],
+            "properties": {
+              "blocker_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "modified_files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "new_or_modified_test_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "evidence_contract": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "why_old_tests_insufficient": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "blocker_closure": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "closed_blocker_ids"
+      ],
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "authority": {
+          "type": "string"
+        },
+        "closed_blocker_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "closure_evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}
