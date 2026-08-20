@@ -6,11 +6,15 @@ import math
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Sequence
 
+from frozen_input_watcher import FrozenInputWatcher, FrozenInputWatcherError
 from .models import validate_embedding
+from path_security import read_regular_file
 
 
 class EmbeddingError(RuntimeError):
@@ -79,9 +83,18 @@ def run_embedding_command(command: str, text: str, *, timeout_seconds: int = 60)
     args = shlex.split(command)
     if not args:
         raise EmbeddingError("embedding command is empty")
+    return _run_embedding_args(args, text, timeout_seconds=timeout_seconds)
+
+
+def _run_embedding_args(
+    args: Sequence[str],
+    text: str,
+    *,
+    timeout_seconds: int,
+) -> list[float]:
     try:
         result = subprocess.run(
-            args,
+            list(args),
             input=text,
             text=True,
             capture_output=True,
@@ -94,6 +107,124 @@ def run_embedding_command(command: str, text: str, *, timeout_seconds: int = 60)
         stderr = result.stderr.strip()
         raise EmbeddingError(f"embedding command exited with {result.returncode}: {stderr}")
     return parse_embedding_payload(result.stdout)
+
+
+def _run_bound_persistent_embedding_command(
+    command: str,
+    text: str,
+    *,
+    dimensions: int,
+    timeout_seconds: int,
+) -> tuple[list[float], dict[str, Any]]:
+    if sys.platform != "win32":
+        raise EmbeddingError(
+            "persistent external embedding commands require Windows file-object locks"
+        )
+    command_args = shlex.split(command)
+    if not command_args:
+        raise EmbeddingError("embedding command is empty")
+    executable = shutil.which(command_args[0])
+    if executable is None:
+        raise EmbeddingError("embedding command executable cannot be resolved")
+    executable_path = Path(executable).resolve()
+    executed_args = [str(executable_path), *command_args[1:]]
+    input_paths: list[tuple[int | None, Path]] = [(None, executable_path)]
+    for index, argument in enumerate(command_args[1:], start=1):
+        candidate = Path(argument)
+        if not candidate.is_file():
+            continue
+        resolved = candidate.resolve()
+        executed_args[index] = str(resolved)
+        input_paths.append((index, resolved))
+    paths_by_parent: dict[Path, list[Path]] = {}
+    for _index, path in input_paths:
+        paths_by_parent.setdefault(path.parent, []).append(path)
+    watchers: list[FrozenInputWatcher] = []
+    descriptors: dict[Path, dict[str, Any]] = {}
+    try:
+        for parent, paths in paths_by_parent.items():
+            watcher = FrozenInputWatcher(parent)
+            watcher.start()
+            watcher.lock_files(paths)
+            watchers.append(watcher)
+        for _index, path in input_paths:
+            content, _identity = read_regular_file(
+                path,
+                allowed_root=Path(path.anchor),
+                label="embedding generator locked input",
+                max_bytes=128 * 1024 * 1024,
+            )
+            descriptors[path] = {
+                "path": str(path),
+                "size": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        embedding = validate_embedding(
+            _run_embedding_args(
+                executed_args,
+                text,
+                timeout_seconds=timeout_seconds,
+            ),
+            dimensions=dimensions,
+        )
+        assert embedding is not None
+        for path, descriptor in descriptors.items():
+            content, _identity = read_regular_file(
+                path,
+                allowed_root=Path(path.anchor),
+                label="embedding generator locked input recheck",
+                max_bytes=128 * 1024 * 1024,
+            )
+            if (
+                len(content) != descriptor["size"]
+                or hashlib.sha256(content).hexdigest() != descriptor["sha256"]
+            ):
+                raise EmbeddingError(
+                    "embedding generator input changed during execution"
+                )
+        bound_paths = set(descriptors)
+        for watcher in watchers:
+            events = watcher.drain()
+            if any(event.path in bound_paths for event in events):
+                raise EmbeddingError(
+                    "embedding generator input emitted a filesystem mutation event"
+                )
+        executable_descriptor = descriptors[executable_path]
+        file_inputs = [
+            descriptors[path]
+            for index, path in input_paths
+            if index is not None
+        ]
+        return embedding, {
+            "kind": "external-command",
+            "command_sha256": hashlib.sha256(command.encode("utf-8")).hexdigest(),
+            "executed_arguments_sha256": hashlib.sha256(
+                json.dumps(
+                    executed_args,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            "executable": executable_descriptor,
+            "file_inputs": file_inputs,
+            "binding": "windows-deny-write-delete-file-object-lock-v1",
+        }
+    except (FrozenInputWatcherError, OSError) as error:
+        raise EmbeddingError(
+            f"embedding generator identity could not be frozen: {error}"
+        ) from error
+    finally:
+        close_errors: list[BaseException] = []
+        for watcher in reversed(watchers):
+            try:
+                watcher.close()
+            except BaseException as error:
+                close_errors.append(error)
+        if close_errors and sys.exc_info()[0] is None:
+            raise EmbeddingError(
+                f"embedding generator file locks failed to close: {close_errors[0]}"
+            ) from close_errors[0]
 
 
 def hashed_text_embedding(text: str, *, dimensions: int = 1536) -> list[float]:
@@ -142,25 +273,89 @@ def resolve_query_embedding(
     embedding_command: str | None = None,
     allow_hash_embedding: bool = False,
     command_timeout_seconds: int = 60,
-) -> tuple[list[float] | None, str]:
+) -> tuple[list[float] | None, str, dict[str, Any] | None]:
     """Resolve an embedding for query text.
 
-    Returns (embedding, source). If no embedding source is available, returns
-    (None, "none").
+    Returns embedding bytes, source classification, and a byte-bound generator
+    identity. If no source is available, all authority fields are absent.
     """
     if embedding_json:
-        return validate_embedding(parse_embedding_payload(embedding_json), dimensions=dimensions), "json"
-    if embedding_file:
-        return validate_embedding(load_embedding_file(embedding_file), dimensions=dimensions), "file"
-    command = embedding_command or os.environ.get("AEGIS_LEDGER_EMBEDDING_COMMAND")
-    if command:
+        encoded = embedding_json.encode("utf-8")
         return (
             validate_embedding(
-                run_embedding_command(command, text, timeout_seconds=command_timeout_seconds),
+                parse_embedding_payload(encoded),
                 dimensions=dimensions,
             ),
-            "command",
+            "json",
+            {
+                "kind": "provided-json",
+                "size": len(encoded),
+                "sha256": hashlib.sha256(encoded).hexdigest(),
+            },
         )
+    if embedding_file:
+        path = Path(embedding_file).resolve()
+        encoded = path.read_bytes()
+        return (
+            validate_embedding(
+                parse_embedding_payload(encoded),
+                dimensions=dimensions,
+            ),
+            "file",
+            {
+                "kind": "provided-file",
+                "path": str(path),
+                "size": len(encoded),
+                "sha256": hashlib.sha256(encoded).hexdigest(),
+            },
+        )
+    command = embedding_command or os.environ.get("AEGIS_LEDGER_EMBEDDING_COMMAND")
+    if command:
+        embedding, identity = _run_bound_persistent_embedding_command(
+            command,
+            text,
+            dimensions=dimensions,
+            timeout_seconds=command_timeout_seconds,
+        )
+        return embedding, "command", identity
     if allow_hash_embedding:
-        return hashed_text_embedding(text, dimensions=dimensions), "hash-fallback"
-    return None, "none"
+        return (
+            hashed_text_embedding(text, dimensions=dimensions),
+            "hash-fallback",
+            {
+                "kind": "aegis-development-hash-embedding",
+                "implementation": "reasoning_ledger.embedding.hashed_text_embedding",
+            },
+        )
+    return None, "none", None
+
+
+def resolve_persistent_embedding(
+    *,
+    text: str,
+    dimensions: int,
+    embedding_command: str | None = None,
+    allow_hash_embedding: bool = False,
+    command_timeout_seconds: int = 60,
+) -> tuple[list[float], str, dict[str, Any]]:
+    command = embedding_command or os.environ.get(
+        "AEGIS_LEDGER_EMBEDDING_COMMAND"
+    )
+    if command:
+        embedding, identity = _run_bound_persistent_embedding_command(
+            command,
+            text,
+            dimensions=dimensions,
+            timeout_seconds=command_timeout_seconds,
+        )
+        return embedding, "command", identity
+    if allow_hash_embedding:
+        return hashed_text_embedding(text, dimensions=dimensions), "hash-fallback", {
+            "kind": "aegis-development-hash-embedding",
+            "implementation": "reasoning_ledger.embedding.hashed_text_embedding",
+        }
+    else:
+        raise EmbeddingError(
+            "persistent embeddings require an executable generator or the "
+            "dedicated development hash profile"
+        )

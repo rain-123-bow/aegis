@@ -8,20 +8,58 @@ from typing import Any, Mapping
 
 from path_security import PathSecurityError, lexical_absolute, read_regular_file
 
-from .models import AuthorityContextPack, json_ready
+from .models import (
+    AuthorityContextPack,
+    contains_forbidden_authority_key,
+    json_ready,
+    validate_scope,
+)
 
 
-CONTEXT_PACK_SCHEMA = "aegis.reasoning_context_pack.v2"
+CONTEXT_PACK_SCHEMA = "aegis.reasoning_context_pack.v3"
+
+
+def _resolve_retrieval_identity(
+    pack: AuthorityContextPack,
+    *,
+    retrieval_mode: str | None,
+    embedding_source: str | None,
+) -> tuple[str, str]:
+    receipt = pack.retrieval_trace.get("embedding_query_receipt")
+    if receipt is not None and (
+        not isinstance(receipt, Mapping)
+        or not isinstance(receipt.get("source"), str)
+        or not receipt["source"]
+    ):
+        raise ValueError("reasoning query embedding receipt is invalid")
+    expected_mode = "hybrid_exact" if receipt is not None else "lexical_exact"
+    expected_source = (
+        receipt.get("source")
+        if isinstance(receipt, Mapping)
+        else "none"
+    )
+    mode = expected_mode if retrieval_mode is None else retrieval_mode
+    source = expected_source if embedding_source is None else embedding_source
+    if mode != expected_mode or source != expected_source:
+        raise ValueError(
+            "reasoning retrieval mode/source differs from the query receipt"
+        )
+    return mode, source
 
 
 def context_pack_to_markdown(
     pack: AuthorityContextPack,
     *,
-    retrieval_mode: str = "hybrid_exact",
-    embedding_source: str = "none",
+    retrieval_mode: str | None = None,
+    embedding_source: str | None = None,
     generated_at: datetime | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> str:
+    retrieval_mode, embedding_source = _resolve_retrieval_identity(
+        pack,
+        retrieval_mode=retrieval_mode,
+        embedding_source=embedding_source,
+    )
     generated = (generated_at or datetime.now(timezone.utc)).isoformat()
     lines = [
         "# Reasoning Ledger Context Pack",
@@ -81,7 +119,6 @@ def context_pack_to_markdown(
                 f"- `{evidence.evidence_id}` -> `{evidence.path}`",
                 f"  - size: `{evidence.size}`",
                 f"  - sha256: `{evidence.sha256}`",
-                f"  - source_identity: `{_inline_json(evidence.source_identity)}`",
             ]
         )
     lines.append("")
@@ -91,8 +128,8 @@ def context_pack_to_markdown(
 def context_pack_to_json_data(
     pack: AuthorityContextPack,
     *,
-    retrieval_mode: str = "hybrid_exact",
-    embedding_source: str = "none",
+    retrieval_mode: str | None = None,
+    embedding_source: str | None = None,
     generated_at: datetime | None = None,
     project_seal: str,
     engineering_documents_sha256: str,
@@ -101,12 +138,21 @@ def context_pack_to_json_data(
     retrieval_scope: Mapping[str, Any],
     limit: int,
     include_causes: bool,
-    coverage: Mapping[str, bool],
     project_root: str | Path,
 ) -> dict[str, Any]:
+    retrieval_mode, embedding_source = _resolve_retrieval_identity(
+        pack,
+        retrieval_mode=retrieval_mode,
+        embedding_source=embedding_source,
+    )
     generated = (generated_at or datetime.now(timezone.utc)).isoformat().replace(
         "+00:00", "Z"
     )
+    normalized_retrieval_scope = validate_scope(retrieval_scope)
+    if contains_forbidden_authority_key(pack.retrieval_trace):
+        raise ValueError(
+            "reasoning retrieval trace contains a self-declared permission field"
+        )
     root = lexical_absolute(project_root)
     evidence_index: list[dict[str, Any]] = []
     for descriptor in pack.evidence_descriptors:
@@ -131,7 +177,6 @@ def context_pack_to_json_data(
                 "path": str(path),
                 "size": len(content),
                 "sha256": digest,
-                "source_identity": json_ready(dict(descriptor.source_identity)),
             }
         )
     payload: dict[str, Any] = {
@@ -152,21 +197,20 @@ def context_pack_to_json_data(
         "retrieval": {
             "mode": retrieval_mode,
             "embedding_source": embedding_source,
-            "scope": json_ready(dict(retrieval_scope)),
+            "scope": json_ready(normalized_retrieval_scope),
             "limit": limit,
             "include_causes": include_causes,
             "trace": json_ready(dict(pack.retrieval_trace)),
         },
-        "coverage": json_ready(dict(coverage)),
-        "candidates": [value.to_dict() for value in pack.candidates],
+        "candidates": [value.to_agent_dict() for value in pack.candidates],
         "causal_revisions": [
-            value.to_dict() for value in pack.causal_revisions
+            value.to_agent_dict() for value in pack.causal_revisions
         ],
-        "relations": [value.to_dict() for value in pack.relations],
-        "conflicts": [value.to_dict() for value in pack.conflicts],
+        "relations": [value.to_agent_dict() for value in pack.relations],
+        "conflicts": [value.to_agent_dict() for value in pack.conflicts],
         "warnings": list(pack.warnings),
         "evidence_descriptors": [
-            value.to_dict() for value in pack.evidence_descriptors
+            value.to_agent_dict() for value in pack.evidence_descriptors
         ],
         "evidence_index": evidence_index,
     }
@@ -181,8 +225,8 @@ def write_context_pack(
     output_path: str | Path,
     *,
     json_output_path: str | Path | None = None,
-    retrieval_mode: str = "hybrid_exact",
-    embedding_source: str = "none",
+    retrieval_mode: str | None = None,
+    embedding_source: str | None = None,
     metadata: Mapping[str, Any] | None = None,
     project_seal: str,
     engineering_documents_sha256: str,
@@ -191,9 +235,13 @@ def write_context_pack(
     retrieval_scope: Mapping[str, Any],
     limit: int,
     include_causes: bool,
-    coverage: Mapping[str, bool],
     project_root: str | Path,
 ) -> dict[str, Any]:
+    retrieval_mode, embedding_source = _resolve_retrieval_identity(
+        pack,
+        retrieval_mode=retrieval_mode,
+        embedding_source=embedding_source,
+    )
     generated_at = datetime.now(timezone.utc)
     json_data = context_pack_to_json_data(
         pack,
@@ -207,7 +255,6 @@ def write_context_pack(
         retrieval_scope=retrieval_scope,
         limit=limit,
         include_causes=include_causes,
-        coverage=coverage,
         project_root=project_root,
     )
     output = Path(output_path)

@@ -179,9 +179,13 @@ Coordinator 创建的 Codex/AppServer 进程树必须进入关闭即终止的、
 
 ## 10. Reasoning Ledger 与 Context Pack
 
-`.aegis/`中的 reasoning ledger 是项目因果检索实例。Master 在 A-F 启动前按当前工程任务导出完整相关 context pack；“完整”指覆盖需求、实现方案、runtime scope、代码因果、已知反证、环境事实和待决 warning。
+`.aegis/`中的 reasoning ledger 是项目因果检索实例。Master 在 A-F 启动前按当前工程任务导出可机械重放的相关 context pack。context pack 只证明查询、候选、因果展开、冲突和证据闭包，不声明需求、方案、环境或 warning 已完整覆盖；必要直接输入的完整性由冻结输入清单和审核机制独立保证。
 
-每个 workflow run 生成不可覆盖的基础 context pack，包含 project/task/role 身份、查询、active 项、原因项、边、stale/invalid 警告、证据路径、ledger revision、生成时间和 SHA-256。Coordinator 以只读 repeatable-read 事务直接导出 live ledger snapshot，逐项核对 pack item/edge，并封存 snapshot bytes；agent 自报 revision、coverage 或 hash 不能构成来源证明。
+每个 workflow run 生成不可覆盖的基础 context pack，包含 project/task/role 身份、查询、active 项、原因项、边、stale/invalid 警告、证据路径、ledger revision、生成时间和 SHA-256。Coordinator 以只读 repeatable-read 事务直接导出 live ledger snapshot，重放因果、冲突和证据闭包，逐项核对去身份化的 pack item/edge，并封存包含审计身份的 snapshot bytes；agent 自报 revision、coverage、permission 或 hash 不能构成来源证明。context pack 不声明语义完整覆盖。
+
+reasoning ledger 数据库使用权威协议版本 3。项目配置和数据库共同保存不可变项目锚点；锚点绑定 project、PostgreSQL cluster、database OID、database name 和 schema。Coordinator 在任何导出前机械核对锚点、实际数据库版本、pgvector 版本与命名空间、事件序列和实际 catalog signature。连接参数不得改变系统目录的名称解析优先级。环境变量只能提供连接地址，不能改变项目权威来源。
+
+空权威库或合法零命中检索允许生成空上下文包；空包仍必须绑定项目、查询、快照和规范哈希。记录及检索元数据任意嵌套层级的自报权限字段均被拒绝。
 
 角色可以获得基础 pack 的角色视图，但不得因此失去直接读取冻结事实和原始证据的能力。A-F 期间所有角色只能读取 Coordinator 绑定并校验哈希的冻结 pack，禁止查询在线 ledger。pack 范围不足时必须失败，不能动态补查。相关事实变化后生成新版本，不覆盖旧 pack，并从 A 启动新 run。
 

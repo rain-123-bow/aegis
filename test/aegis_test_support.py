@@ -380,6 +380,8 @@ def write_test_reasoning_context_pack(
     task_id: str = "task-unit-test",
     agent_role: str = "AEGIS_WORKFLOW",
 ) -> Path:
+    from reasoning_ledger.schema import authority_schema_signature
+
     evidence = project / SCOPE_POLICY_RELATIVE_PATH
     if not evidence.is_file():
         raise ValueError("test context pack requires a runtime scope policy")
@@ -415,9 +417,46 @@ def write_test_reasoning_context_pack(
         "created_at": "2026-08-17T00:00:00Z",
         "evidence_ids": [evidence_id],
     }
-    live_snapshot = {
-        "schema": "aegis.reasoning_ledger.snapshot.v2",
+    project_anchor = {
+        "schema": "aegis.reasoning_ledger.project_anchor.v1",
         "project_id": project_id_hex,
+        "cluster_system_identifier": "123456789",
+        "database_oid": 16384,
+        "database_name": "unit-test",
+        "schema_name": "reasoning_ledger",
+    }
+    project_anchor_sha256 = hashlib.sha256(
+        json.dumps(
+            project_anchor,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    live_snapshot = {
+        "schema": "aegis.reasoning_ledger.snapshot.v5",
+        "project_id": project_id_hex,
+        "database_contract": {
+            "database": "unit-test",
+            "user": "unit-test",
+            "postgresql_major": 16,
+            "postgresql_version_num": 160004,
+            "pgvector_version": "0.8.0",
+            "pgvector_schema": "public",
+            "schema": "reasoning_ledger",
+            "schema_version": 3,
+            "embedding_dimensions": 3,
+            "schema_contract_signature": authority_schema_signature(
+                schema="reasoning_ledger",
+                embedding_dimensions=3,
+            ),
+            "catalog_signature": "88" * 32,
+            "project_anchor": {
+                **project_anchor,
+                "anchor_sha256": project_anchor_sha256,
+                "created_at": "2026-08-20T00:00:00Z",
+            },
+        },
         "statements": [
             {
                 "project_id": project_id_hex,
@@ -453,6 +492,7 @@ def write_test_reasoning_context_pack(
             }
         ],
         "embedding_profiles": [],
+        "embedding_index": [],
     }
     live_snapshot_bytes = json.dumps(
         live_snapshot,
@@ -467,7 +507,7 @@ def write_test_reasoning_context_pack(
     live_snapshot_path.parent.mkdir(parents=True, exist_ok=True)
     live_snapshot_path.write_bytes(live_snapshot_bytes)
     payload = {
-        "schema": "aegis.reasoning_context_pack.v2",
+        "schema": "aegis.reasoning_context_pack.v3",
         "project_id_hex": project_id_hex,
         "task_id": task_id,
         "agent_role": agent_role,
@@ -482,8 +522,8 @@ def write_test_reasoning_context_pack(
             "snapshot_sha256": hashlib.sha256(live_snapshot_bytes).hexdigest(),
         },
         "retrieval": {
-            "mode": "unit_test_fixture",
-            "embedding_source": "codex-gpt",
+            "mode": "lexical_exact",
+            "embedding_source": "none",
             "scope": {"task": task_id},
             "limit": 12,
             "include_causes": True,
@@ -495,11 +535,11 @@ def write_test_reasoning_context_pack(
                     "statement_types": [],
                     "created_after": None,
                     "created_before": None,
-                    "permissions": [],
                 },
                 "lexical_candidates": ["fact.runtime.scope@1"],
                 "semantic_candidates": [],
                 "embedding_profile_id": None,
+                "embedding_query_receipt": None,
                 "causal_relations": [
                     "SUPPORTS",
                     "ASSUMES",
@@ -511,18 +551,13 @@ def write_test_reasoning_context_pack(
                 "limit": 12,
             },
         },
-        "coverage": {
-            "requirements": True,
-            "implementation_plan": True,
-            "runtime_scope": True,
-            "code_causality": True,
-            "known_refutations": True,
-            "environment_facts": True,
-            "pending_warnings": True,
-        },
         "candidates": [
             {
-                "revision": revision,
+                "revision": {
+                    key: value
+                    for key, value in revision.items()
+                    if key != "created_by"
+                },
                 "sources": ["LEXICAL"],
                 "lexical_rank": 1.0,
                 "semantic_distance": None,
@@ -532,14 +567,19 @@ def write_test_reasoning_context_pack(
         "relations": [],
         "conflicts": [],
         "warnings": [],
-        "evidence_descriptors": [evidence_descriptor],
+        "evidence_descriptors": [
+            {
+                key: value
+                for key, value in evidence_descriptor.items()
+                if key not in {"created_by", "source_identity"}
+            }
+        ],
         "evidence_index": [
             {
                 "evidence_id": evidence_id,
                 "path": str(evidence.resolve()),
                 "size": len(evidence_bytes),
                 "sha256": hashlib.sha256(evidence_bytes).hexdigest(),
-                "source_identity": {"kind": "unit_test_fixture", "id": evidence_id},
             }
         ],
     }

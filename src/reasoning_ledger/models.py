@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import re
+import struct
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -13,6 +14,12 @@ from typing import Any, Mapping, Sequence
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SUPPORTED_EMBEDDING_INPUT_TEMPLATE_VERSION = "statement-v1"
+QUERY_EMBEDDING_SOURCE_KINDS = {
+    "json": "provided-json",
+    "file": "provided-file",
+    "command": "external-command",
+    "hash-fallback": "aegis-development-hash-embedding",
+}
 
 
 class StatementType(str, Enum):
@@ -64,17 +71,25 @@ def normalize_relative_path(path: str | None) -> str | None:
     return str(posix)
 
 
+def contains_forbidden_authority_key(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        return "required_permissions" in value or any(
+            contains_forbidden_authority_key(item) for item in value.values()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(contains_forbidden_authority_key(item) for item in value)
+    return False
+
+
 def validate_scope(scope: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(scope, Mapping):
         raise TypeError("scope must be a mapping")
     normalized = dict(scope)
-    permissions = normalized.get("required_permissions")
-    if permissions is not None and (
-        not isinstance(permissions, list)
-        or any(not isinstance(value, str) or not value.strip() for value in permissions)
-        or len(permissions) != len(set(permissions))
-    ):
-        raise ValueError("scope required_permissions must be unique non-empty strings")
+    if contains_forbidden_authority_key(normalized):
+        raise ValueError(
+            "record-level required_permissions are recursively unsupported without a "
+            "Coordinator-owned authorization authority"
+        )
     return normalized
 
 
@@ -93,6 +108,22 @@ def validate_embedding(
     if any(not math.isfinite(value) for value in values):
         raise ValueError("embedding values must be finite")
     return values
+
+
+def canonical_embedding_sha256(
+    embedding: Sequence[float],
+    *,
+    dimensions: int | None = None,
+) -> str:
+    values = validate_embedding(embedding, dimensions=dimensions)
+    assert values is not None
+    digest = hashlib.sha256()
+    try:
+        for value in values:
+            digest.update(struct.pack(">f", 0.0 if value == 0.0 else value))
+    except (OverflowError, struct.error) as error:
+        raise ValueError("embedding value is outside the binary32 range") from error
+    return digest.hexdigest()
 
 
 def json_ready(value: Any) -> Any:
@@ -361,6 +392,13 @@ class LedgerEvidence:
     def to_dict(self) -> dict[str, Any]:
         return json_ready(self.__dict__)
 
+    def to_agent_dict(self) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in self.to_dict().items()
+            if key not in {"created_by", "source_identity"}
+        }
+
 
 @dataclass(frozen=True)
 class LedgerStatementRevision:
@@ -413,6 +451,13 @@ class LedgerStatementRevision:
 
     def to_dict(self) -> dict[str, Any]:
         return json_ready(self.__dict__)
+
+    def to_agent_dict(self) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in self.to_dict().items()
+            if key != "created_by"
+        }
 
 
 def render_statement_embedding_input(
@@ -492,6 +537,13 @@ class LedgerRelation:
     def to_dict(self) -> dict[str, Any]:
         return json_ready(self.__dict__)
 
+    def to_agent_dict(self) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in self.to_dict().items()
+            if key != "created_by"
+        }
+
 
 @dataclass(frozen=True)
 class LedgerAuthorityEvent:
@@ -542,6 +594,52 @@ class CandidateHit:
             "semantic_distance": self.semantic_distance,
         }
 
+    def to_agent_dict(self) -> dict[str, Any]:
+        return {
+            "revision": self.revision.to_agent_dict(),
+            "sources": list(self.sources),
+            "lexical_rank": self.lexical_rank,
+            "semantic_distance": self.semantic_distance,
+        }
+
+
+@dataclass(frozen=True)
+class QueryEmbeddingReceipt:
+    profile_id: str
+    source: str
+    embedding: Sequence[float]
+    generator_identity: Mapping[str, Any]
+    embedding_sha256: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not self.profile_id.strip() or not self.source.strip():
+            raise ValueError("query embedding profile/source must not be empty")
+        values = validate_embedding(self.embedding)
+        assert values is not None
+        if not isinstance(self.generator_identity, Mapping) or not self.generator_identity:
+            raise ValueError("query embedding generator identity must not be empty")
+        expected_kind = QUERY_EMBEDDING_SOURCE_KINDS.get(self.source)
+        if expected_kind is None or self.generator_identity.get("kind") != expected_kind:
+            raise ValueError(
+                "query embedding source differs from its generator identity"
+            )
+        object.__setattr__(self, "embedding", tuple(values))
+        object.__setattr__(self, "generator_identity", dict(self.generator_identity))
+        object.__setattr__(
+            self,
+            "embedding_sha256",
+            canonical_embedding_sha256(values),
+        )
+
+    def to_trace_dict(self) -> dict[str, Any]:
+        return {
+            "schema": "aegis.query_embedding_receipt.v1",
+            "profile_id": self.profile_id,
+            "source": self.source,
+            "embedding_sha256": self.embedding_sha256,
+            "generator_identity": json_ready(dict(self.generator_identity)),
+        }
+
 
 @dataclass(frozen=True)
 class AuthorityContextPack:
@@ -563,13 +661,15 @@ class AuthorityContextPack:
             "task_id": self.task_id,
             "agent_role": self.agent_role,
             "query": self.query,
-            "candidates": [value.to_dict() for value in self.candidates],
-            "causal_revisions": [value.to_dict() for value in self.causal_revisions],
-            "relations": [value.to_dict() for value in self.relations],
-            "conflicts": [value.to_dict() for value in self.conflicts],
+            "candidates": [value.to_agent_dict() for value in self.candidates],
+            "causal_revisions": [
+                value.to_agent_dict() for value in self.causal_revisions
+            ],
+            "relations": [value.to_agent_dict() for value in self.relations],
+            "conflicts": [value.to_agent_dict() for value in self.conflicts],
             "warnings": list(self.warnings),
             "evidence_descriptors": [
-                value.to_dict() for value in self.evidence_descriptors
+                value.to_agent_dict() for value in self.evidence_descriptors
             ],
             "retrieval_trace": json_ready(dict(self.retrieval_trace)),
         }

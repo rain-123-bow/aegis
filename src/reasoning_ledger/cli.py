@@ -4,9 +4,12 @@ import argparse
 import hashlib
 import json
 import os
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+import psycopg
 
 from path_security import read_regular_file
 
@@ -15,6 +18,7 @@ from .embedding import EmbeddingError, resolve_query_embedding
 from .models import (
     EmbeddingProfile,
     EvidenceDescriptor,
+    QueryEmbeddingReceipt,
     RelationType,
     RevisionValidity,
     StatementRelation,
@@ -51,6 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_project_args(export)
     export.add_argument("--output", required=True)
 
+    verify_evidence = subparsers.add_parser("verify-evidence")
+    add_project_args(verify_evidence)
+
     evidence = subparsers.add_parser("register-evidence")
     add_project_args(evidence)
     evidence.add_argument("--evidence-id", required=True)
@@ -84,7 +91,14 @@ def build_parser() -> argparse.ArgumentParser:
     link.add_argument("--from-revision", type=int, required=True)
     link.add_argument("--to-statement-id", required=True)
     link.add_argument("--to-revision", type=int, required=True)
-    link.add_argument("--relation-type", choices=[value.value for value in RelationType], required=True)
+    link.add_argument(
+        "--relation-type",
+        choices=[
+            value.value for value in RelationType
+            if value is not RelationType.SUPERSEDES
+        ],
+        required=True,
+    )
     link.add_argument("--conditions-json", default="{}")
     link.add_argument("--reason", required=True)
     link.add_argument("--evidence-ids", required=True)
@@ -114,9 +128,12 @@ def build_parser() -> argparse.ArgumentParser:
     store_embedding.add_argument("--profile-id", required=True)
     store_embedding.add_argument("--embedded-text")
     store_embedding.add_argument("--embedded-text-file")
-    add_embedding_args(
-        store_embedding,
-        hash_help="generate a deterministic development-only embedding",
+    store_embedding.add_argument("--embedding-command")
+    store_embedding.add_argument("--embedding-timeout", type=int, default=60)
+    store_embedding.add_argument(
+        "--allow-hash-embedding",
+        action="store_true",
+        help="generate a deterministic development-only embedding",
     )
 
     search = subparsers.add_parser("semantic-search")
@@ -148,8 +165,6 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--agent-role", required=True)
     context.add_argument("--project-seal", required=True)
     context.add_argument("--engineering-documents-sha256", required=True)
-    context.add_argument("--coverage-json")
-    context.add_argument("--coverage-file")
     context.add_argument("--query")
     context.add_argument("--query-file")
     context.add_argument("--scope-json", default="{}")
@@ -186,7 +201,6 @@ def add_hard_filter_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--statement-types")
     parser.add_argument("--created-after")
     parser.add_argument("--created-before")
-    parser.add_argument("--permissions", default="")
 
 
 def add_project_args(parser: argparse.ArgumentParser) -> None:
@@ -213,8 +227,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         return _main(args)
-    except (EmbeddingError, ValueError, KeyError, PermissionError, RuntimeError) as exc:
-        print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+    except (
+        EmbeddingError,
+        ValueError,
+        KeyError,
+        PermissionError,
+        RuntimeError,
+        psycopg.Error,
+    ) as exc:
+        print(json.dumps({"status": False, "error": str(exc)}, ensure_ascii=False))
         return 2
 
 
@@ -230,7 +251,11 @@ def _main(args: argparse.Namespace) -> int:
         print(json.dumps({"config": str(result.config.config_path)}, ensure_ascii=False))
         return 0
 
-    config = ProjectLedgerConfig.load(args.project_root)
+    config = (
+        ProjectLedgerConfig.load_for_migration(args.project_root)
+        if args.command == "migrate"
+        else ProjectLedgerConfig.load(args.project_root)
+    )
     dsn = args.dsn or os.environ.get(config.dsn_env)
     ledger = ReasoningLedger(
         dsn,
@@ -239,29 +264,39 @@ def _main(args: argparse.Namespace) -> int:
         embedding_dimensions=config.embedding_dimensions,
         minimum_postgresql_major=config.minimum_postgresql_major,
         minimum_pgvector_version=config.minimum_pgvector_version,
+        expected_project_anchor_sha256=config.project_anchor_sha256,
     )
 
     if args.command == "migrate":
-        ledger.migrate()
-        print(json.dumps({"migrated": True, "schema": config.schema}, ensure_ascii=False))
-        return 0
-
-    if args.command == "probe":
-        with ledger.connect() as conn:
-            row = conn.execute("SELECT current_database() AS database, current_user AS user").fetchone()
-            vector = conn.execute(
-                "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
-            ).fetchone()
+        project_anchor = ledger.migrate()
+        bind_configuration = config.project_anchor_sha256 is None
+        if config.project_anchor_sha256 is None:
+            if ProjectLedgerConfig.load_for_migration(args.project_root) != config:
+                raise RuntimeError(
+                    "reasoning-ledger project configuration changed during migration"
+                )
+            config = replace(
+                config,
+                project_anchor_sha256=str(project_anchor["anchor_sha256"]),
+            )
+        config.ensure_migration_artifact()
+        if bind_configuration:
+            config.save()
         print(
             json.dumps(
                 {
-                    "database": row["database"],
-                    "user": row["user"],
-                    "vector": vector["extversion"] if vector else None,
+                    "status": True,
+                    "migrated": True,
+                    "schema": config.schema,
+                    "project_anchor": project_anchor,
                 },
                 ensure_ascii=False,
             )
         )
+        return 0
+
+    if args.command == "probe":
+        print(json.dumps(ledger.probe_contract(require_schema=True), ensure_ascii=False))
         return 0
 
     if args.command == "export":
@@ -277,6 +312,11 @@ def _main(args: argparse.Namespace) -> int:
                 ensure_ascii=False,
             )
         )
+        return 0
+
+    if args.command == "verify-evidence":
+        result = ledger.verify_evidence_files(project_root=config.project_root)
+        print(json.dumps(result, ensure_ascii=False))
         return 0
 
     if args.command == "register-evidence":
@@ -301,7 +341,8 @@ def _main(args: argparse.Namespace) -> int:
                 or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 scope=_read_json_arg(args.scope_json, args.scope_file, argument_name="scope"),
                 created_by=args.created_by,
-            )
+            ),
+            project_root=config.project_root,
         )
         print(json.dumps({"evidence": descriptor.to_dict()}, ensure_ascii=False))
         return 0
@@ -391,25 +432,14 @@ def _main(args: argparse.Namespace) -> int:
             args.embedded_text_file,
             argument_name="embedded-text",
         )
-        embedding, embedding_source = resolve_query_embedding(
-            text=embedded_text,
-            dimensions=config.embedding_dimensions,
-            embedding_json=args.embedding_json,
-            embedding_file=args.embedding_file,
-            embedding_command=args.embedding_command,
-            allow_hash_embedding=args.allow_hash_embedding,
-            command_timeout_seconds=args.embedding_timeout,
-        )
-        if embedding is None:
-            raise EmbeddingError("store-embedding requires an embedding source")
-        ledger.store_embedding(
+        embedding_source = ledger.generate_and_store_embedding(
             statement_id=args.statement_id,
             revision=args.revision,
             profile_id=args.profile_id,
-            embedding=embedding,
-            embedded_text_sha256=hashlib.sha256(
-                embedded_text.encode("utf-8")
-            ).hexdigest(),
+            embedded_text=embedded_text,
+            embedding_command=args.embedding_command,
+            allow_hash_embedding=args.allow_hash_embedding,
+            command_timeout_seconds=args.embedding_timeout,
         )
         print(
             json.dumps(
@@ -455,7 +485,7 @@ def _statement_revision(args: argparse.Namespace) -> StatementRevision:
 def _semantic_search(args: argparse.Namespace, ledger: ReasoningLedger, config: ProjectLedgerConfig) -> int:
     query = _read_text_arg(args.query, args.query_file, argument_name="query")
     scope = _read_json_arg(args.scope_json, args.scope_file, argument_name="scope")
-    embedding, embedding_source = resolve_query_embedding(
+    embedding, embedding_source, generator_identity = resolve_query_embedding(
         text=query,
         dimensions=config.embedding_dimensions,
         embedding_json=args.embedding_json,
@@ -469,15 +499,21 @@ def _semantic_search(args: argparse.Namespace, ledger: ReasoningLedger, config: 
             "semantic-search requires an embedding source: --embedding-json, --embedding-file, "
             "--embedding-command, AEGIS_LEDGER_EMBEDDING_COMMAND, or --allow-hash-embedding"
         )
-    results = ledger.semantic_search(
-        embedding,
+    if generator_identity is None:
+        raise EmbeddingError("semantic-search has no query generator identity")
+    query_receipt = QueryEmbeddingReceipt(
         profile_id=args.profile_id,
+        source=embedding_source,
+        embedding=embedding,
+        generator_identity=generator_identity,
+    )
+    results = ledger.semantic_search(
+        query_receipt,
         limit=args.limit,
         statement_types=_csv(args.statement_types),
         scope=scope,
         created_after=args.created_after,
         created_before=args.created_before,
-        permissions=_csv(args.permissions) or [],
     )
     data = {
         "project_id": config.project_id,
@@ -507,7 +543,6 @@ def _lexical_search(
         scope=scope,
         created_after=args.created_after,
         created_before=args.created_before,
-        permissions=_csv(args.permissions) or [],
     )
     data = {
         "project_id": config.project_id,
@@ -528,27 +563,7 @@ def _lexical_search(
 def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: ProjectLedgerConfig) -> int:
     query = _read_text_arg(args.query, args.query_file, argument_name="query")
     scope = _read_json_arg(args.scope_json, args.scope_file, argument_name="scope")
-    coverage = _read_json_arg(
-        args.coverage_json,
-        args.coverage_file,
-        argument_name="coverage",
-    )
-    expected_coverage = {
-        "requirements",
-        "implementation_plan",
-        "runtime_scope",
-        "code_causality",
-        "known_refutations",
-        "environment_facts",
-        "pending_warnings",
-    }
-    if set(coverage) != expected_coverage or any(
-        coverage[field] is not True for field in expected_coverage
-    ):
-        raise ValueError(
-            "context-pack coverage must explicitly set every required domain to true"
-        )
-    embedding, embedding_source = resolve_query_embedding(
+    embedding, embedding_source, generator_identity = resolve_query_embedding(
         text=query,
         dimensions=config.embedding_dimensions,
         embedding_json=args.embedding_json,
@@ -564,6 +579,16 @@ def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: Pro
         )
     if embedding is not None and not args.embedding_profile_id:
         raise ValueError("semantic context retrieval requires --embedding-profile-id")
+    query_receipt = None
+    if embedding is not None:
+        if generator_identity is None:
+            raise EmbeddingError("context-pack has no query generator identity")
+        query_receipt = QueryEmbeddingReceipt(
+            profile_id=args.embedding_profile_id,
+            source=embedding_source,
+            embedding=embedding,
+            generator_identity=generator_identity,
+        )
     retrieval_mode = "hybrid_exact" if embedding is not None else "lexical_exact"
     snapshot_before = ledger.export_snapshot()
     snapshot_before_bytes = json.dumps(
@@ -577,13 +602,11 @@ def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: Pro
         task_id=args.task_id,
         agent_role=args.agent_role,
         query=query,
-        query_embedding=embedding,
-        embedding_profile_id=args.embedding_profile_id,
+        query_embedding=query_receipt,
         statement_types=_csv(args.statement_types),
         scope=scope,
         created_after=args.created_after,
         created_before=args.created_before,
-        permissions=_csv(args.permissions) or [],
         limit=args.limit,
         include_causes=args.include_causes,
     )
@@ -634,7 +657,6 @@ def _context_pack(args: argparse.Namespace, ledger: ReasoningLedger, config: Pro
         retrieval_scope=scope,
         limit=args.limit,
         include_causes=args.include_causes,
-        coverage=coverage,
         project_root=config.project_root,
     )
     print(

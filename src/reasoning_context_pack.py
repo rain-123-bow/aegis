@@ -15,9 +15,13 @@ from path_security import (
     read_regular_file,
     same_path,
 )
+from reasoning_ledger.models import (
+    QUERY_EMBEDDING_SOURCE_KINDS,
+    contains_forbidden_authority_key,
+)
 
 
-REASONING_CONTEXT_PACK_SCHEMA = "aegis.reasoning_context_pack.v2"
+REASONING_CONTEXT_PACK_SCHEMA = "aegis.reasoning_context_pack.v3"
 MAX_CONTEXT_PACK_BYTES = 16 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 64 * 1024 * 1024
 
@@ -34,7 +38,6 @@ _TOP_LEVEL_FIELDS = {
     "bindings",
     "ledger",
     "retrieval",
-    "coverage",
     "candidates",
     "causal_revisions",
     "relations",
@@ -59,9 +62,17 @@ _TRACE_FIELDS = {
     "lexical_candidates",
     "semantic_candidates",
     "embedding_profile_id",
+    "embedding_query_receipt",
     "causal_relations",
     "max_causal_depth",
     "limit",
+}
+_QUERY_EMBEDDING_RECEIPT_FIELDS = {
+    "schema",
+    "profile_id",
+    "source",
+    "embedding_sha256",
+    "generator_identity",
 }
 _HARD_FILTER_FIELDS = {
     "project_id",
@@ -70,16 +81,6 @@ _HARD_FILTER_FIELDS = {
     "statement_types",
     "created_after",
     "created_before",
-    "permissions",
-}
-_COVERAGE_FIELDS = {
-    "requirements",
-    "implementation_plan",
-    "runtime_scope",
-    "code_causality",
-    "known_refutations",
-    "environment_facts",
-    "pending_warnings",
 }
 _REVISION_FIELDS = {
     "project_id",
@@ -93,7 +94,6 @@ _REVISION_FIELDS = {
     "scope",
     "confidence",
     "content_sha256",
-    "created_by",
     "created_at",
     "evidence_ids",
 }
@@ -108,7 +108,6 @@ _RELATION_FIELDS = {
     "applicable_conditions",
     "reason",
     "content_sha256",
-    "created_by",
     "created_at",
     "evidence_ids",
 }
@@ -118,11 +117,9 @@ _EVIDENCE_FIELDS = {
     "path",
     "size",
     "sha256",
-    "source_identity",
     "captured_at",
     "scope",
     "content_sha256",
-    "created_by",
     "created_at",
 }
 _EVIDENCE_INDEX_FIELDS = {
@@ -130,7 +127,6 @@ _EVIDENCE_INDEX_FIELDS = {
     "path",
     "size",
     "sha256",
-    "source_identity",
 }
 _STATEMENT_TYPES = {
     "OBSERVATION",
@@ -264,16 +260,14 @@ def validate_reasoning_context_pack(
         raise ReasoningContextPackError(
             "reasoning retrieval hard filters differ from pack bindings"
         )
-    _validate_coverage(payload["coverage"])
-
     revisions: dict[tuple[str, int], dict[str, Any]] = {}
     candidate_keys: set[tuple[str, int]] = set()
     observed_lexical: set[str] = set()
     observed_semantic: set[str] = set()
     candidates = payload["candidates"]
-    if not isinstance(candidates, list) or not candidates:
+    if not isinstance(candidates, list) or len(candidates) > 10_000:
         raise ReasoningContextPackError(
-            "reasoning context pack contains no candidate revisions"
+            "reasoning context pack candidate revisions are invalid"
         )
     for index, candidate in enumerate(candidates):
         if not isinstance(candidate, dict) or set(candidate) != {
@@ -415,9 +409,15 @@ def _validate_retrieval(value: Any) -> None:
         raise ReasoningContextPackError(
             "reasoning context pack has invalid retrieval metadata"
         )
-    _nonempty_string(value["mode"], "retrieval mode", 128)
+    mode = _nonempty_string(value["mode"], "retrieval mode", 128)
+    if mode not in {"lexical_exact", "hybrid_exact"}:
+        raise ReasoningContextPackError("reasoning retrieval mode is invalid")
     _nonempty_string(value["embedding_source"], "embedding source", 256)
-    if not isinstance(value["scope"], dict) or not isinstance(value["trace"], dict):
+    if (
+        not isinstance(value["scope"], dict)
+        or contains_forbidden_authority_key(value["scope"])
+        or not isinstance(value["trace"], dict)
+    ):
         raise ReasoningContextPackError("reasoning retrieval scope or trace is invalid")
     limit = value["limit"]
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10_000:
@@ -430,9 +430,11 @@ def _validate_retrieval(value: Any) -> None:
     hard_filters = trace["hard_filters"]
     if not isinstance(hard_filters, dict) or set(hard_filters) != _HARD_FILTER_FIELDS:
         raise ReasoningContextPackError("reasoning retrieval hard filters are invalid")
-    if not isinstance(hard_filters["scope"], dict):
+    if not isinstance(hard_filters["scope"], dict) or contains_forbidden_authority_key(
+        hard_filters["scope"]
+    ):
         raise ReasoningContextPackError("reasoning retrieval hard-filter scope is invalid")
-    for field in ("validities", "statement_types", "permissions"):
+    for field in ("validities", "statement_types"):
         rows = _string_list(hard_filters[field], field, max_items=10_000)
         if len(rows) != len(set(rows)):
             raise ReasoningContextPackError(f"reasoning retrieval {field} are duplicated")
@@ -446,22 +448,43 @@ def _validate_retrieval(value: Any) -> None:
     profile_id = trace["embedding_profile_id"]
     if profile_id is not None:
         _nonempty_string(profile_id, "embedding profile ID", 512)
+    receipt = trace["embedding_query_receipt"]
+    if receipt is None:
+        if profile_id is not None or trace["semantic_candidates"]:
+            raise ReasoningContextPackError(
+                "semantic retrieval has no query embedding receipt"
+            )
+        if value["embedding_source"] != "none":
+            raise ReasoningContextPackError(
+                "non-semantic retrieval declares an embedding source"
+            )
+    elif (
+        not isinstance(receipt, dict)
+        or set(receipt) != _QUERY_EMBEDDING_RECEIPT_FIELDS
+        or receipt.get("schema") != "aegis.query_embedding_receipt.v1"
+        or receipt.get("profile_id") != profile_id
+        or receipt.get("source") != value["embedding_source"]
+        or receipt.get("source") not in QUERY_EMBEDDING_SOURCE_KINDS
+        or not isinstance(receipt.get("generator_identity"), dict)
+        or not receipt["generator_identity"]
+        or receipt["generator_identity"].get("kind")
+        != QUERY_EMBEDDING_SOURCE_KINDS.get(receipt.get("source"))
+        or contains_forbidden_authority_key(receipt["generator_identity"])
+    ):
+        raise ReasoningContextPackError(
+            "reasoning query embedding receipt is invalid"
+        )
+    else:
+        _require_sha256(receipt["embedding_sha256"], "query embedding")
+    expected_mode = "hybrid_exact" if receipt is not None else "lexical_exact"
+    if mode != expected_mode:
+        raise ReasoningContextPackError(
+            "reasoning retrieval mode differs from the query embedding receipt"
+        )
     if isinstance(trace["max_causal_depth"], bool) or not isinstance(trace["max_causal_depth"], int) or trace["max_causal_depth"] < 0:
         raise ReasoningContextPackError("reasoning maximum causal depth is invalid")
     if trace["limit"] != limit:
         raise ReasoningContextPackError("reasoning trace limit differs from retrieval limit")
-
-
-def _validate_coverage(value: Any) -> None:
-    if not isinstance(value, dict) or set(value) != _COVERAGE_FIELDS:
-        raise ReasoningContextPackError(
-            "reasoning context pack has invalid coverage declaration"
-        )
-    missing = sorted(field for field in _COVERAGE_FIELDS if value[field] is not True)
-    if missing:
-        raise ReasoningContextPackError(
-            "reasoning context pack coverage is incomplete: " + ", ".join(missing)
-        )
 
 
 def _validate_revision(value: Any, project_id: str, label: str) -> dict[str, Any]:
@@ -477,11 +500,15 @@ def _validate_revision(value: Any, project_id: str, label: str) -> dict[str, Any
     if value["validity"] not in _VALIDITIES or value["current_validity"] not in _VALIDITIES:
         raise ReasoningContextPackError(f"{label} validity is invalid")
     _nonempty_string(value["content"], f"{label} content", 2 * 1024 * 1024)
-    if not isinstance(value["structured_conditions"], dict) or not isinstance(value["scope"], dict):
+    if (
+        not isinstance(value["structured_conditions"], dict)
+        or not isinstance(value["scope"], dict)
+        or contains_forbidden_authority_key(value["structured_conditions"])
+        or contains_forbidden_authority_key(value["scope"])
+    ):
         raise ReasoningContextPackError(f"{label} conditions or scope is invalid")
     _optional_number(value["confidence"], f"{label} confidence", bounded=True)
     _require_sha256(value["content_sha256"], f"{label} content")
-    _nonempty_string(value["created_by"], f"{label} creator", 256)
     _parse_utc(value["created_at"], f"{label} creation time")
     evidence_ids = _string_list(value["evidence_ids"], f"{label} evidence IDs", max_items=10_000)
     if not evidence_ids or len(evidence_ids) != len(set(evidence_ids)):
@@ -513,11 +540,12 @@ def _validate_relations(
         to_key = (row["to_statement_id"], row["to_revision"])
         if from_key not in revisions or to_key not in revisions:
             raise ReasoningContextPackError(f"reasoning {label} endpoint is absent")
-        if not isinstance(row["applicable_conditions"], dict):
+        if not isinstance(row["applicable_conditions"], dict) or contains_forbidden_authority_key(
+            row["applicable_conditions"]
+        ):
             raise ReasoningContextPackError(f"reasoning {label} conditions are invalid")
         _nonempty_string(row["reason"], f"{label} reason", 64 * 1024)
         _require_sha256(row["content_sha256"], f"{label} content")
-        _nonempty_string(row["created_by"], f"{label} creator", 256)
         _parse_utc(row["created_at"], f"{label} creation time")
         ids = _string_list(row["evidence_ids"], f"{label} evidence IDs", max_items=10_000)
         if not ids or len(ids) != len(set(ids)):
@@ -527,7 +555,7 @@ def _validate_relations(
 
 
 def _validate_evidence_descriptors(value: Any, project_id: str) -> dict[str, dict[str, Any]]:
-    if not isinstance(value, list) or not value or len(value) > 10_000:
+    if not isinstance(value, list) or len(value) > 10_000:
         raise ReasoningContextPackError("reasoning evidence descriptors are invalid")
     result: dict[str, dict[str, Any]] = {}
     for index, row in enumerate(value):
@@ -541,9 +569,9 @@ def _validate_evidence_descriptors(value: Any, project_id: str) -> dict[str, dic
             raise ReasoningContextPackError("reasoning evidence size is invalid")
         _require_sha256(row["sha256"], "evidence bytes")
         _require_sha256(row["content_sha256"], "evidence descriptor")
-        if not isinstance(row["source_identity"], dict) or not row["source_identity"]:
-            raise ReasoningContextPackError("reasoning evidence source identity is invalid")
-        if not isinstance(row["scope"], dict):
+        if not isinstance(row["scope"], dict) or contains_forbidden_authority_key(
+            row["scope"]
+        ):
             raise ReasoningContextPackError("reasoning evidence scope is invalid")
         _parse_utc(row["captured_at"], "evidence capture time")
         _parse_utc(row["created_at"], "evidence creation time")
@@ -592,7 +620,6 @@ def _validate_evidence_index(
         if (
             descriptor["size"] != len(content)
             or descriptor["sha256"] != digest
-            or descriptor["source_identity"] != authority["source_identity"]
             or descriptor["size"] != authority["size"]
             or descriptor["sha256"] != authority["sha256"]
             or not same_path(path, project_root / str(authority["path"]))

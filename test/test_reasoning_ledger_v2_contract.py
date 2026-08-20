@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -16,15 +18,22 @@ from reasoning_ledger.models import (  # noqa: E402
     LedgerEvidence,
     LedgerRelation,
     LedgerStatementRevision,
+    QueryEmbeddingReceipt,
     RelationType,
+    StatementRelation,
     StatementRevision,
     StatementType,
+    canonical_embedding_sha256,
     canonical_content_sha256,
     render_statement_embedding_input,
     validate_embedding,
 )
-from reasoning_ledger.schema import build_init_sql  # noqa: E402
-from reasoning_ledger.cli import _main, build_parser  # noqa: E402
+from reasoning_ledger.schema import (  # noqa: E402
+    V2_REQUIRED_TRIGGER_NAMES,
+    build_init_sql,
+    build_v2_reference_sql,
+)
+from reasoning_ledger.cli import _main, build_parser, main  # noqa: E402
 from reasoning_ledger.store import (  # noqa: E402
     ACYCLIC_RELATIONS,
     SERIALIZATION_FAILURE_SQLSTATES,
@@ -39,8 +48,25 @@ class ReasoningLedgerV2ContractTests(unittest.TestCase):
             embedding_dimensions=3,
         )
 
+    def test_v2_upgrade_trigger_contract_excludes_v3_only_authorities(self) -> None:
+        self.assertNotIn("project_anchor_immutable", V2_REQUIRED_TRIGGER_NAMES)
+        self.assertNotIn("supersedes_transaction_bound", V2_REQUIRED_TRIGGER_NAMES)
+        self.assertNotIn("revision_transaction_bound", V2_REQUIRED_TRIGGER_NAMES)
+        self.assertNotIn("schema_metadata_immutable", V2_REQUIRED_TRIGGER_NAMES)
+        self.assertIn("current_projection_event_bound", V2_REQUIRED_TRIGGER_NAMES)
+
+    def test_embedding_digest_uses_canonical_binary32_values(self) -> None:
+        self.assertEqual(
+            canonical_embedding_sha256([0.1, -0.2, 0.3], dimensions=3),
+            canonical_embedding_sha256(
+                [0.10000000149011612, -0.20000000298023224, 0.30000001192092896],
+                dimensions=3,
+            ),
+        )
+
     def test_schema_separates_authority_projection_and_rebuildable_index(self) -> None:
         for table in (
+            "project_anchor",
             "statement",
             "statement_revision",
             "evidence_descriptor",
@@ -62,6 +88,7 @@ class ReasoningLedgerV2ContractTests(unittest.TestCase):
     def test_authority_rows_are_immutable_and_project_isolation_is_in_keys(self) -> None:
         self.assertIn("reject_authority_mutation", self.sql)
         for table in (
+            "project_anchor",
             "statement_revision",
             "evidence_descriptor",
             "relation",
@@ -80,11 +107,19 @@ class ReasoningLedgerV2ContractTests(unittest.TestCase):
         )
         self.assertIn("validate_current_projection_event", self.sql)
         self.assertIn("NEW.projection_event_id <= OLD.projection_event_id", self.sql)
+        self.assertIn("CREATE CONSTRAINT TRIGGER supersedes_transaction_bound", self.sql)
+        self.assertIn("CREATE CONSTRAINT TRIGGER revision_transaction_bound", self.sql)
+        self.assertIn("DEFERRABLE INITIALLY DEFERRED", self.sql)
+        self.assertIn("NEW.revision <> OLD.revision + 1", self.sql)
+        self.assertIn(
+            "linked_event.aggregate_id <> OLD.statement_id || '@' || OLD.revision::text",
+            self.sql,
+        )
 
     def test_full_text_is_authoritative_revision_index_and_vector_is_exact_by_default(self) -> None:
         self.assertIn("search_document tsvector GENERATED ALWAYS AS", self.sql)
         self.assertIn("USING gin(search_document)", self.sql)
-        self.assertIn("embedding vector(3)", self.sql)
+        self.assertIn("embedding public.vector(3)", self.sql)
         self.assertNotIn("USING hnsw", self.sql)
 
     def test_first_principles_types_and_relations_are_complete(self) -> None:
@@ -196,13 +231,68 @@ class ReasoningLedgerV2ContractTests(unittest.TestCase):
         )
         self.assertIn("40001", SERIALIZATION_FAILURE_SQLSTATES)
 
+    def test_public_relation_api_rejects_supersedes(self) -> None:
+        ledger = ReasoningLedger(
+            "postgresql://unused",
+            project_id="project",
+            embedding_dimensions=3,
+        )
+        relation = StatementRelation(
+            relation_id="illegal.supersede",
+            from_statement_id="claim.versioned",
+            from_revision=1,
+            to_statement_id="claim.versioned",
+            to_revision=2,
+            relation_type=RelationType.SUPERSEDES,
+            applicable_conditions={},
+            reason="must use the atomic supersede transaction",
+            created_by="test",
+            evidence_ids=("evidence.version",),
+        )
+        with self.assertRaisesRegex(ValueError, "supersede_statement"):
+            ledger.create_relation(relation)
+
+        parsed = build_parser().parse_args(
+            [
+                "link-revisions",
+                "--relation-id",
+                "relation.support",
+                "--from-statement-id",
+                "fact.a",
+                "--from-revision",
+                "1",
+                "--to-statement-id",
+                "claim.b",
+                "--to-revision",
+                "1",
+                "--relation-type",
+                "SUPPORTS",
+                "--reason",
+                "evidence supports claim",
+                "--evidence-ids",
+                "evidence.1",
+                "--created-by",
+                "test",
+            ]
+        )
+        self.assertNotIn(
+            "SUPERSEDES",
+            next(
+                action.choices
+                for action in build_parser()._subparsers._group_actions[0]
+                .choices["link-revisions"]._actions
+                if action.dest == "relation_type"
+            ),
+        )
+        self.assertEqual(parsed.relation_type, "SUPPORTS")
+
     def test_only_proof_and_version_dependencies_are_forced_acyclic(self) -> None:
         self.assertEqual(
             ACYCLIC_RELATIONS,
             {"SUPPORTS", "ASSUMES", "SUPERSEDES", "REQUIRES"},
         )
 
-    def test_candidate_generation_applies_hard_filters_before_ranking(self) -> None:
+    def test_candidate_generation_applies_objective_hard_filters_before_ranking(self) -> None:
         lexical_source = inspect.getsource(ReasoningLedger.lexical_search)
         semantic_source = inspect.getsource(ReasoningLedger.semantic_search)
         filter_source = inspect.getsource(ReasoningLedger._add_revision_hard_filters)
@@ -211,84 +301,185 @@ class ReasoningLedgerV2ContractTests(unittest.TestCase):
         for required in (
             "statement_type",
             "created_at",
-            "required_permissions",
             "revision.scope @>",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, filter_source)
 
-    def test_export_command_reports_v2_snapshot_sections(self) -> None:
+    def test_export_command_reports_v5_snapshot_sections(self) -> None:
         source = inspect.getsource(_main)
         self.assertIn('snapshot["statements"]', source)
         self.assertIn('snapshot["relations"]', source)
         self.assertNotIn('snapshot["items"]', source)
         self.assertNotIn('snapshot["edges"]', source)
 
-    def test_context_closure_rejects_any_permission_boundary_bypass(self) -> None:
-        captured = "2026-08-20T00:00:00Z"
-        revision = LedgerStatementRevision(
-            project_id="project",
-            statement_id="fact.restricted",
-            revision=1,
-            statement_type="FACT",
-            content="Restricted fact.",
-            structured_conditions={},
-            validity="ACTIVE",
-            current_validity="ACTIVE",
-            scope={"required_permissions": ["security-review"]},
-            confidence=1.0,
-            content_sha256="aa" * 32,
-            created_by="master",
-            created_at=captured,
-            evidence_ids=("evidence.restricted",),
-        )
-        relation = LedgerRelation(
-            project_id="project",
-            relation_id="relation.restricted",
-            from_statement_id="fact.restricted",
-            from_revision=1,
-            to_statement_id="claim.target",
-            to_revision=1,
-            relation_type="SUPPORTS",
-            applicable_conditions={"required_permissions": ["security-review"]},
-            reason="Restricted support.",
-            content_sha256="bb" * 32,
-            created_by="master",
-            created_at=captured,
-            evidence_ids=("evidence.restricted",),
-        )
-        evidence = LedgerEvidence(
-            project_id="project",
-            evidence_id="evidence.restricted",
-            path="evidence/restricted.md",
-            size=1,
-            sha256="cc" * 32,
-            source_identity={"kind": "fixture"},
-            captured_at=captured,
-            scope={"required_permissions": ["security-review"]},
-            content_sha256="dd" * 32,
-            created_by="master",
-            created_at=captured,
-        )
+    def test_unsupported_record_level_permissions_are_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            StatementRevision(
+                statement_id="fact.restricted",
+                revision=1,
+                statement_type=StatementType.FACT,
+                content="Restricted fact.",
+                structured_conditions={},
+                validity="ACTIVE",
+                scope={"required_permissions": ["security-review"]},
+                confidence=1.0,
+                created_by="master",
+                evidence_ids=("evidence.restricted",),
+            )
+        with self.assertRaisesRegex(ValueError, "recursively unsupported"):
+            StatementRevision(
+                statement_id="fact.nested-restricted",
+                revision=1,
+                statement_type=StatementType.FACT,
+                content="Nested restricted fact.",
+                structured_conditions={
+                    "nested": {"required_permissions": ["security-review"]}
+                },
+                validity="ACTIVE",
+                scope={},
+                confidence=1.0,
+                created_by="master",
+                evidence_ids=("evidence.restricted",),
+            )
+        parser = build_parser()
+        lexical_actions = parser._subparsers._group_actions[0].choices[
+            "lexical-search"
+        ]._actions
+        self.assertNotIn("permissions", {action.dest for action in lexical_actions})
+
+    def test_probe_is_fail_closed_and_reports_actual_contract(self) -> None:
         ledger = ReasoningLedger(
             "postgresql://unused",
             project_id="project",
             embedding_dimensions=3,
         )
-
-        with self.assertRaises(PermissionError):
-            ledger._assert_context_permissions(
-                revisions=(revision,),
-                relations=(relation,),
-                evidence=(evidence,),
-                permissions=(),
-            )
-        ledger._assert_context_permissions(
-            revisions=(revision,),
-            relations=(relation,),
-            evidence=(evidence,),
-            permissions=("security-review",),
+        expected = {
+            "status": True,
+            "database": "aegis",
+            "user": "aegis",
+            "postgresql_major": 16,
+            "postgresql_version_num": 160004,
+            "pgvector_version": "0.8.0",
+            "pgvector_schema": "public",
+            "schema": "reasoning_ledger",
+            "schema_version": 3,
+            "embedding_dimensions": 3,
+            "schema_contract_signature": "aa" * 32,
+            "catalog_signature": "cc" * 32,
+            "project_anchor": {
+                "schema": "aegis.reasoning_ledger.project_anchor.v1",
+                "project_id": "project",
+                "cluster_system_identifier": "123456789",
+                "database_oid": 16384,
+                "database_name": "aegis",
+                "schema_name": "reasoning_ledger",
+                "anchor_sha256": "bb" * 32,
+                "created_at": "2026-08-20T00:00:00Z",
+            },
+        }
+        with patch.object(ledger, "probe_contract", return_value=expected) as probe:
+            self.assertEqual(ledger.probe_contract(require_schema=True), expected)
+            probe.assert_called_once_with(require_schema=True)
+        source = inspect.getsource(ReasoningLedger._probe_server_contract)
+        self.assertIn("server_version_num", source)
+        self.assertIn("extversion", source)
+        self.assertIn("pg_catalog.pg_extension", source)
+        self.assertIn("extension_schema", source)
+        self.assertIn("extrelocatable", source)
+        self.assertIn("ALTER EXTENSION vector SET SCHEMA", source)
+        self.assertIn("WITH SCHEMA", source)
+        self.assertIn(
+            "SET search_path TO pg_catalog",
+            inspect.getsource(ReasoningLedger.connect),
         )
+        self.assertIn(
+            "_validate_schema_contract",
+            inspect.getsource(ReasoningLedger.probe_contract),
+        )
+        migration_source = inspect.getsource(ReasoningLedger.migrate)
+        self.assertIn("if existing_tables", migration_source)
+        self.assertIn("_validate_v2_upgrade_source", migration_source)
+        self.assertLess(
+            migration_source.index("_validate_v2_upgrade_source"),
+            migration_source.index("relocate_legacy_namespace=True"),
+        )
+        self.assertIn(
+            "refusing to relocate a database-wide pgvector extension",
+            migration_source,
+        )
+        self.assertIn("_stamp_schema_catalog_signature", migration_source)
+        self.assertIn("_validate_schema_contract(conn)", migration_source)
+        self.assertIn(
+            "_validate_v2_column_definitions",
+            inspect.getsource(ReasoningLedger._validate_v2_upgrade_source),
+        )
+        v2_reference_sql = build_v2_reference_sql(
+            schema="v2_reference",
+            embedding_dimensions=3,
+        )
+        self.assertIn("embedding vector(3)", v2_reference_sql)
+        self.assertNotIn("WITH SCHEMA", v2_reference_sql)
+        self.assertIn(
+            "sql.Identifier(vector_schema)",
+            inspect.getsource(ReasoningLedger._validate_v2_column_definitions),
+        )
+        v2_validation_source = inspect.getsource(
+            ReasoningLedger._validate_v2_upgrade_source
+        )
+        self.assertIn("revision.revision = 1 AND revision.validity = 'SUPERSEDED'", v2_validation_source)
+        self.assertIn("revision.revision > 1 AND revision.validity <> 'ACTIVE'", v2_validation_source)
+        self.assertIn("event.payload->>'new_validity'", v2_validation_source)
+        self.assertIn("event.aggregate_kind <> 'REVISION'", v2_validation_source)
+        self.assertEqual(self.sql.count("pg_current_xact_id()::xid"), 11)
+        self.assertIn("relation.xmin = pg_current_xact_id()::xid", self.sql)
+        self.assertIn("revision.xmin = pg_current_xact_id()::xid", self.sql)
+        self.assertIn("projection.xmin = pg_current_xact_id()::xid", self.sql)
+        self.assertIn(
+            "_catalog_signature(conn)",
+            inspect.getsource(ReasoningLedger._validate_schema_contract),
+        )
+        self.assertIn("ON CONFLICT (key) DO NOTHING", self.sql)
+        self.assertNotIn("DO UPDATE SET value = EXCLUDED.value", self.sql)
+        self.assertIn(
+            "_validate_project_anchor",
+            inspect.getsource(ReasoningLedger.connect),
+        )
+        self.assertIn("pg_control_system()", inspect.getsource(ReasoningLedger._database_identity))
+        sequence_source = inspect.getsource(ReasoningLedger._validate_event_sequence)
+        self.assertIn("increment_by", sequence_source)
+        self.assertIn("ownership_dependency", sequence_source)
+        self.assertIn("exhausted its allocatable range", sequence_source)
+        self.assertIn(
+            "pg_catalog.pg_extension",
+            inspect.getsource(ReasoningLedger._catalog_signature),
+        )
+
+    def test_cli_failures_emit_status_false(self) -> None:
+        with patch("builtins.print") as printed:
+            result = main(
+                [
+                    "probe",
+                    "--project-root",
+                    "missing-project-root",
+                ]
+            )
+        self.assertEqual(result, 2)
+        payload = json.loads(printed.call_args.args[0])
+        self.assertIs(payload["status"], False)
+
+    def test_public_evidence_registration_rechecks_project_bytes(self) -> None:
+        source = inspect.getsource(ReasoningLedger.register_evidence)
+        self.assertIn("read_regular_file", source)
+        self.assertIn("len(content) != descriptor.size", source)
+        self.assertIn("digest != descriptor.sha256", source)
+        self.assertIn("project_root", inspect.signature(ReasoningLedger.register_evidence).parameters)
+
+    def test_project_config_string_fields_are_not_coerced(self) -> None:
+        from reasoning_ledger.project import ProjectLedgerConfig
+
+        with self.assertRaisesRegex(ValueError, "project_id must be a string"):
+            ProjectLedgerConfig(project_id=123, project_root=Path("."))  # type: ignore[arg-type]
 
     def test_public_store_api_cannot_weaken_database_baseline(self) -> None:
         with self.assertRaises(ValueError):
@@ -339,9 +530,21 @@ class ReasoningLedgerV2ContractTests(unittest.TestCase):
                 template_version="unknown-template",
             )
 
-        store_source = inspect.getsource(ReasoningLedger.store_embedding)
+        self.assertFalse(hasattr(ReasoningLedger, "store_embedding"))
+        self.assertTrue(hasattr(ReasoningLedger, "generate_and_store_embedding"))
+        store_source = inspect.getsource(ReasoningLedger._store_embedding)
         self.assertIn("render_statement_embedding_input", store_source)
         self.assertIn("embedded_text_sha256 != expected_text_sha256", store_source)
+        self.assertIn("generation_receipt", store_source)
+        self.assertIn("embedding_sha256", store_source)
+        self.assertIn("development_profile != hash_generator", store_source)
+        query_source = inspect.getsource(
+            ReasoningLedger.assert_embedding_source_compatible
+        )
+        self.assertIn(
+            'development_profile != (embedding_source == "hash-fallback")',
+            query_source,
+        )
 
         parsed = build_parser().parse_args(
             [
@@ -361,6 +564,33 @@ class ReasoningLedgerV2ContractTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     validate_embedding([0.0, value], dimensions=2)
+
+    def test_semantic_search_requires_a_profile_bound_query_receipt(self) -> None:
+        ledger = ReasoningLedger(
+            "postgresql://unused",
+            project_id="project",
+            embedding_dimensions=3,
+        )
+        with self.assertRaisesRegex(TypeError, "query embedding receipt"):
+            ledger.semantic_search([1.0, 0.0, 0.0])  # type: ignore[arg-type]
+        receipt = QueryEmbeddingReceipt(
+            profile_id="profile.v1",
+            source="json",
+            embedding=[1.0, 0.0, 0.0],
+            generator_identity={
+                "kind": "provided-json",
+                "size": 13,
+                "sha256": "aa" * 32,
+            },
+        )
+        self.assertEqual(receipt.profile_id, "profile.v1")
+        self.assertEqual(len(receipt.embedding_sha256), 64)
+
+    def test_index_storage_reindex_does_not_claim_vector_regeneration(self) -> None:
+        self.assertFalse(hasattr(ReasoningLedger, "rebuild_index"))
+        source = inspect.getsource(ReasoningLedger.reindex_storage)
+        self.assertIn("REINDEX TABLE", source)
+        self.assertNotIn("EMBEDDING_REBUILT", source)
 
 
 if __name__ == "__main__":

@@ -57,11 +57,9 @@ class ReasoningContextPackTests(unittest.TestCase):
             "path": ".aegis/reasoning_ledger/artifacts/facts/fact.md",
             "size": len(content),
             "sha256": hashlib.sha256(content).hexdigest(),
-            "source_identity": {"kind": "git_blob", "oid": "aa" * 20},
             "captured_at": captured,
             "scope": {"task": "runtime-hardening"},
             "content_sha256": "bb" * 32,
-            "created_by": "master",
             "created_at": captured,
         }
         revision = {
@@ -76,12 +74,11 @@ class ReasoningContextPackTests(unittest.TestCase):
             "scope": {"task": "runtime-hardening"},
             "confidence": 1.0,
             "content_sha256": "cc" * 32,
-            "created_by": "master",
             "created_at": captured,
             "evidence_ids": ["evidence.fact.runtime"],
         }
         payload: dict[str, object] = {
-            "schema": "aegis.reasoning_context_pack.v2",
+            "schema": "aegis.reasoning_context_pack.v3",
             "project_id_hex": "11" * 16,
             "task_id": "task-runtime-hardening",
             "agent_role": "AEGIS_WORKFLOW",
@@ -93,7 +90,7 @@ class ReasoningContextPackTests(unittest.TestCase):
             },
             "ledger": {"revision": 7, "snapshot_sha256": "44" * 32},
             "retrieval": {
-                "mode": "hybrid_exact",
+                "mode": "lexical_exact",
                 "embedding_source": "none",
                 "scope": {"task": "runtime-hardening"},
                 "limit": 12,
@@ -106,11 +103,11 @@ class ReasoningContextPackTests(unittest.TestCase):
                         "statement_types": [],
                         "created_after": None,
                         "created_before": None,
-                        "permissions": [],
                     },
                     "lexical_candidates": ["fact.runtime.objective@1"],
                     "semantic_candidates": [],
                     "embedding_profile_id": None,
+                    "embedding_query_receipt": None,
                     "causal_relations": [
                         "SUPPORTS",
                         "ASSUMES",
@@ -121,15 +118,6 @@ class ReasoningContextPackTests(unittest.TestCase):
                     "max_causal_depth": 8,
                     "limit": 12,
                 },
-            },
-            "coverage": {
-                "requirements": True,
-                "implementation_plan": True,
-                "runtime_scope": True,
-                "code_causality": True,
-                "known_refutations": True,
-                "environment_facts": True,
-                "pending_warnings": True,
             },
             "candidates": [
                 {
@@ -150,7 +138,6 @@ class ReasoningContextPackTests(unittest.TestCase):
                     "path": str(evidence),
                     "size": len(content),
                     "sha256": hashlib.sha256(content).hexdigest(),
-                    "source_identity": {"kind": "git_blob", "oid": "aa" * 20},
                 }
             ],
         }
@@ -175,6 +162,43 @@ class ReasoningContextPackTests(unittest.TestCase):
             )
             self.assertEqual(result.task_id, "task-runtime-hardening")
             self.assertEqual(result.ledger_revision, 7)
+            self.assertNotIn("coverage", result.payload)
+            self.assertNotIn(
+                "created_by",
+                result.payload["candidates"][0]["revision"],
+            )
+            self.assertNotIn(
+                "created_by",
+                result.payload["evidence_descriptors"][0],
+            )
+            self.assertNotIn(
+                "source_identity",
+                result.payload["evidence_descriptors"][0],
+            )
+
+    def test_rejects_retrieval_mode_without_matching_query_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path, project, artifacts = self._write_pack(Path(temp))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["retrieval"]["mode"] = "hybrid_exact"
+            payload.pop("canonical_payload_sha256")
+            payload["canonical_payload_sha256"] = hashlib.sha256(
+                canonical_bytes(payload)
+            ).hexdigest()
+            path.write_bytes(canonical_bytes(payload) + b"\n")
+
+            with self.assertRaisesRegex(
+                ReasoningContextPackError,
+                "retrieval mode differs",
+            ):
+                validate_reasoning_context_pack(
+                    path,
+                    project_root=project,
+                    artifact_root=artifacts,
+                    project_id_hex="11" * 16,
+                    project_seal="ASC1:" + "22" * 32,
+                    engineering_documents_sha256="33" * 32,
+                )
 
     def test_generated_context_pack_is_accepted_by_runtime_validator(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -225,11 +249,11 @@ class ReasoningContextPackTests(unittest.TestCase):
                     "statement_types": [],
                     "created_after": None,
                     "created_before": None,
-                    "permissions": [],
                 },
                 "lexical_candidates": ["fact.runtime.objective@1"],
                 "semantic_candidates": [],
                 "embedding_profile_id": None,
+                "embedding_query_receipt": None,
                 "causal_relations": [
                     "SUPPORTS",
                     "ASSUMES",
@@ -266,15 +290,6 @@ class ReasoningContextPackTests(unittest.TestCase):
                 retrieval_scope={"task": "runtime-hardening"},
                 limit=12,
                 include_causes=True,
-                coverage={
-                    "requirements": True,
-                    "implementation_plan": True,
-                    "runtime_scope": True,
-                    "code_causality": True,
-                    "known_refutations": True,
-                    "environment_facts": True,
-                    "pending_warnings": True,
-                },
                 project_root=project,
             )
 
@@ -288,6 +303,79 @@ class ReasoningContextPackTests(unittest.TestCase):
             )
             self.assertEqual(result.task_id, "task-runtime-hardening")
             self.assertTrue(markdown_path.exists())
+            self.assertEqual(result.payload["retrieval"]["mode"], "lexical_exact")
+
+    def test_single_relevant_statement_is_not_mislabeled_as_complete_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path, project, artifacts = self._write_pack(Path(temp))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertNotIn("coverage", payload)
+            self.assertEqual(len(payload["candidates"]), 1)
+            validate_reasoning_context_pack(
+                path,
+                project_root=project,
+                artifact_root=artifacts,
+                project_id_hex="11" * 16,
+                project_seal="ASC1:" + "22" * 32,
+                engineering_documents_sha256="33" * 32,
+            )
+
+    def test_accepts_zero_hit_pack_from_empty_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path, project, artifacts = self._write_pack(Path(temp))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["candidates"] = []
+            payload["causal_revisions"] = []
+            payload["relations"] = []
+            payload["conflicts"] = []
+            payload["evidence_descriptors"] = []
+            payload["evidence_index"] = []
+            payload["retrieval"]["trace"]["lexical_candidates"] = []
+            payload["retrieval"]["trace"]["semantic_candidates"] = []
+            payload.pop("canonical_payload_sha256")
+            payload["canonical_payload_sha256"] = hashlib.sha256(
+                canonical_bytes(payload)
+            ).hexdigest()
+            path.write_bytes(canonical_bytes(payload) + b"\n")
+
+            result = validate_reasoning_context_pack(
+                path,
+                project_root=project,
+                artifact_root=artifacts,
+                project_id_hex="11" * 16,
+                project_seal="ASC1:" + "22" * 32,
+                engineering_documents_sha256="33" * 32,
+            )
+            self.assertEqual(result.payload["candidates"], [])
+            self.assertEqual(result.payload["evidence_descriptors"], [])
+
+    def test_rejects_nested_self_declared_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path, project, artifacts = self._write_pack(Path(temp))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["retrieval"]["scope"] = {
+                "task": {
+                    "authority": {"required_permissions": ["secret"]}
+                }
+            }
+            payload.pop("canonical_payload_sha256")
+            payload["canonical_payload_sha256"] = hashlib.sha256(
+                canonical_bytes(payload)
+            ).hexdigest()
+            path.write_bytes(canonical_bytes(payload) + b"\n")
+
+            with self.assertRaisesRegex(
+                ReasoningContextPackError,
+                "permission|scope",
+            ):
+                validate_reasoning_context_pack(
+                    path,
+                    project_root=project,
+                    artifact_root=artifacts,
+                    project_id_hex="11" * 16,
+                    project_seal="ASC1:" + "22" * 32,
+                    engineering_documents_sha256="33" * 32,
+                )
 
     def test_rejects_arbitrary_json_without_context_schema(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

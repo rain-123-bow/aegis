@@ -20,6 +20,7 @@ from reasoning_ledger import (  # noqa: E402
     EmbeddingProfile,
     EvidenceDescriptor,
     ProjectLedgerConfig,
+    QueryEmbeddingReceipt,
     ReasoningLedger,
     RelationType,
     RevisionValidity,
@@ -36,24 +37,35 @@ TEST_DSN = os.environ.get(
     "AEGIS_LEDGER_DSN",
     "postgresql://aegis:aegis@127.0.0.1:5432/aegis_ledger?connect_timeout=3",
 )
-TEST_SCHEMA = "aegis_test_ledger_v2"
+TEST_SCHEMA = "aegis_test_ledger_v3"
 CAPTURED_AT = "2026-08-20T00:00:00Z"
 
 
 def require_test_database() -> None:
     try:
-        with psycopg.connect(TEST_DSN, autocommit=True):
-            pass
+        with psycopg.connect(TEST_DSN, autocommit=True) as conn:
+            server_version = int(conn.execute("SHOW server_version_num").fetchone()[0])
+            vector = conn.execute(
+                "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+            ).fetchone()
     except psycopg.OperationalError as error:
         raise unittest.SkipTest(
             f"PostgreSQL/pgvector integration database is unavailable: {error}"
         ) from error
+    if server_version // 10000 < 16 or vector is None or tuple(
+        int(part) for part in str(vector[0]).split(".")
+    ) < (0, 8, 0):
+        raise unittest.SkipTest(
+            "PostgreSQL >=16 and pgvector >=0.8.0 integration baseline is unavailable"
+        )
 
 
 class ReasoningLedgerIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         require_test_database()
+        cls.project_temp = tempfile.TemporaryDirectory()
+        cls.project_root = Path(cls.project_temp.name)
         with psycopg.connect(TEST_DSN, autocommit=True) as conn:
             conn.execute(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE")
 
@@ -61,6 +73,7 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         with psycopg.connect(TEST_DSN, autocommit=True) as conn:
             conn.execute(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE")
+        cls.project_temp.cleanup()
 
     def setUp(self) -> None:
         self.project_id = f"test_project_{uuid4().hex}"
@@ -73,17 +86,24 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
         self.ledger.migrate()
 
     def evidence(self, evidence_id: str, content: bytes = b"evidence") -> str:
+        relative_path = (
+            f".aegis/reasoning_ledger/artifacts/evidence/{evidence_id}.bin"
+        )
+        evidence_path = self.project_root / relative_path
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_bytes(content)
         self.ledger.register_evidence(
             EvidenceDescriptor(
                 evidence_id=evidence_id,
-                path=f".aegis/reasoning_ledger/artifacts/evidence/{evidence_id}.bin",
+                path=relative_path,
                 size=len(content),
                 sha256=hashlib.sha256(content).hexdigest(),
                 source_identity={"kind": "test_fixture", "id": evidence_id},
                 captured_at=CAPTURED_AT,
                 scope={"test": True},
                 created_by="test",
-            )
+            ),
+            project_root=self.project_root,
         )
         return evidence_id
 
@@ -133,7 +153,7 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
             )
         )
 
-    def test_schema_is_v2_postgresql_pgvector_authority(self) -> None:
+    def test_schema_is_v3_postgresql_pgvector_authority(self) -> None:
         with self.ledger.connect() as conn:
             extension = conn.execute(
                 "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
@@ -155,6 +175,7 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
                 "embedding_profile",
                 "evidence_descriptor",
                 "ledger_event",
+                "project_anchor",
                 "relation",
                 "relation_evidence",
                 "schema_metadata",
@@ -191,7 +212,7 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
             self.ledger.get_current_revision("claim.ledger"),
             template_version=profile.input_template_version,
         )
-        self.ledger.store_embedding(
+        self.ledger._store_embedding(
             statement_id="claim.ledger",
             revision=1,
             profile_id=profile.profile_id,
@@ -199,11 +220,16 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
             embedded_text_sha256=hashlib.sha256(
                 embedded_text.encode("utf-8")
             ).hexdigest(),
+            generator_identity={"kind": "integration-test-fixture"},
         )
         lexical = self.ledger.lexical_search("authority indexes")
-        semantic = self.ledger.semantic_search(
-            [1, 0, 0], profile_id=profile.profile_id
+        query_receipt = QueryEmbeddingReceipt(
+            profile_id=profile.profile_id,
+            source="command",
+            embedding=[1, 0, 0],
+            generator_identity={"kind": "external-command"},
         )
+        semantic = self.ledger.semantic_search(query_receipt)
         self.assertEqual(lexical[0].revision.statement_id, "claim.ledger")
         self.assertEqual(semantic[0].revision.statement_id, "claim.ledger")
 
@@ -211,8 +237,7 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
             task_id="task.ledger",
             agent_role="engineering",
             query="authority indexes",
-            query_embedding=[1, 0, 0],
-            embedding_profile_id=profile.profile_id,
+            query_embedding=query_receipt,
             scope={"module": "ledger"},
             limit=3,
         )
@@ -288,6 +313,7 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
             schema=TEST_SCHEMA,
             embedding_dimensions=3,
         )
+        other.migrate()
         other_evidence = EvidenceDescriptor(
             evidence_id="evidence.other",
             path=".aegis/reasoning_ledger/artifacts/evidence/other.bin",
@@ -298,7 +324,10 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
             scope={},
             created_by="test",
         )
-        other.register_evidence(other_evidence)
+        other_evidence_path = self.project_root / other_evidence.path
+        other_evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        other_evidence_path.write_bytes(b"x")
+        other.register_evidence(other_evidence, project_root=self.project_root)
         other.create_statement(
             StatementRevision(
                 statement_id="fact.other",
@@ -341,7 +370,7 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
 
 
 class ReasoningLedgerProjectFileTests(unittest.TestCase):
-    def test_bootstrap_creates_project_owned_v2_files(self) -> None:
+    def test_bootstrap_creates_project_owned_v3_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             result = bootstrap_project_ledger(
@@ -352,11 +381,34 @@ class ReasoningLedgerProjectFileTests(unittest.TestCase):
             )
             config = ProjectLedgerConfig.load(project_root)
             self.assertEqual(config.project_id, "demo_project")
-            self.assertEqual(config.authority_schema_version, 2)
+            self.assertEqual(config.authority_schema_version, 3)
+            self.assertIsNone(config.project_anchor_sha256)
             self.assertFalse(config.approximate_vector_index)
             self.assertTrue(config.migration_path.exists())
-            self.assertIn("embedding vector(3)", result.migration_sql)
+            self.assertIn("embedding public.vector(3)", result.migration_sql)
             self.assertNotIn("USING hnsw", result.migration_sql)
+
+    def test_v2_config_is_accepted_only_by_the_controlled_migration_loader(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            result = bootstrap_project_ledger(
+                project_root,
+                project_id="demo_project",
+                schema="demo_ledger",
+                embedding_dimensions=3,
+            )
+            data = result.config.to_json_data()
+            data["ledger"]["authority_schema_version"] = 2
+            del data["ledger"]["project_anchor_sha256"]
+            result.config.config_path.write_text(
+                json.dumps(data), encoding="utf-8"
+            )
+
+            with self.assertRaises(ValueError):
+                ProjectLedgerConfig.load(project_root)
+            migration_config = ProjectLedgerConfig.load_for_migration(project_root)
+            self.assertEqual(migration_config.authority_schema_version, 3)
+            self.assertIsNone(migration_config.project_anchor_sha256)
 
     def test_project_config_rejects_unsupported_authority_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -375,6 +427,7 @@ class ReasoningLedgerProjectFileTests(unittest.TestCase):
                 ("authority_schema_version", 1),
                 ("approximate_vector_index", True),
                 ("approximate_vector_index", "false"),
+                ("project_anchor_sha256", "invalid"),
             )
             for field_name, invalid_value in invalid_values:
                 with self.subTest(field_name=field_name):
@@ -473,7 +526,12 @@ class MainCliSmokeTests(unittest.TestCase):
                 )
                 self.assertEqual(probe.returncode, 0, probe.stderr)
                 payload = json.loads(probe.stdout)
-                self.assertIsNotNone(payload["vector"])
+                self.assertTrue(payload["status"])
+                self.assertGreaterEqual(payload["postgresql_major"], 16)
+                self.assertGreaterEqual(
+                    tuple(int(part) for part in payload["pgvector_version"].split(".")),
+                    (0, 8, 0),
+                )
             finally:
                 with psycopg.connect(TEST_DSN, autocommit=True) as conn:
                     conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")

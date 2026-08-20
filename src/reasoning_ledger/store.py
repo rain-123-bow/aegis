@@ -10,6 +10,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from path_security import PathSecurityError, read_regular_file
 
 from .models import (
     AuthorityContextPack,
@@ -20,22 +21,38 @@ from .models import (
     LedgerEvidence,
     LedgerRelation,
     LedgerStatementRevision,
+    QueryEmbeddingReceipt,
     RelationType,
     RevisionValidity,
     StatementRelation,
     StatementRevision,
     SUPPORTED_EMBEDDING_INPUT_TEMPLATE_VERSION,
+    canonical_embedding_sha256,
     enum_value,
     json_ready,
     render_statement_embedding_input,
     validate_embedding,
 )
+from .embedding import resolve_persistent_embedding
 from .project import (
     MINIMUM_SUPPORTED_PGVECTOR_VERSION,
     MINIMUM_SUPPORTED_POSTGRESQL_MAJOR,
     _parse_version,
 )
-from .schema import build_init_sql, validate_identifier
+from .schema import (
+    AUTHORITY_TABLE_COLUMNS,
+    PGVECTOR_SCHEMA,
+    REQUIRED_INDEX_NAMES,
+    REQUIRED_TRIGGER_NAMES,
+    V2_AUTHORITY_TABLE_COLUMNS,
+    V2_REQUIRED_TRIGGER_NAMES,
+    authority_schema_signature,
+    build_forbidden_authority_key_function_sql,
+    build_init_sql,
+    build_v2_projection_validation_function_sql,
+    build_v2_reference_sql,
+    validate_identifier,
+)
 
 
 T = TypeVar("T")
@@ -60,6 +77,8 @@ ACYCLIC_RELATIONS = frozenset(
     }
 )
 SERIALIZATION_FAILURE_SQLSTATES = frozenset({"40001", "40P01"})
+DEVELOPMENT_HASH_PROFILE_PROVIDER = "aegis-development"
+DEVELOPMENT_HASH_PROFILE_MODEL = "hashed-text-v1"
 
 
 def _vector_literal(
@@ -85,6 +104,7 @@ class ReasoningLedger:
         serialization_retries: int = 3,
         minimum_postgresql_major: int = 16,
         minimum_pgvector_version: str = "0.8.0",
+        expected_project_anchor_sha256: str | None = None,
     ) -> None:
         if not project_id:
             raise ValueError("project_id must not be empty")
@@ -116,33 +136,78 @@ class ReasoningLedger:
         self.serialization_retries = serialization_retries
         self.minimum_postgresql_major = minimum_postgresql_major
         self.minimum_pgvector_version = minimum_pgvector_version
+        if expected_project_anchor_sha256 is not None and (
+            not isinstance(expected_project_anchor_sha256, str)
+            or len(expected_project_anchor_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in expected_project_anchor_sha256
+            )
+        ):
+            raise ValueError("expected_project_anchor_sha256 is invalid")
+        self.expected_project_anchor_sha256 = expected_project_anchor_sha256
+
+    def _connect_unbound(self) -> psycopg.Connection[dict[str, Any]]:
+        conn = psycopg.connect(self.dsn, row_factory=dict_row)
+        conn.execute("SET search_path TO pg_catalog")
+        return conn
 
     def connect(self) -> psycopg.Connection[dict[str, Any]]:
-        return psycopg.connect(self.dsn, row_factory=dict_row)
+        conn = psycopg.connect(self.dsn, row_factory=dict_row)
+        try:
+            conn.execute("SET search_path TO pg_catalog")
+            self._probe_server_contract(conn, create_extension=False)
+            self._validate_schema_contract(conn)
+            self._validate_project_anchor(conn, require_expected=True)
+            conn.commit()
+        except BaseException:
+            conn.close()
+            raise
+        return conn
 
-    def migrate(self) -> None:
-        with self.connect() as conn:
-            server_version = int(
-                conn.execute("SHOW server_version_num").fetchone()["server_version_num"]
+    def migrate(self) -> dict[str, Any]:
+        anchor: dict[str, Any] | None = None
+        with self._connect_unbound() as conn:
+            server_contract = self._probe_server_contract(
+                conn,
+                create_extension=True,
+                tolerate_legacy_namespace=True,
             )
-            server_major = server_version // 10000
-            if server_major < self.minimum_postgresql_major:
+            existing_tables = self._schema_table_columns(conn)
+            if existing_tables:
+                version = self._schema_metadata_version(conn)
+                if version == 2:
+                    self._validate_v2_upgrade_source(
+                        conn,
+                        existing_tables,
+                        vector_schema=str(server_contract["pgvector_schema"]),
+                    )
+                    if server_contract["pgvector_schema"] != PGVECTOR_SCHEMA:
+                        self._probe_server_contract(
+                            conn,
+                            create_extension=False,
+                            relocate_legacy_namespace=True,
+                        )
+                    self._migrate_v2_to_v3(conn)
+                elif version == 3:
+                    if server_contract["pgvector_schema"] != PGVECTOR_SCHEMA:
+                        raise RuntimeError(
+                            "version 3 reasoning-ledger pgvector namespace differs "
+                            "from the authority contract"
+                        )
+                    self._validate_schema_contract(
+                        conn,
+                        require_catalog_signature=False,
+                    )
+                else:
+                    raise RuntimeError(
+                        "unsupported reasoning-ledger database schema version: "
+                        + str(version)
+                    )
+            elif server_contract["pgvector_schema"] != PGVECTOR_SCHEMA:
                 raise RuntimeError(
-                    "PostgreSQL major version is below the reasoning-ledger baseline: "
-                    f"{server_major} < {self.minimum_postgresql_major}"
-                )
-            conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-            vector_version = str(
-                conn.execute(
-                    "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
-                ).fetchone()["extversion"]
-            )
-            if self._version_tuple(vector_version) < self._version_tuple(
-                self.minimum_pgvector_version
-            ):
-                raise RuntimeError(
-                    "pgvector version is below the reasoning-ledger baseline: "
-                    f"{vector_version} < {self.minimum_pgvector_version}"
+                    "refusing to relocate a database-wide pgvector extension "
+                    "for a new reasoning-ledger schema"
                 )
             conn.execute(
                 build_init_sql(
@@ -150,8 +215,65 @@ class ReasoningLedger:
                     embedding_dimensions=self.embedding_dimensions,
                 )
             )
+            anchor = self._ensure_project_anchor(conn)
+            self._stamp_schema_catalog_signature(conn)
+            self._validate_schema_contract(conn)
+        assert anchor is not None
+        self.expected_project_anchor_sha256 = str(anchor["anchor_sha256"])
+        return anchor
 
-    def register_evidence(self, descriptor: EvidenceDescriptor) -> LedgerEvidence:
+    def probe_contract(self, *, require_schema: bool = True) -> dict[str, Any]:
+        with self.connect() as conn:
+            result = self._probe_server_contract(conn, create_extension=False)
+            if require_schema:
+                catalog_signature = self._validate_schema_contract(conn)
+                project_anchor = self._validate_project_anchor(
+                    conn, require_expected=True
+                )
+                result.update(
+                    {
+                        "schema": self.schema,
+                        "schema_version": 3,
+                        "embedding_dimensions": self.embedding_dimensions,
+                        "schema_contract_signature": authority_schema_signature(
+                            schema=self.schema,
+                            embedding_dimensions=self.embedding_dimensions,
+                        ),
+                        "catalog_signature": catalog_signature,
+                        "project_anchor": project_anchor,
+                    }
+                )
+            result["status"] = True
+            return result
+
+    def register_evidence(
+        self,
+        descriptor: EvidenceDescriptor,
+        *,
+        project_root: str | Path,
+        max_bytes: int = 64 * 1024 * 1024,
+    ) -> LedgerEvidence:
+        root = Path(project_root).resolve()
+        evidence_path = root / descriptor.path
+        try:
+            content, _identity = read_regular_file(
+                evidence_path,
+                allowed_root=root,
+                label=f"reasoning evidence {descriptor.evidence_id}",
+                max_bytes=max_bytes,
+            )
+        except PathSecurityError as error:
+            raise ValueError(str(error)) from error
+        digest = hashlib.sha256(content).hexdigest()
+        if len(content) != descriptor.size or digest != descriptor.sha256:
+            raise ValueError(
+                "reasoning evidence bytes differ from the authority descriptor"
+            )
+        return self._register_evidence_descriptor(descriptor)
+
+    def _register_evidence_descriptor(
+        self, descriptor: EvidenceDescriptor
+    ) -> LedgerEvidence:
         with self.connect() as conn:
             with conn.transaction():
                 row = conn.execute(
@@ -189,6 +311,71 @@ class ReasoningLedger:
                 )
         assert row is not None
         return LedgerEvidence.from_row(row)
+
+    def verify_evidence_files(
+        self,
+        *,
+        project_root: str | Path,
+        max_bytes_per_file: int = 64 * 1024 * 1024,
+    ) -> dict[str, Any]:
+        snapshot = self.export_snapshot()
+        return self.verify_snapshot_evidence_files(
+            snapshot["evidence_descriptors"],
+            project_root=project_root,
+            max_bytes_per_file=max_bytes_per_file,
+        )
+
+    def verify_snapshot_evidence_files(
+        self,
+        evidence_descriptors: Sequence[Mapping[str, Any]],
+        *,
+        project_root: str | Path,
+        max_bytes_per_file: int = 64 * 1024 * 1024,
+    ) -> dict[str, Any]:
+        root = Path(project_root).resolve()
+        verified: list[dict[str, Any]] = []
+        for row in evidence_descriptors:
+            descriptor = LedgerEvidence.from_row(row)
+            if descriptor.project_id != self.project_id:
+                raise ValueError(
+                    "reasoning evidence snapshot contains another project"
+                )
+            try:
+                content, _identity = read_regular_file(
+                    root / descriptor.path,
+                    allowed_root=root,
+                    label=f"reasoning evidence {descriptor.evidence_id}",
+                    max_bytes=max_bytes_per_file,
+                )
+            except PathSecurityError as error:
+                raise ValueError(str(error)) from error
+            digest = hashlib.sha256(content).hexdigest()
+            if len(content) != descriptor.size or digest != descriptor.sha256:
+                raise ValueError(
+                    "reasoning evidence bytes differ from descriptor: "
+                    + descriptor.evidence_id
+                )
+            verified.append(
+                {
+                    "evidence_id": descriptor.evidence_id,
+                    "path": descriptor.path,
+                    "size": len(content),
+                    "sha256": digest,
+                }
+            )
+        canonical = json.dumps(
+            verified,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return {
+            "status": True,
+            "project_id": self.project_id,
+            "verified_evidence": len(verified),
+            "evidence_manifest_sha256": hashlib.sha256(canonical).hexdigest(),
+        }
 
     def register_embedding_profile(
         self, profile: EmbeddingProfile
@@ -420,6 +607,11 @@ class ReasoningLedger:
         return self._run_serializable(operation)
 
     def create_relation(self, relation: StatementRelation) -> LedgerRelation:
+        if enum_value(relation.relation_type).upper() == RelationType.SUPERSEDES.value:
+            raise ValueError(
+                "SUPERSEDES relations can only be created by supersede_statement"
+            )
+
         def operation(conn: psycopg.Connection[dict[str, Any]]) -> LedgerRelation:
             self._lock_project_graph(conn)
             self._assert_revisions_exist(
@@ -563,7 +755,6 @@ class ReasoningLedger:
         scope: Mapping[str, Any] | None = None,
         created_after: str | None = None,
         created_before: str | None = None,
-        permissions: Sequence[str] = (),
     ) -> list[CandidateHit]:
         if not query_text.strip():
             raise ValueError("query_text must not be empty")
@@ -585,7 +776,6 @@ class ReasoningLedger:
             scope=scope,
             created_after=created_after,
             created_before=created_before,
-            permissions=permissions,
         )
         base = self._revision_select(
             where=sql.SQL(" AND ").join(clauses),
@@ -615,9 +805,8 @@ class ReasoningLedger:
 
     def semantic_search(
         self,
-        query_embedding: Sequence[float],
+        query_embedding: QueryEmbeddingReceipt,
         *,
-        profile_id: str,
         limit: int = 20,
         validities: Sequence[RevisionValidity | str] = (
             RevisionValidity.ACTIVE,
@@ -627,9 +816,17 @@ class ReasoningLedger:
         scope: Mapping[str, Any] | None = None,
         created_after: str | None = None,
         created_before: str | None = None,
-        permissions: Sequence[str] = (),
     ) -> list[CandidateHit]:
-        vector = _vector_literal(query_embedding, self.embedding_dimensions)
+        if not isinstance(query_embedding, QueryEmbeddingReceipt):
+            raise TypeError("semantic search requires a query embedding receipt")
+        self.assert_embedding_source_compatible(
+            profile_id=query_embedding.profile_id,
+            embedding_source=query_embedding.source,
+        )
+        vector = _vector_literal(
+            query_embedding.embedding,
+            self.embedding_dimensions,
+        )
         clauses = [
             sql.SQL("projection.project_id = %(project_id)s"),
             sql.SQL("projection.validity = ANY(%(validities)s)"),
@@ -638,7 +835,7 @@ class ReasoningLedger:
         params: dict[str, Any] = {
             "project_id": self.project_id,
             "validities": [enum_value(value).upper() for value in validities],
-            "profile_id": profile_id,
+            "profile_id": query_embedding.profile_id,
             "embedding": vector,
             "limit": limit,
         }
@@ -649,17 +846,16 @@ class ReasoningLedger:
             scope=scope,
             created_after=created_after,
             created_before=created_before,
-            permissions=permissions,
         )
         query = self._revision_select(
             where=sql.SQL(" AND ").join(clauses),
             order=sql.SQL(
-                "embedding.embedding <=> %(embedding)s::vector ASC, "
+                f"embedding.embedding <=> %(embedding)s::{PGVECTOR_SCHEMA}.vector ASC, "
                 "revision.statement_id ASC"
             ),
             limit=sql.SQL("LIMIT %(limit)s"),
             extra_select=sql.SQL(
-                ", embedding.embedding <=> %(embedding)s::vector AS semantic_distance"
+                f", embedding.embedding <=> %(embedding)s::{PGVECTOR_SCHEMA}.vector AS semantic_distance"
             ),
             extra_from=sql.SQL(
                 "JOIN {embedding} embedding "
@@ -709,7 +905,37 @@ class ReasoningLedger:
             template_version=str(profile["input_template_version"]),
         )
 
-    def store_embedding(
+    def generate_and_store_embedding(
+        self,
+        *,
+        statement_id: str,
+        revision: int,
+        profile_id: str,
+        embedded_text: str,
+        embedding_command: str | None = None,
+        allow_hash_embedding: bool = False,
+        command_timeout_seconds: int = 60,
+    ) -> str:
+        embedding, source, generator_identity = resolve_persistent_embedding(
+            text=embedded_text,
+            dimensions=self.embedding_dimensions,
+            embedding_command=embedding_command,
+            allow_hash_embedding=allow_hash_embedding,
+            command_timeout_seconds=command_timeout_seconds,
+        )
+        self._store_embedding(
+            statement_id=statement_id,
+            revision=revision,
+            profile_id=profile_id,
+            embedding=embedding,
+            embedded_text_sha256=hashlib.sha256(
+                embedded_text.encode("utf-8")
+            ).hexdigest(),
+            generator_identity=generator_identity,
+        )
+        return source
+
+    def _store_embedding(
         self,
         *,
         statement_id: str,
@@ -717,12 +943,25 @@ class ReasoningLedger:
         profile_id: str,
         embedding: Sequence[float],
         embedded_text_sha256: str,
+        generator_identity: Mapping[str, Any],
     ) -> None:
         if len(embedded_text_sha256) != 64 or any(
             value not in "0123456789abcdef" for value in embedded_text_sha256
         ):
             raise ValueError("embedded_text_sha256 is invalid")
-        vector = _vector_literal(embedding, self.embedding_dimensions)
+        values = validate_embedding(
+            embedding,
+            dimensions=self.embedding_dimensions,
+        )
+        assert values is not None
+        vector = _vector_literal(values, self.embedding_dimensions)
+        if not isinstance(generator_identity, Mapping) or not generator_identity:
+            raise ValueError("embedding generator identity must be a non-empty mapping")
+        generator = json_ready(dict(generator_identity))
+        embedding_sha256 = canonical_embedding_sha256(
+            values,
+            dimensions=self.embedding_dimensions,
+        )
         with self.connect() as conn:
             with conn.transaction():
                 revision_row = self._fetch_revision(conn, statement_id, revision)
@@ -730,7 +969,8 @@ class ReasoningLedger:
                 profile = conn.execute(
                     sql.SQL(
                         """
-                        SELECT dimensions, input_template_version
+                        SELECT dimensions, input_template_version, content_sha256,
+                               provider, model, model_version
                         FROM {table}
                         WHERE project_id = %s AND profile_id = %s
                         """
@@ -741,6 +981,18 @@ class ReasoningLedger:
                     raise KeyError(f"embedding profile not found: {profile_id}")
                 if int(profile["dimensions"]) != self.embedding_dimensions:
                     raise ValueError("embedding profile dimension mismatch")
+                development_profile = (
+                    profile["provider"] == DEVELOPMENT_HASH_PROFILE_PROVIDER
+                    and profile["model"] == DEVELOPMENT_HASH_PROFILE_MODEL
+                )
+                hash_generator = (
+                    generator.get("kind") == "aegis-development-hash-embedding"
+                )
+                if development_profile != hash_generator:
+                    raise ValueError(
+                        "the development hash profile and hash generator must be "
+                        "used together and cannot share another vector space"
+                    )
                 expected_text = render_statement_embedding_input(
                     authority_revision,
                     template_version=str(profile["input_template_version"]),
@@ -752,18 +1004,48 @@ class ReasoningLedger:
                     raise ValueError(
                         "embedded text hash differs from the authority input template"
                     )
+                generation_receipt = {
+                    "schema": "aegis.embedding_generation_receipt.v1",
+                    "project_id": self.project_id,
+                    "statement_id": statement_id,
+                    "revision": revision,
+                    "profile_id": profile_id,
+                    "profile_content_sha256": str(profile["content_sha256"]),
+                    "provider": str(profile["provider"]),
+                    "model": str(profile["model"]),
+                    "model_version": str(profile["model_version"]),
+                    "embedded_text_sha256": embedded_text_sha256,
+                    "embedding_sha256": embedding_sha256,
+                    "embedding_encoding": "ieee754-binary32-big-endian-zero-normalized-v1",
+                    "generator_identity": generator,
+                }
+                generation_receipt_sha256 = hashlib.sha256(
+                    json.dumps(
+                        generation_receipt,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
                 conn.execute(
                     sql.SQL(
                         """
                         INSERT INTO {table} (
                           project_id, statement_id, revision, profile_id,
-                          embedding, embedded_text_sha256
+                          embedding, embedded_text_sha256, embedding_sha256,
+                          generator_identity, generation_receipt,
+                          generation_receipt_sha256
                         )
-                        VALUES (%s, %s, %s, %s, %s::vector, %s)
+                        VALUES (%s, %s, %s, %s, %s::public.vector, %s, %s, %s, %s, %s)
                         ON CONFLICT (project_id, statement_id, revision, profile_id)
                         DO UPDATE SET
                           embedding = EXCLUDED.embedding,
                           embedded_text_sha256 = EXCLUDED.embedded_text_sha256,
+                          embedding_sha256 = EXCLUDED.embedding_sha256,
+                          generator_identity = EXCLUDED.generator_identity,
+                          generation_receipt = EXCLUDED.generation_receipt,
+                          generation_receipt_sha256 = EXCLUDED.generation_receipt_sha256,
                           created_at = now()
                         """
                     ).format(table=self._table("statement_embedding")),
@@ -774,6 +1056,10 @@ class ReasoningLedger:
                         profile_id,
                         vector,
                         embedded_text_sha256,
+                        embedding_sha256,
+                        Jsonb(generator),
+                        Jsonb(generation_receipt),
+                        generation_receipt_sha256,
                     ),
                 )
                 self._insert_event(
@@ -788,20 +1074,42 @@ class ReasoningLedger:
                     payload={
                         "embedded_text_sha256": embedded_text_sha256,
                         "profile_id": profile_id,
+                        "embedding_sha256": embedding_sha256,
+                        "generation_receipt_sha256": generation_receipt_sha256,
                     },
                 )
 
+    def assert_embedding_source_compatible(
+        self, *, profile_id: str, embedding_source: str
+    ) -> None:
+        with self.connect() as conn:
+            profile = conn.execute(
+                sql.SQL(
+                    "SELECT provider, model FROM {table} "
+                    "WHERE project_id = %s AND profile_id = %s"
+                ).format(table=self._table("embedding_profile")),
+                (self.project_id, profile_id),
+            ).fetchone()
+        if profile is None:
+            raise KeyError(f"embedding profile not found: {profile_id}")
+        development_profile = (
+            profile["provider"] == DEVELOPMENT_HASH_PROFILE_PROVIDER
+            and profile["model"] == DEVELOPMENT_HASH_PROFILE_MODEL
+        )
+        if development_profile != (embedding_source == "hash-fallback"):
+            raise ValueError(
+                "the development hash profile and hash query source must be used "
+                "together and cannot share another vector space"
+            )
     def hybrid_search(
         self,
         query_text: str,
         *,
-        query_embedding: Sequence[float] | None = None,
-        profile_id: str | None = None,
+        query_embedding: QueryEmbeddingReceipt | None = None,
         statement_types: Sequence[str] | None = None,
         scope: Mapping[str, Any] | None = None,
         created_after: str | None = None,
         created_before: str | None = None,
-        permissions: Sequence[str] = (),
         limit: int = 12,
     ) -> list[CandidateHit]:
         lexical = self.lexical_search(
@@ -811,21 +1119,16 @@ class ReasoningLedger:
             scope=scope,
             created_after=created_after,
             created_before=created_before,
-            permissions=permissions,
         )
         semantic: list[CandidateHit] = []
         if query_embedding is not None:
-            if not profile_id:
-                raise ValueError("semantic candidates require profile_id")
             semantic = self.semantic_search(
                 query_embedding,
-                profile_id=profile_id,
                 limit=max(limit * 2, limit),
                 statement_types=statement_types,
                 scope=scope,
                 created_after=created_after,
                 created_before=created_before,
-                permissions=permissions,
             )
         merged: dict[tuple[str, int], dict[str, Any]] = {}
         for rank, hit in enumerate(lexical, start=1):
@@ -876,13 +1179,11 @@ class ReasoningLedger:
         task_id: str,
         agent_role: str,
         query: str,
-        query_embedding: Sequence[float] | None = None,
-        embedding_profile_id: str | None = None,
+        query_embedding: QueryEmbeddingReceipt | None = None,
         statement_types: Sequence[str] | None = None,
         scope: Mapping[str, Any] | None = None,
         created_after: str | None = None,
         created_before: str | None = None,
-        permissions: Sequence[str] = (),
         limit: int = 12,
         include_causes: bool = True,
         max_causal_depth: int = 8,
@@ -890,12 +1191,10 @@ class ReasoningLedger:
         candidates = self.hybrid_search(
             query,
             query_embedding=query_embedding,
-            profile_id=embedding_profile_id,
             statement_types=statement_types,
             scope=scope,
             created_after=created_after,
             created_before=created_before,
-            permissions=permissions,
             limit=limit,
         )
         causal: dict[tuple[str, int], LedgerStatementRevision] = {}
@@ -950,15 +1249,6 @@ class ReasoningLedger:
             for evidence_id in relation.evidence_ids
         )
         evidence = self._load_evidence(sorted(evidence_ids))
-        self._assert_context_permissions(
-            revisions=(
-                *(value.revision for value in candidates),
-                *causal.values(),
-            ),
-            relations=(*relations.values(), *conflicts),
-            evidence=evidence,
-            permissions=permissions,
-        )
         warnings: list[str] = []
         for revision in (
             [value.revision for value in candidates] + list(causal.values())
@@ -982,7 +1272,6 @@ class ReasoningLedger:
                 "statement_types": list(statement_types or []),
                 "created_after": created_after,
                 "created_before": created_before,
-                "permissions": sorted(set(permissions)),
             },
             "lexical_candidates": [
                 self._revision_key(value.revision.statement_id, value.revision.revision)
@@ -994,7 +1283,14 @@ class ReasoningLedger:
                 for value in candidates
                 if "SEMANTIC" in value.sources
             ],
-            "embedding_profile_id": embedding_profile_id,
+            "embedding_profile_id": (
+                query_embedding.profile_id if query_embedding is not None else None
+            ),
+            "embedding_query_receipt": (
+                query_embedding.to_trace_dict()
+                if query_embedding is not None
+                else None
+            ),
             "causal_relations": list(CAUSAL_RELATIONS),
             "max_causal_depth": max_causal_depth,
             "limit": limit,
@@ -1082,6 +1378,26 @@ class ReasoningLedger:
         with self.connect() as conn:
             with conn.transaction():
                 conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                database_contract = self._probe_server_contract(
+                    conn, create_extension=False
+                )
+                catalog_signature = self._validate_schema_contract(conn)
+                project_anchor = self._validate_project_anchor(
+                    conn, require_expected=True
+                )
+                database_contract.update(
+                    {
+                        "schema": self.schema,
+                        "schema_version": 3,
+                        "embedding_dimensions": self.embedding_dimensions,
+                        "schema_contract_signature": authority_schema_signature(
+                            schema=self.schema,
+                            embedding_dimensions=self.embedding_dimensions,
+                        ),
+                        "catalog_signature": catalog_signature,
+                        "project_anchor": project_anchor,
+                    }
+                )
                 statements = conn.execute(
                     sql.SQL(
                         "SELECT * FROM {table} WHERE project_id = %s ORDER BY statement_id"
@@ -1160,9 +1476,25 @@ class ReasoningLedger:
                     ).format(table=self._table("embedding_profile")),
                     (self.project_id,),
                 ).fetchall()
+                embedding_rows = conn.execute(
+                    sql.SQL(
+                        """
+                         SELECT project_id, statement_id, revision, profile_id,
+                                embedding::text AS embedding,
+                                embedded_text_sha256, embedding_sha256,
+                               generator_identity, generation_receipt,
+                               generation_receipt_sha256, created_at
+                        FROM {table}
+                        WHERE project_id = %s
+                        ORDER BY statement_id, revision, profile_id
+                        """
+                    ).format(table=self._table("statement_embedding")),
+                    (self.project_id,),
+                ).fetchall()
         snapshot: dict[str, Any] = {
-            "schema": "aegis.reasoning_ledger.snapshot.v2",
+            "schema": "aegis.reasoning_ledger.snapshot.v5",
             "project_id": self.project_id,
+            "database_contract": database_contract,
             "statements": [self._json_row(row) for row in statements],
             "revisions": [
                 LedgerStatementRevision.from_row(row).to_dict()
@@ -1177,6 +1509,7 @@ class ReasoningLedger:
             ],
             "current_projection": [self._json_row(row) for row in projection_rows],
             "embedding_profiles": [self._json_row(row) for row in profile_rows],
+            "embedding_index": [self._json_row(row) for row in embedding_rows],
         }
         if output_path is not None:
             path = Path(output_path)
@@ -1187,8 +1520,8 @@ class ReasoningLedger:
             )
         return snapshot
 
-    def rebuild_index(self, *, created_by: str = "reasoning_ledger") -> int:
-        """Rebuild exact index storage without enabling approximate search."""
+    def reindex_storage(self, *, created_by: str = "reasoning_ledger") -> int:
+        """Rebuild PostgreSQL index storage; this does not regenerate vectors."""
 
         with self.connect() as conn:
             with conn.transaction():
@@ -1209,10 +1542,14 @@ class ReasoningLedger:
                     conn,
                     aggregate_kind="INDEX",
                     aggregate_id="statement_embedding",
-                    event_type="EMBEDDING_REBUILT",
-                    reason="exact embedding index storage rebuilt",
+                    event_type="INDEX_STORAGE_REINDEXED",
+                    reason="PostgreSQL index storage reindexed; vectors unchanged",
                     created_by=created_by,
-                    payload={"indexed_revisions": count, "approximate": False},
+                    payload={
+                        "stored_vectors": count,
+                        "approximate": False,
+                        "vectors_regenerated": False,
+                    },
                 )
         return count
 
@@ -1225,7 +1562,6 @@ class ReasoningLedger:
         scope: Mapping[str, Any] | None,
         created_after: str | None,
         created_before: str | None,
-        permissions: Sequence[str],
     ) -> None:
         if statement_types:
             clauses.append(
@@ -1247,59 +1583,6 @@ class ReasoningLedger:
                 raise ValueError("created_before must be UTC with a Z suffix")
             clauses.append(sql.SQL("revision.created_at <= %(created_before)s"))
             params["created_before"] = created_before
-        normalized_permissions = sorted(set(str(value) for value in permissions))
-        if any(not value.strip() for value in normalized_permissions):
-            raise ValueError("permissions must not contain empty values")
-        clauses.append(
-            sql.SQL(
-                """
-                (
-                  NOT revision.scope ? 'required_permissions'
-                  OR NOT EXISTS (
-                    SELECT 1
-                    FROM jsonb_array_elements_text(
-                      revision.scope->'required_permissions'
-                    ) AS required(permission)
-                    WHERE NOT required.permission = ANY(%(permissions)s::text[])
-                  )
-                )
-                """
-            )
-        )
-        params["permissions"] = normalized_permissions
-
-    def _assert_context_permissions(
-        self,
-        *,
-        revisions: Sequence[LedgerStatementRevision],
-        relations: Sequence[LedgerRelation],
-        evidence: Sequence[LedgerEvidence],
-        permissions: Sequence[str],
-    ) -> None:
-        granted = {str(value) for value in permissions}
-        if any(not value.strip() for value in granted):
-            raise ValueError("permissions must not contain empty values")
-
-        scopes = (
-            *(value.scope for value in revisions),
-            *(value.applicable_conditions for value in relations),
-            *(value.scope for value in evidence),
-        )
-        for scope in scopes:
-            required = scope.get("required_permissions", [])
-            if (
-                not isinstance(required, list)
-                or any(not isinstance(value, str) or not value.strip() for value in required)
-                or len(required) != len(set(required))
-            ):
-                raise RuntimeError(
-                    "reasoning authority contains an invalid permission boundary"
-                )
-            if any(value not in granted for value in required):
-                raise PermissionError(
-                    "reasoning context closure crosses an ungranted permission boundary"
-                )
-
     def _insert_revision(
         self,
         conn: psycopg.Connection[dict[str, Any]],
@@ -1818,7 +2101,8 @@ class ReasoningLedger:
         self, conn: psycopg.Connection[dict[str, Any]]
     ) -> None:
         conn.execute(
-            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            "SELECT pg_catalog.pg_advisory_xact_lock("
+            "pg_catalog.hashtextextended(%s, 0))",
             (self.project_id,),
         )
 
@@ -1842,6 +2126,1491 @@ class ReasoningLedger:
                 last_error = error
         assert last_error is not None
         raise last_error
+
+    def _schema_metadata_value(
+        self, conn: psycopg.Connection[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        row = conn.execute(
+            sql.SQL(
+                "SELECT value FROM {table} WHERE key = 'schema_version'"
+            ).format(table=self._table("schema_metadata"))
+        ).fetchone()
+        return dict(row["value"] or {}) if row is not None else None
+
+    def _schema_metadata_version(
+        self, conn: psycopg.Connection[dict[str, Any]]
+    ) -> int | None:
+        value = self._schema_metadata_value(conn)
+        version = value.get("version") if value is not None else None
+        return version if isinstance(version, int) and not isinstance(version, bool) else None
+
+    def _database_identity(
+        self, conn: psycopg.Connection[dict[str, Any]]
+    ) -> dict[str, Any]:
+        row = conn.execute(
+            """
+            SELECT control.system_identifier::text AS cluster_system_identifier,
+                   database.oid::text AS database_oid,
+                   pg_catalog.current_database()::text AS database_name
+            FROM pg_catalog.pg_control_system() control
+            JOIN pg_catalog.pg_database database
+              ON database.datname = pg_catalog.current_database()
+            """
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("cannot resolve PostgreSQL cluster/database identity")
+        identity = {
+            "cluster_system_identifier": str(row["cluster_system_identifier"]),
+            "database_oid": int(str(row["database_oid"])),
+            "database_name": str(row["database_name"]),
+            "schema_name": self.schema,
+        }
+        if (
+            not identity["cluster_system_identifier"].isdigit()
+            or identity["database_oid"] <= 0
+            or not identity["database_name"]
+        ):
+            raise RuntimeError("PostgreSQL cluster/database identity is invalid")
+        return identity
+
+    def _project_anchor_descriptor(
+        self, identity: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        descriptor = {
+            "schema": "aegis.reasoning_ledger.project_anchor.v1",
+            "project_id": self.project_id,
+            "cluster_system_identifier": str(
+                identity["cluster_system_identifier"]
+            ),
+            "database_oid": int(identity["database_oid"]),
+            "database_name": str(identity["database_name"]),
+            "schema_name": str(identity["schema_name"]),
+        }
+        encoded = json.dumps(
+            descriptor,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return {
+            **descriptor,
+            "anchor_sha256": hashlib.sha256(encoded).hexdigest(),
+        }
+
+    def _ensure_project_anchor(
+        self, conn: psycopg.Connection[dict[str, Any]]
+    ) -> dict[str, Any]:
+        row = conn.execute(
+            sql.SQL(
+                "SELECT project_id FROM {table} WHERE project_id = %s"
+            ).format(table=self._table("project_anchor")),
+            (self.project_id,),
+        ).fetchone()
+        if row is None:
+            if self.expected_project_anchor_sha256 is not None:
+                raise RuntimeError(
+                    "configured project anchor is absent from the selected database"
+                )
+            descriptor = self._project_anchor_descriptor(
+                self._database_identity(conn)
+            )
+            conn.execute(
+                sql.SQL(
+                    """
+                    INSERT INTO {table} (
+                      project_id, cluster_system_identifier, database_oid,
+                      database_name, schema_name, anchor_sha256
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """
+                ).format(table=self._table("project_anchor")),
+                (
+                    self.project_id,
+                    descriptor["cluster_system_identifier"],
+                    descriptor["database_oid"],
+                    descriptor["database_name"],
+                    descriptor["schema_name"],
+                    descriptor["anchor_sha256"],
+                ),
+            )
+        return self._validate_project_anchor(
+            conn,
+            require_expected=self.expected_project_anchor_sha256 is not None,
+        )
+
+    def _validate_project_anchor(
+        self,
+        conn: psycopg.Connection[dict[str, Any]],
+        *,
+        require_expected: bool,
+    ) -> dict[str, Any]:
+        row = conn.execute(
+            sql.SQL(
+                """
+                SELECT project_id, cluster_system_identifier,
+                       database_oid::text AS database_oid, database_name,
+                       schema_name, anchor_sha256, created_at
+                FROM {table}
+                WHERE project_id = %s
+                """
+            ).format(table=self._table("project_anchor")),
+            (self.project_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(
+                "reasoning-ledger project anchor is missing from the selected database"
+            )
+        identity = self._database_identity(conn)
+        descriptor = self._project_anchor_descriptor(identity)
+        stored_descriptor = {
+            "schema": descriptor["schema"],
+            "project_id": str(row["project_id"]),
+            "cluster_system_identifier": str(row["cluster_system_identifier"]),
+            "database_oid": int(str(row["database_oid"])),
+            "database_name": str(row["database_name"]),
+            "schema_name": str(row["schema_name"]),
+            "anchor_sha256": str(row["anchor_sha256"]),
+        }
+        if stored_descriptor != descriptor:
+            raise RuntimeError(
+                "reasoning-ledger project anchor differs from the live "
+                "PostgreSQL cluster/database identity"
+            )
+        expected = self.expected_project_anchor_sha256
+        if require_expected and expected is None:
+            raise RuntimeError(
+                "project configuration has not bound the reasoning-ledger anchor"
+            )
+        if expected is not None and descriptor["anchor_sha256"] != expected:
+            raise RuntimeError(
+                "reasoning-ledger project anchor differs from project configuration"
+            )
+        return {
+            **descriptor,
+            "created_at": json_ready(row["created_at"]),
+        }
+
+    def _validate_v2_upgrade_source(
+        self,
+        conn: psycopg.Connection[dict[str, Any]],
+        columns: Mapping[str, tuple[str, ...]],
+        *,
+        vector_schema: str,
+    ) -> None:
+        if dict(columns) != V2_AUTHORITY_TABLE_COLUMNS:
+            raise RuntimeError(
+                "version-2 reasoning ledger differs from the supported upgrade source"
+            )
+        self._validate_v2_column_definitions(
+            conn,
+            vector_schema=vector_schema,
+        )
+        expected_metadata = {
+            "name": "reasoning_ledger",
+            "version": 2,
+            "embedding_dimensions": self.embedding_dimensions,
+            "authority_model": "immutable_revision_event_projection",
+        }
+        if self._schema_metadata_value(conn) != expected_metadata:
+            raise RuntimeError(
+                "version-2 reasoning-ledger metadata differs from the supported upgrade source"
+            )
+        forbidden = conn.execute(
+            sql.SQL(
+                """
+                SELECT
+                  EXISTS(
+                    SELECT 1 FROM {evidence}
+                    WHERE jsonb_path_exists(
+                      scope,
+                      '$.**.keyvalue() ? (@.key == "required_permissions")'
+                    )
+                  )
+                  OR EXISTS(
+                    SELECT 1 FROM {revision}
+                    WHERE jsonb_path_exists(
+                            scope,
+                            '$.**.keyvalue() ? (@.key == "required_permissions")'
+                          )
+                       OR jsonb_path_exists(
+                            structured_conditions,
+                            '$.**.keyvalue() ? (@.key == "required_permissions")'
+                          )
+                  )
+                  OR EXISTS(
+                    SELECT 1 FROM {relation}
+                    WHERE jsonb_path_exists(
+                      applicable_conditions,
+                      '$.**.keyvalue() ? (@.key == "required_permissions")'
+                    )
+                  ) AS present
+                """
+            ).format(
+                evidence=self._table("evidence_descriptor"),
+                revision=self._table("statement_revision"),
+                relation=self._table("relation"),
+            )
+        ).fetchone()
+        if forbidden is None or bool(forbidden["present"]):
+            raise RuntimeError(
+                "version-2 reasoning ledger contains self-declared permission fields; "
+                "supersede or rebuild those authority rows before migration"
+            )
+        invalid_supersedes = conn.execute(
+            sql.SQL(
+                """
+                WITH revision_chain AS (
+                  SELECT project_id, statement_id,
+                         min(revision) AS first_revision,
+                         max(revision) AS last_revision,
+                         count(*) AS revision_count
+                  FROM {revision}
+                  GROUP BY project_id, statement_id
+                ), relation_chain AS (
+                  SELECT project_id, from_statement_id AS statement_id,
+                         count(*) AS relation_count
+                  FROM {relation}
+                  WHERE relation_type = 'SUPERSEDES'
+                  GROUP BY project_id, from_statement_id
+                )
+                SELECT
+                  EXISTS (
+                    SELECT 1
+                    FROM {statement} statement
+                    LEFT JOIN revision_chain chain
+                      ON chain.project_id = statement.project_id
+                     AND chain.statement_id = statement.statement_id
+                    LEFT JOIN {projection} projection
+                      ON projection.project_id = statement.project_id
+                     AND projection.statement_id = statement.statement_id
+                    LEFT JOIN relation_chain relations
+                      ON relations.project_id = statement.project_id
+                     AND relations.statement_id = statement.statement_id
+                    WHERE chain.statement_id IS NULL
+                       OR chain.first_revision <> 1
+                       OR chain.revision_count <> chain.last_revision
+                       OR projection.revision IS DISTINCT FROM chain.last_revision
+                       OR projection.validity = 'SUPERSEDED'
+                       OR coalesce(relations.relation_count, 0)
+                          <> chain.last_revision - 1
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM {relation} relation
+                    WHERE relation.relation_type = 'SUPERSEDES'
+                      AND (
+                        relation.from_statement_id <> relation.to_statement_id
+                        OR relation.to_revision <> relation.from_revision + 1
+                        OR (
+                          SELECT count(*)
+                          FROM {event} event
+                          WHERE event.project_id = relation.project_id
+                            AND event.aggregate_kind = 'REVISION'
+                            AND event.event_type = 'REVISION_SUPERSEDED'
+                            AND event.aggregate_id = relation.from_statement_id
+                                || '@' || relation.from_revision::text
+                            AND event.payload->>'superseded_by'
+                                = relation.to_statement_id
+                                  || '@' || relation.to_revision::text
+                            AND event.payload->>'relation_id' = relation.relation_id
+                            AND event.payload->>'new_validity' = (
+                              SELECT target.validity
+                              FROM {revision} target
+                              WHERE target.project_id = relation.project_id
+                                AND target.statement_id = relation.to_statement_id
+                                AND target.revision = relation.to_revision
+                            )
+                        ) <> 1
+                      )
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM {revision} revision
+                    WHERE (revision.revision = 1 AND revision.validity = 'SUPERSEDED')
+                       OR (revision.revision > 1 AND revision.validity <> 'ACTIVE')
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM {revision} revision
+                    WHERE revision.revision > 1
+                      AND (
+                        SELECT count(*)
+                        FROM {relation} relation
+                        WHERE relation.project_id = revision.project_id
+                          AND relation.relation_type = 'SUPERSEDES'
+                          AND relation.to_statement_id = revision.statement_id
+                          AND relation.to_revision = revision.revision
+                      ) <> 1
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM {event} event
+                    WHERE event.event_type = 'REVISION_SUPERSEDED'
+                      AND (
+                        event.aggregate_kind <> 'REVISION'
+                        OR NOT EXISTS (
+                        SELECT 1
+                        FROM {relation} relation
+                        JOIN {revision} target
+                          ON target.project_id = relation.project_id
+                         AND target.statement_id = relation.to_statement_id
+                         AND target.revision = relation.to_revision
+                        WHERE relation.project_id = event.project_id
+                          AND relation.relation_type = 'SUPERSEDES'
+                          AND relation.relation_id = event.payload->>'relation_id'
+                          AND relation.from_statement_id || '@'
+                              || relation.from_revision::text = event.aggregate_id
+                          AND relation.to_statement_id || '@'
+                              || relation.to_revision::text
+                              = event.payload->>'superseded_by'
+                          AND event.payload->>'new_validity' = target.validity
+                        )
+                      )
+                  ) AS present
+                """
+            ).format(
+                statement=self._table("statement"),
+                revision=self._table("statement_revision"),
+                relation=self._table("relation"),
+                projection=self._table("current_projection"),
+                event=self._table("ledger_event"),
+            )
+        ).fetchone()
+        if invalid_supersedes is None or bool(invalid_supersedes["present"]):
+            raise RuntimeError(
+                "version-2 reasoning ledger revision/SUPERSEDES/event/projection "
+                "history is not one complete consecutive chain"
+            )
+        trigger_rows = conn.execute(
+            """
+            SELECT trigger.tgname AS name,
+                   pg_catalog.pg_get_triggerdef(trigger.oid, true) AS definition,
+                   trigger.tgenabled AS enabled
+            FROM pg_catalog.pg_trigger trigger
+            JOIN pg_catalog.pg_class relation ON relation.oid = trigger.tgrelid
+            JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = %s AND NOT trigger.tgisinternal
+            """,
+            (self.schema,),
+        ).fetchall()
+        expected_triggers = V2_REQUIRED_TRIGGER_NAMES
+        observed = {str(row["name"]): str(row["definition"]) for row in trigger_rows}
+        if set(observed) != expected_triggers or any(
+            str(row["enabled"]) != "O" for row in trigger_rows
+        ):
+            raise RuntimeError(
+                "version-2 reasoning-ledger trigger contract differs from the upgrade source"
+            )
+        for name, definition in observed.items():
+            expected_function = (
+                "validate_current_projection_event"
+                if name == "current_projection_event_bound"
+                else "reject_authority_mutation"
+            )
+            if expected_function not in definition:
+                raise RuntimeError(
+                    "version-2 reasoning-ledger trigger binding differs: " + name
+                )
+
+    def _schema_column_definitions(
+        self,
+        conn: psycopg.Connection[dict[str, Any]],
+        *,
+        schema: str,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        rows = conn.execute(
+            """
+            SELECT table_name, column_name, data_type, udt_name, is_nullable,
+                   column_default, generation_expression
+            FROM information_schema.columns
+            WHERE table_schema = %s
+            ORDER BY table_name, ordinal_position
+            """,
+            (schema,),
+        ).fetchall()
+
+        def normalize(value: Any) -> Any:
+            if not isinstance(value, str):
+                return json_ready(value)
+            return value.replace(f'"{schema}".', '<schema>.').replace(
+                f"{schema}.", "<schema>."
+            )
+
+        return {
+            (str(row["table_name"]), str(row["column_name"])): {
+                str(key): normalize(value)
+                for key, value in row.items()
+                if key not in {"table_name", "column_name"}
+            }
+            for row in rows
+        }
+
+    def _validate_v2_column_definitions(
+        self,
+        conn: psycopg.Connection[dict[str, Any]],
+        *,
+        vector_schema: str,
+    ) -> None:
+        conn.execute(
+            sql.SQL("SET search_path TO pg_catalog, {}").format(
+                sql.Identifier(vector_schema)
+            )
+        )
+        v2_functions = (
+            "reject_authority_mutation",
+            "validate_current_projection_event",
+        )
+        v2_triggers = V2_REQUIRED_TRIGGER_NAMES
+
+        def function_contract(schema: str) -> dict[str, dict[str, Any]]:
+            rows = conn.execute(
+                """
+                SELECT procedure.proname, procedure.prosrc,
+                       procedure.provolatile, procedure.prosecdef,
+                       procedure.proleakproof, procedure.proconfig
+                FROM pg_catalog.pg_proc procedure
+                JOIN pg_catalog.pg_namespace namespace ON namespace.oid = procedure.pronamespace
+                WHERE namespace.nspname = %s
+                  AND procedure.proname::text = ANY(%s::text[])
+                ORDER BY procedure.proname
+                """,
+                (schema, list(v2_functions)),
+            ).fetchall()
+            return {
+                str(row["proname"]): {
+                    str(key): (
+                        value.replace(f'"{schema}".', '<schema>.').replace(
+                            f"{schema}.", "<schema>."
+                        )
+                        if isinstance(value, str)
+                        else json_ready(value)
+                    )
+                    for key, value in row.items()
+                    if key != "proname"
+                }
+                for row in rows
+            }
+
+        def trigger_contract(schema: str) -> dict[str, dict[str, Any]]:
+            rows = conn.execute(
+                """
+                SELECT trigger.tgname, relation.relname AS table_name,
+                       trigger.tgenabled,
+                       pg_catalog.pg_get_triggerdef(trigger.oid, true) AS definition
+                FROM pg_catalog.pg_trigger trigger
+                JOIN pg_catalog.pg_class relation ON relation.oid = trigger.tgrelid
+                JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+                WHERE namespace.nspname = %s
+                  AND NOT trigger.tgisinternal
+                  AND trigger.tgname::text = ANY(%s::text[])
+                ORDER BY relation.relname, trigger.tgname
+                """,
+                (schema, sorted(v2_triggers)),
+            ).fetchall()
+            return {
+                str(row["tgname"]): {
+                    str(key): (
+                        value.replace(f'"{schema}".', '<schema>.').replace(
+                            f"{schema}.", "<schema>."
+                        )
+                        if isinstance(value, str)
+                        else json_ready(value)
+                    )
+                    for key, value in row.items()
+                    if key != "tgname"
+                }
+                for row in rows
+            }
+
+        reference_schema = validate_identifier(
+            "aegis_v3_reference_" + hashlib.sha256(os.urandom(32)).hexdigest()[:12]
+        )
+        conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(reference_schema)))
+        try:
+            conn.execute(
+                build_v2_reference_sql(
+                    schema=reference_schema,
+                    embedding_dimensions=self.embedding_dimensions,
+                )
+            )
+            conn.execute(
+                build_v2_projection_validation_function_sql(
+                    schema=reference_schema,
+                )
+            )
+            reference = self._schema_column_definitions(
+                conn,
+                schema=reference_schema,
+            )
+            reference_functions = function_contract(reference_schema)
+            reference_triggers = trigger_contract(reference_schema)
+        finally:
+            conn.execute(
+                sql.SQL("DROP SCHEMA {} CASCADE").format(
+                    sql.Identifier(reference_schema)
+                )
+            )
+        observed = self._schema_column_definitions(conn, schema=self.schema)
+        for table, column_names in V2_AUTHORITY_TABLE_COLUMNS.items():
+            for column_name in column_names:
+                key = (table, column_name)
+                if observed.get(key) != reference.get(key):
+                    raise RuntimeError(
+                        "version-2 reasoning-ledger column definition differs: "
+                        f"{table}.{column_name}"
+                    )
+        if function_contract(self.schema) != reference_functions:
+            raise RuntimeError(
+                "version-2 reasoning-ledger trigger function bodies differ from "
+                "the supported upgrade source"
+            )
+        if trigger_contract(self.schema) != reference_triggers:
+            raise RuntimeError(
+                "version-2 reasoning-ledger trigger definitions differ from "
+                "the supported upgrade source"
+            )
+
+    def _migrate_v2_to_v3(
+        self, conn: psycopg.Connection[dict[str, Any]]
+    ) -> None:
+        conn.execute(
+            build_forbidden_authority_key_function_sql(schema=self.schema)
+        )
+        conn.execute(
+            sql.SQL("DELETE FROM {table}").format(
+                table=self._table("statement_embedding")
+            )
+        )
+        conn.execute(
+            sql.SQL(
+                """
+                ALTER TABLE {embedding}
+                  ADD COLUMN embedding_sha256 text NOT NULL
+                    CHECK (embedding_sha256 ~ '^[0-9a-f]{{64}}$'),
+                  ADD COLUMN generator_identity jsonb NOT NULL,
+                  ADD COLUMN generation_receipt jsonb NOT NULL,
+                  ADD COLUMN generation_receipt_sha256 text NOT NULL
+                    CHECK (generation_receipt_sha256 ~ '^[0-9a-f]{{64}}$');
+
+                ALTER TABLE {evidence}
+                  DROP CONSTRAINT evidence_descriptor_scope_check,
+                  ADD CONSTRAINT evidence_descriptor_scope_check
+                    CHECK (NOT {forbidden}(scope));
+
+                ALTER TABLE {revision}
+                  DROP CONSTRAINT statement_revision_scope_check,
+                  ADD CONSTRAINT statement_revision_scope_check
+                    CHECK (NOT {forbidden}(scope)),
+                  ADD CONSTRAINT statement_revision_structured_conditions_check
+                    CHECK (NOT {forbidden}(structured_conditions));
+
+                ALTER TABLE {relation}
+                  ADD CONSTRAINT relation_applicable_conditions_check
+                    CHECK (NOT {forbidden}(applicable_conditions));
+
+                ALTER TABLE {event}
+                  DROP CONSTRAINT ledger_event_event_type_check,
+                  ADD CONSTRAINT ledger_event_event_type_check CHECK (
+                    event_type IN (
+                      'STATEMENT_CREATED', 'REVISION_CREATED',
+                      'REVISION_INVALIDATED', 'REVISION_MARKED_STALE',
+                      'REVISION_REVALIDATED', 'REVISION_SUPERSEDED',
+                      'RELATION_CREATED', 'EVIDENCE_REGISTERED',
+                      'EMBEDDING_PROFILE_REGISTERED', 'EMBEDDING_REBUILT',
+                      'INDEX_STORAGE_REINDEXED'
+                    )
+                  );
+                """
+            ).format(
+                embedding=self._table("statement_embedding"),
+                evidence=self._table("evidence_descriptor"),
+                revision=self._table("statement_revision"),
+                relation=self._table("relation"),
+                event=self._table("ledger_event"),
+                forbidden=sql.SQL("{}.contains_forbidden_authority_key").format(
+                    sql.Identifier(self.schema)
+                ),
+            )
+        )
+        metadata = {
+            "name": "reasoning_ledger",
+            "version": 3,
+            "embedding_dimensions": self.embedding_dimensions,
+            "authority_model": "immutable_revision_event_projection",
+            "contract_signature": authority_schema_signature(
+                schema=self.schema,
+                embedding_dimensions=self.embedding_dimensions,
+            ),
+            "catalog_signature": None,
+        }
+        conn.execute(
+            sql.SQL(
+                "UPDATE {table} SET value = %s, updated_at = now() "
+                "WHERE key = 'schema_version'"
+            ).format(table=self._table("schema_metadata")),
+            (Jsonb(metadata),),
+        )
+
+    def _catalog_signature(
+        self,
+        conn: psycopg.Connection[dict[str, Any]],
+        *,
+        schema: str | None = None,
+    ) -> str:
+        target_schema = self.schema if schema is None else validate_identifier(schema)
+        columns = conn.execute(
+            """
+            SELECT table_name, column_name, ordinal_position, data_type, udt_name,
+                   is_nullable, column_default, generation_expression,
+                   character_maximum_length, numeric_precision, numeric_scale,
+                   datetime_precision, collation_schema, collation_name,
+                   is_identity, identity_generation, identity_start,
+                   identity_increment, is_generated
+            FROM information_schema.columns
+            WHERE table_schema = %s
+            ORDER BY table_name, ordinal_position
+            """,
+            (target_schema,),
+        ).fetchall()
+        relations = conn.execute(
+            """
+            SELECT relation.relname AS table_name, relation.relkind,
+                   relation.relpersistence, relation.relrowsecurity,
+                   relation.relforcerowsecurity, relation.relreplident,
+                   relation.relispartition
+            FROM pg_catalog.pg_class relation
+            JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = %s
+              AND relation.relkind IN ('r', 'p')
+            ORDER BY relation.relname
+            """,
+            (target_schema,),
+        ).fetchall()
+        constraints = conn.execute(
+            """
+            SELECT relation.relname AS table_name, constraint.contype,
+                   constraint.condeferrable, constraint.condeferred,
+                   constraint.convalidated,
+                   pg_catalog.pg_get_constraintdef(constraint.oid, true) AS definition
+            FROM pg_catalog.pg_constraint constraint
+            JOIN pg_catalog.pg_class relation ON relation.oid = constraint.conrelid
+            JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = %s
+            ORDER BY relation.relname, constraint.contype, constraint.conname
+            """,
+            (target_schema,),
+        ).fetchall()
+        triggers = conn.execute(
+            """
+            SELECT relation.relname AS table_name, trigger.tgname,
+                   trigger.tgenabled,
+                   pg_catalog.pg_get_triggerdef(trigger.oid, true) AS definition
+            FROM pg_catalog.pg_trigger trigger
+            JOIN pg_catalog.pg_class relation ON relation.oid = trigger.tgrelid
+            JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = %s AND NOT trigger.tgisinternal
+            ORDER BY relation.relname, trigger.tgname
+            """,
+            (target_schema,),
+        ).fetchall()
+        functions = conn.execute(
+            """
+            SELECT procedure.proname,
+                   pg_catalog.pg_get_functiondef(procedure.oid) AS definition
+            FROM pg_catalog.pg_proc procedure
+            JOIN pg_catalog.pg_namespace namespace ON namespace.oid = procedure.pronamespace
+            WHERE namespace.nspname = %s
+              AND procedure.proname::text = ANY(%s::text[])
+            ORDER BY procedure.proname
+            """,
+            (
+                target_schema,
+                [
+                    "reject_authority_mutation",
+                    "validate_current_projection_event",
+                    "validate_supersedes_transaction",
+                    "validate_supersedes_event_transaction",
+                    "validate_revision_transaction",
+                    "contains_forbidden_authority_key",
+                    "freeze_schema_metadata",
+                ],
+            ),
+        ).fetchall()
+        indexes = conn.execute(
+            """
+            SELECT indexes.tablename, indexes.indexname, indexes.indexdef,
+                   catalog.indisvalid, catalog.indisready
+            FROM pg_catalog.pg_indexes indexes
+            JOIN pg_catalog.pg_class index_relation ON index_relation.relname = indexes.indexname
+            JOIN pg_catalog.pg_namespace namespace
+              ON namespace.oid = index_relation.relnamespace
+             AND namespace.nspname = indexes.schemaname
+            JOIN pg_catalog.pg_index catalog ON catalog.indexrelid = index_relation.oid
+            WHERE indexes.schemaname = %s
+            ORDER BY indexes.tablename, indexes.indexname
+            """,
+            (target_schema,),
+        ).fetchall()
+        policies = conn.execute(
+            """
+            SELECT tablename, policyname, permissive, roles, cmd,
+                   qual, with_check
+            FROM pg_catalog.pg_policies
+            WHERE schemaname = %s
+            ORDER BY tablename, policyname
+            """,
+            (target_schema,),
+        ).fetchall()
+        sequences = conn.execute(
+            """
+            SELECT sequences.sequencename, sequences.sequenceowner,
+                   sequences.data_type, sequences.start_value,
+                   sequences.min_value, sequences.max_value,
+                   sequences.increment_by, sequences.cycle,
+                   sequences.cache_size,
+                   owned_table.relname AS owned_table,
+                   owned_column.attname AS owned_column,
+                   dependency.deptype AS ownership_dependency
+            FROM pg_catalog.pg_sequences sequences
+            JOIN pg_catalog.pg_namespace namespace
+              ON namespace.nspname = sequences.schemaname
+            JOIN pg_catalog.pg_class sequence_relation
+              ON sequence_relation.relnamespace = namespace.oid
+             AND sequence_relation.relname = sequences.sequencename
+             AND sequence_relation.relkind = 'S'
+            LEFT JOIN pg_catalog.pg_depend dependency
+              ON dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+             AND dependency.objid = sequence_relation.oid
+             AND dependency.deptype IN ('a', 'i')
+            LEFT JOIN pg_catalog.pg_class owned_table
+              ON owned_table.oid = dependency.refobjid
+            LEFT JOIN pg_catalog.pg_attribute owned_column
+              ON owned_column.attrelid = dependency.refobjid
+             AND owned_column.attnum = dependency.refobjsubid
+            WHERE sequences.schemaname = %s
+            ORDER BY sequences.sequencename
+            """,
+            (target_schema,),
+        ).fetchall()
+        extensions = conn.execute(
+            """
+            SELECT extension.extname, extension.extversion,
+                   extension.extrelocatable,
+                   namespace.nspname AS extension_schema
+            FROM pg_catalog.pg_extension extension
+            JOIN pg_catalog.pg_namespace namespace
+              ON namespace.oid = extension.extnamespace
+            WHERE extension.extname = 'vector'
+            ORDER BY extension.extname
+            """
+        ).fetchall()
+
+        def normalize(value: Any) -> Any:
+            if not isinstance(value, str):
+                return json_ready(value)
+            return value.replace(f'"{target_schema}".', '<schema>.').replace(
+                f"{target_schema}.", "<schema>."
+            )
+
+        payload = {
+            "relations": [
+                {str(key): normalize(value) for key, value in row.items()}
+                for row in relations
+            ],
+            "columns": [
+                {str(key): normalize(value) for key, value in row.items()}
+                for row in columns
+            ],
+            "constraints": [
+                {str(key): normalize(value) for key, value in row.items()}
+                for row in constraints
+            ],
+            "triggers": [
+                {str(key): normalize(value) for key, value in row.items()}
+                for row in triggers
+            ],
+            "functions": [
+                {str(key): normalize(value) for key, value in row.items()}
+                for row in functions
+            ],
+            "indexes": [
+                {str(key): normalize(value) for key, value in row.items()}
+                for row in indexes
+            ],
+            "policies": [
+                {str(key): normalize(value) for key, value in row.items()}
+                for row in policies
+            ],
+            "sequences": [
+                {str(key): normalize(value) for key, value in row.items()}
+                for row in sequences
+            ],
+            "extensions": [
+                {str(key): normalize(value) for key, value in row.items()}
+                for row in extensions
+            ],
+        }
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _expected_catalog_signature(
+        self, conn: psycopg.Connection[dict[str, Any]]
+    ) -> str:
+        reference_schema = validate_identifier(
+            "aegis_v3_catalog_" + hashlib.sha256(os.urandom(32)).hexdigest()[:12]
+        )
+        conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(reference_schema)))
+        try:
+            conn.execute(
+                build_init_sql(
+                    schema=reference_schema,
+                    embedding_dimensions=self.embedding_dimensions,
+                )
+            )
+            return self._catalog_signature(conn, schema=reference_schema)
+        finally:
+            conn.execute(
+                sql.SQL("DROP SCHEMA {} CASCADE").format(
+                    sql.Identifier(reference_schema)
+                )
+            )
+
+    def _stamp_schema_catalog_signature(
+        self, conn: psycopg.Connection[dict[str, Any]]
+    ) -> None:
+        metadata = self._schema_metadata_value(conn)
+        if metadata is None:
+            raise RuntimeError("reasoning-ledger schema metadata is missing")
+        actual = self._catalog_signature(conn)
+        stored = metadata.get("catalog_signature")
+        if stored is None:
+            expected = self._expected_catalog_signature(conn)
+            if actual != expected:
+                raise RuntimeError(
+                    "reasoning-ledger actual catalog differs from the generated "
+                    "version-3 authority schema"
+                )
+            updated = {**metadata, "catalog_signature": actual}
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {table} SET value = %s, updated_at = now() "
+                    "WHERE key = 'schema_version'"
+                ).format(table=self._table("schema_metadata")),
+                (Jsonb(updated),),
+            )
+        elif stored != actual:
+            raise RuntimeError(
+                "reasoning-ledger actual catalog differs from its frozen signature"
+            )
+
+    def _probe_server_contract(
+        self,
+        conn: psycopg.Connection[dict[str, Any]],
+        *,
+        create_extension: bool,
+        tolerate_legacy_namespace: bool = False,
+        relocate_legacy_namespace: bool = False,
+    ) -> dict[str, Any]:
+        if tolerate_legacy_namespace and relocate_legacy_namespace:
+            raise ValueError(
+                "legacy pgvector namespace cannot be tolerated and relocated together"
+            )
+        row = conn.execute(
+            """
+            SELECT pg_catalog.current_database() AS database,
+                   current_user AS user,
+                   pg_catalog.current_setting('server_version_num')::integer
+                     AS server_version_num
+            """
+        ).fetchone()
+        assert row is not None
+        server_version = int(row["server_version_num"])
+        server_major = server_version // 10000
+        if server_major < self.minimum_postgresql_major:
+            raise RuntimeError(
+                "PostgreSQL major version is below the reasoning-ledger baseline: "
+                f"{server_major} < {self.minimum_postgresql_major}"
+            )
+        vector = conn.execute(
+            """
+            SELECT extension.extversion,
+                   extension.extrelocatable,
+                   namespace.nspname AS extension_schema
+            FROM pg_catalog.pg_extension extension
+            JOIN pg_catalog.pg_namespace namespace
+              ON namespace.oid = extension.extnamespace
+            WHERE extension.extname = 'vector'
+            """
+        ).fetchone()
+        if vector is None and create_extension:
+            conn.execute(
+                sql.SQL("CREATE EXTENSION vector WITH SCHEMA {}").format(
+                    sql.Identifier(PGVECTOR_SCHEMA)
+                )
+            )
+            vector = conn.execute(
+                """
+                SELECT extension.extversion,
+                       extension.extrelocatable,
+                       namespace.nspname AS extension_schema
+                FROM pg_catalog.pg_extension extension
+                JOIN pg_catalog.pg_namespace namespace
+                  ON namespace.oid = extension.extnamespace
+                WHERE extension.extname = 'vector'
+                """
+            ).fetchone()
+        if vector is None:
+            raise RuntimeError("pgvector extension is not installed")
+        vector_version = str(vector["extversion"])
+        if self._version_tuple(vector_version) < self._version_tuple(
+            self.minimum_pgvector_version
+        ):
+            raise RuntimeError(
+                "pgvector version is below the reasoning-ledger baseline: "
+                f"{vector_version} < {self.minimum_pgvector_version}"
+            )
+        vector_schema = str(vector["extension_schema"])
+        if vector_schema != PGVECTOR_SCHEMA and relocate_legacy_namespace:
+            if not bool(vector["extrelocatable"]):
+                raise RuntimeError(
+                    "pgvector extension cannot be relocated to the authority namespace"
+                )
+            conn.execute(
+                sql.SQL("ALTER EXTENSION vector SET SCHEMA {}").format(
+                    sql.Identifier(PGVECTOR_SCHEMA)
+                )
+            )
+            vector = conn.execute(
+                """
+                SELECT extension.extversion,
+                       extension.extrelocatable,
+                       namespace.nspname AS extension_schema
+                FROM pg_catalog.pg_extension extension
+                JOIN pg_catalog.pg_namespace namespace
+                  ON namespace.oid = extension.extnamespace
+                WHERE extension.extname = 'vector'
+                """
+            ).fetchone()
+            if vector is None:
+                raise RuntimeError("pgvector extension disappeared during relocation")
+            vector_schema = str(vector["extension_schema"])
+        if vector_schema != PGVECTOR_SCHEMA and not tolerate_legacy_namespace:
+            raise RuntimeError(
+                "pgvector extension namespace differs from the authority contract: "
+                f"{vector_schema} != {PGVECTOR_SCHEMA}"
+            )
+        conn.execute(
+            sql.SQL("SET search_path TO pg_catalog, {}").format(
+                sql.Identifier(vector_schema)
+            )
+        )
+        return {
+            "database": str(row["database"]),
+            "user": str(row["user"]),
+            "postgresql_major": server_major,
+            "postgresql_version_num": server_version,
+            "pgvector_version": vector_version,
+            "pgvector_schema": vector_schema,
+        }
+
+    def _schema_table_columns(
+        self, conn: psycopg.Connection[dict[str, Any]]
+    ) -> dict[str, tuple[str, ...]]:
+        rows = conn.execute(
+            """
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = %s
+            ORDER BY table_name, ordinal_position
+            """,
+            (self.schema,),
+        ).fetchall()
+        result: dict[str, list[str]] = {}
+        for row in rows:
+            result.setdefault(str(row["table_name"]), []).append(
+                str(row["column_name"])
+            )
+        return {key: tuple(value) for key, value in result.items()}
+
+    def _validate_event_sequence(
+        self, conn: psycopg.Connection[dict[str, Any]]
+    ) -> None:
+        rows = conn.execute(
+            """
+            SELECT sequences.sequencename, sequences.data_type,
+                   sequences.start_value, sequences.min_value,
+                   sequences.max_value, sequences.increment_by,
+                   sequences.cycle, sequences.cache_size,
+                   owned_table.relname AS owned_table,
+                   owned_column.attname AS owned_column,
+                   dependency.deptype AS ownership_dependency
+            FROM pg_catalog.pg_sequences sequences
+            JOIN pg_catalog.pg_namespace namespace
+              ON namespace.nspname = sequences.schemaname
+            JOIN pg_catalog.pg_class sequence_relation
+              ON sequence_relation.relnamespace = namespace.oid
+             AND sequence_relation.relname = sequences.sequencename
+             AND sequence_relation.relkind = 'S'
+            LEFT JOIN pg_catalog.pg_depend dependency
+              ON dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+             AND dependency.objid = sequence_relation.oid
+             AND dependency.deptype IN ('a', 'i')
+            LEFT JOIN pg_catalog.pg_class owned_table
+              ON owned_table.oid = dependency.refobjid
+            LEFT JOIN pg_catalog.pg_attribute owned_column
+              ON owned_column.attrelid = dependency.refobjid
+             AND owned_column.attnum = dependency.refobjsubid
+            WHERE sequences.schemaname = %s
+            """,
+            (self.schema,),
+        ).fetchall()
+        expected = {
+            "sequencename": "ledger_event_event_id_seq",
+            "data_type": "bigint",
+            "start_value": 1,
+            "min_value": 1,
+            "max_value": 9223372036854775807,
+            "increment_by": 1,
+            "cycle": False,
+            "cache_size": 1,
+            "owned_table": "ledger_event",
+            "owned_column": "event_id",
+            "ownership_dependency": "a",
+        }
+        observed = [
+            {str(key): json_ready(value) for key, value in row.items()}
+            for row in rows
+        ]
+        if observed != [expected]:
+            raise RuntimeError(
+                "reasoning-ledger event sequence contract differs from the authority schema"
+            )
+        state = conn.execute(
+            sql.SQL("SELECT last_value, is_called FROM {}.{}").format(
+                sql.Identifier(self.schema),
+                sql.Identifier("ledger_event_event_id_seq"),
+            )
+        ).fetchone()
+        maximum = conn.execute(
+            sql.SQL("SELECT coalesce(max(event_id), 0) AS maximum FROM {}").format(
+                self._table("ledger_event")
+            )
+        ).fetchone()
+        if state is None or maximum is None:
+            raise RuntimeError("reasoning-ledger event sequence state is unreadable")
+        next_value = int(state["last_value"]) + (1 if bool(state["is_called"]) else 0)
+        if next_value <= int(maximum["maximum"]):
+            raise RuntimeError(
+                "reasoning-ledger event sequence cannot allocate above existing events"
+            )
+        if next_value > int(expected["max_value"]):
+            raise RuntimeError(
+                "reasoning-ledger event sequence has exhausted its allocatable range"
+            )
+
+    def _validate_schema_contract(
+        self,
+        conn: psycopg.Connection[dict[str, Any]],
+        *,
+        require_catalog_signature: bool = True,
+    ) -> str:
+        columns = self._schema_table_columns(conn)
+        if columns != AUTHORITY_TABLE_COLUMNS:
+            raise RuntimeError(
+                "reasoning-ledger database tables or columns differ from the "
+                "configured authority contract"
+            )
+        vector = conn.execute(
+            """
+            SELECT format_type(attribute.atttypid, attribute.atttypmod) AS vector_type
+            FROM pg_catalog.pg_attribute attribute
+            JOIN pg_catalog.pg_class relation ON relation.oid = attribute.attrelid
+            JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = %s
+              AND relation.relname = 'statement_embedding'
+              AND attribute.attname = 'embedding'
+              AND NOT attribute.attisdropped
+            """,
+            (self.schema,),
+        ).fetchone()
+        if vector is None or str(vector["vector_type"]) != (
+            f"vector({self.embedding_dimensions})"
+        ):
+            raise RuntimeError(
+                "reasoning-ledger vector dimension differs from the configured contract"
+            )
+        self._validate_event_sequence(conn)
+        trigger_rows = conn.execute(
+            """
+            SELECT trigger.tgname AS trigger_name,
+                   pg_catalog.pg_get_triggerdef(trigger.oid, true) AS definition,
+                   trigger.tgenabled AS enabled
+            FROM pg_catalog.pg_trigger trigger
+            JOIN pg_catalog.pg_class relation ON relation.oid = trigger.tgrelid
+            JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = %s AND NOT trigger.tgisinternal
+            """,
+            (self.schema,),
+        ).fetchall()
+        trigger_definitions = {
+            str(row["trigger_name"]): str(row["definition"])
+            for row in trigger_rows
+        }
+        trigger_names = set(trigger_definitions)
+        if any(str(row["enabled"]) != "O" for row in trigger_rows):
+            raise RuntimeError(
+                "reasoning-ledger authority trigger is disabled or replica-only"
+            )
+        if trigger_names != REQUIRED_TRIGGER_NAMES:
+            raise RuntimeError(
+                "reasoning-ledger authority triggers are missing or renamed"
+            )
+        for trigger_name in REQUIRED_TRIGGER_NAMES:
+            definition = trigger_definitions[trigger_name]
+            expected_function = (
+                "validate_current_projection_event"
+                if trigger_name == "current_projection_event_bound"
+                else "validate_supersedes_transaction"
+                if trigger_name == "supersedes_transaction_bound"
+                else "validate_supersedes_event_transaction"
+                if trigger_name == "supersedes_event_transaction_bound"
+                else "validate_revision_transaction"
+                if trigger_name == "revision_transaction_bound"
+                else "freeze_schema_metadata"
+                if trigger_name == "schema_metadata_immutable"
+                else "reject_authority_mutation"
+            )
+            if expected_function not in definition:
+                raise RuntimeError(
+                    "reasoning-ledger trigger function binding differs: "
+                    + trigger_name
+                )
+        for trigger_name in (
+            "supersedes_transaction_bound",
+            "supersedes_event_transaction_bound",
+        ):
+            if not all(
+                token in trigger_definitions[trigger_name].upper()
+                for token in ("CONSTRAINT TRIGGER", "DEFERRABLE INITIALLY DEFERRED")
+            ):
+                raise RuntimeError(
+                    "reasoning-ledger supersedes trigger is not deferred to commit"
+                )
+        function_rows = conn.execute(
+            """
+            SELECT procedure.proname AS function_name,
+                   pg_catalog.pg_get_functiondef(procedure.oid) AS definition
+            FROM pg_catalog.pg_proc procedure
+            JOIN pg_catalog.pg_namespace namespace ON namespace.oid = procedure.pronamespace
+            WHERE namespace.nspname = %s
+              AND procedure.proname::text = ANY(%s::text[])
+            """,
+            (
+                self.schema,
+                [
+                    "reject_authority_mutation",
+                    "validate_current_projection_event",
+                    "validate_supersedes_transaction",
+                    "validate_supersedes_event_transaction",
+                    "validate_revision_transaction",
+                    "contains_forbidden_authority_key",
+                    "freeze_schema_metadata",
+                ],
+            ),
+        ).fetchall()
+        function_definitions = {
+            str(row["function_name"]): str(row["definition"])
+            for row in function_rows
+        }
+        required_function_fragments = {
+            "reject_authority_mutation": (
+                "authority rows are immutable",
+            ),
+            "validate_current_projection_event": (
+                "projection identity or event order is invalid",
+                "projection has no revision event",
+                "projection event type is invalid",
+                "projection validity differs from its event",
+            ),
+            "validate_supersedes_transaction": (
+                "consecutive version transition",
+                "bound to the current projection",
+                "no atomic authority event",
+            ),
+            "validate_supersedes_event_transaction": (
+                "one atomic revision/relation/projection transaction",
+                "pg_current_xact_id",
+            ),
+            "validate_revision_transaction": (
+                "initial revision is not bound",
+                "successor revision is not bound",
+                "pg_current_xact_id",
+            ),
+            "contains_forbidden_authority_key": (
+                "required_permissions",
+                "jsonb_path_exists",
+            ),
+            "freeze_schema_metadata": (
+                "schema metadata is immutable",
+                "catalog_signature",
+            ),
+        }
+        if set(function_definitions) != set(required_function_fragments):
+            raise RuntimeError("reasoning-ledger trigger functions differ")
+        for function_name, fragments in required_function_fragments.items():
+            if any(
+                fragment not in function_definitions[function_name]
+                for fragment in fragments
+            ):
+                raise RuntimeError(
+                    "reasoning-ledger trigger function body differs: "
+                    + function_name
+                )
+        index_rows = conn.execute(
+            """
+            SELECT indexes.indexname, indexes.indexdef,
+                   catalog.indisvalid AS valid,
+                   catalog.indisready AS ready
+            FROM pg_catalog.pg_indexes indexes
+            JOIN pg_catalog.pg_class index_relation
+              ON index_relation.relname = indexes.indexname
+            JOIN pg_catalog.pg_namespace namespace
+              ON namespace.oid = index_relation.relnamespace
+             AND namespace.nspname = indexes.schemaname
+            JOIN pg_catalog.pg_index catalog ON catalog.indexrelid = index_relation.oid
+            WHERE indexes.schemaname = %s
+            """,
+            (self.schema,),
+        ).fetchall()
+        if any(
+            not bool(row["valid"]) or not bool(row["ready"])
+            for row in index_rows
+        ):
+            raise RuntimeError("reasoning-ledger contains an invalid index")
+        index_names = {str(row["indexname"]) for row in index_rows}
+        if not REQUIRED_INDEX_NAMES.issubset(index_names):
+            raise RuntimeError("reasoning-ledger required indexes are missing")
+        index_definitions = {
+            str(row["indexname"]): str(row["indexdef"]).lower()
+            for row in index_rows
+        }
+        expected_index_fragments = {
+            "statement_revision_project_type_idx": "(project_id, statement_type, created_at desc)",
+            "statement_revision_scope_gin_idx": "using gin (scope)",
+            "statement_revision_search_gin_idx": "using gin (search_document)",
+            "relation_from_idx": "(project_id, from_statement_id, from_revision, relation_type)",
+            "relation_to_idx": "(project_id, to_statement_id, to_revision, relation_type)",
+            "ledger_event_aggregate_idx": "(project_id, aggregate_kind, aggregate_id, event_id)",
+            "current_projection_validity_idx": "(project_id, validity, statement_id)",
+        }
+        for index_name, fragment in expected_index_fragments.items():
+            if fragment not in index_definitions[index_name]:
+                raise RuntimeError(
+                    "reasoning-ledger index definition differs: " + index_name
+                )
+        if any(
+            token in str(row["indexdef"]).lower()
+            for row in index_rows
+            for token in ("using hnsw", "using ivfflat")
+        ):
+            raise RuntimeError(
+                "reasoning-ledger approximate vector index is not approved"
+            )
+        constraints = conn.execute(
+            """
+            SELECT relation.relname AS table_name,
+                   constraint.contype AS constraint_type,
+                   pg_catalog.pg_get_constraintdef(constraint.oid, true) AS definition,
+                   constraint.convalidated AS validated
+            FROM pg_catalog.pg_constraint constraint
+            JOIN pg_catalog.pg_class relation ON relation.oid = constraint.conrelid
+            JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = %s
+            """,
+            (self.schema,),
+        ).fetchall()
+        if any(not bool(row["validated"]) for row in constraints):
+            raise RuntimeError(
+                "reasoning-ledger contains an unvalidated authority constraint"
+            )
+        primary_tables = {
+            str(row["table_name"])
+            for row in constraints
+            if row["constraint_type"] == "p"
+        }
+        if primary_tables != set(AUTHORITY_TABLE_COLUMNS):
+            raise RuntimeError(
+                "reasoning-ledger primary-key contract differs from the authority schema"
+            )
+        expected_primary_keys = {
+            "project_anchor": "PRIMARY KEY (project_id)",
+            "statement": "PRIMARY KEY (project_id, statement_id)",
+            "evidence_descriptor": "PRIMARY KEY (project_id, evidence_id)",
+            "statement_revision": "PRIMARY KEY (project_id, statement_id, revision)",
+            "statement_revision_evidence": "PRIMARY KEY (project_id, statement_id, revision, evidence_id)",
+            "relation": "PRIMARY KEY (project_id, relation_id)",
+            "relation_evidence": "PRIMARY KEY (project_id, relation_id, evidence_id)",
+            "ledger_event": "PRIMARY KEY (project_id, event_id)",
+            "current_projection": "PRIMARY KEY (project_id, statement_id)",
+            "embedding_profile": "PRIMARY KEY (project_id, profile_id)",
+            "statement_embedding": "PRIMARY KEY (project_id, statement_id, revision, profile_id)",
+            "schema_metadata": "PRIMARY KEY (key)",
+        }
+        observed_primary_keys = {
+            str(row["table_name"]): str(row["definition"])
+            for row in constraints
+            if row["constraint_type"] == "p"
+        }
+        if observed_primary_keys != expected_primary_keys:
+            raise RuntimeError(
+                "reasoning-ledger primary-key columns differ from the authority schema"
+            )
+        foreign_keys = [
+            str(row["definition"])
+            for row in constraints
+            if row["constraint_type"] == "f"
+        ]
+        if len(foreign_keys) != 11 or any(
+            "project_id" not in definition for definition in foreign_keys
+        ):
+            raise RuntimeError(
+                "reasoning-ledger project-scoped foreign-key contract differs"
+            )
+        required_foreign_key_fragments = {
+            "FOREIGN KEY (project_id, statement_id) REFERENCES",
+            "FOREIGN KEY (project_id, statement_id, revision) REFERENCES",
+            "FOREIGN KEY (project_id, evidence_id) REFERENCES",
+            "FOREIGN KEY (project_id, relation_id) REFERENCES",
+            "FOREIGN KEY (project_id, projection_event_id) REFERENCES",
+            "FOREIGN KEY (project_id, profile_id) REFERENCES",
+        }
+        foreign_key_text = "\n".join(foreign_keys)
+        if any(
+            fragment not in foreign_key_text
+            for fragment in required_foreign_key_fragments
+        ) or any(
+            "ON UPDATE RESTRICT ON DELETE RESTRICT" not in definition
+            for definition in foreign_keys
+        ):
+            raise RuntimeError(
+                "reasoning-ledger foreign-key definitions differ from the authority schema"
+            )
+        unique_constraints = {
+            (str(row["table_name"]), str(row["definition"]))
+            for row in constraints
+            if row["constraint_type"] == "u"
+        }
+        expected_unique_constraints = {
+            ("evidence_descriptor", "UNIQUE (project_id, content_sha256)"),
+            (
+                "statement_revision",
+                "UNIQUE (project_id, statement_id, content_sha256)",
+            ),
+            (
+                "statement_revision_evidence",
+                "UNIQUE (project_id, statement_id, revision, ordinal)",
+            ),
+            (
+                "relation",
+                "UNIQUE (project_id, from_statement_id, from_revision, "
+                "to_statement_id, to_revision, relation_type, content_sha256)",
+            ),
+            ("relation_evidence", "UNIQUE (project_id, relation_id, ordinal)"),
+            ("embedding_profile", "UNIQUE (project_id, content_sha256)"),
+        }
+        if unique_constraints != expected_unique_constraints:
+            raise RuntimeError(
+                "reasoning-ledger unique constraints differ from the authority schema"
+            )
+        check_definitions = "\n".join(
+            str(row["definition"])
+            for row in constraints
+            if row["constraint_type"] == "c"
+        )
+        for required in (
+            "required_permissions",
+            "SUPERSEDES",
+            "INDEX_STORAGE_REINDEXED",
+            "content_sha256",
+        ):
+            if required not in check_definitions:
+                raise RuntimeError(
+                    "reasoning-ledger check-constraint contract differs: " + required
+                )
+        expected_check_counts = {
+            "project_anchor": 5,
+            "evidence_descriptor": 4,
+            "statement_revision": 8,
+            "statement_revision_evidence": 1,
+            "relation": 5,
+            "relation_evidence": 1,
+            "ledger_event": 3,
+            "current_projection": 1,
+            "embedding_profile": 2,
+            "statement_embedding": 3,
+        }
+        observed_check_counts: dict[str, int] = {}
+        for row in constraints:
+            if row["constraint_type"] == "c":
+                table = str(row["table_name"])
+                observed_check_counts[table] = observed_check_counts.get(table, 0) + 1
+        if observed_check_counts != expected_check_counts:
+            raise RuntimeError(
+                "reasoning-ledger check-constraint count differs from the authority schema"
+            )
+        metadata = conn.execute(
+            sql.SQL(
+                "SELECT value FROM {table} WHERE key = 'schema_version'"
+            ).format(table=self._table("schema_metadata"))
+        ).fetchone()
+        expected_metadata = {
+            "name": "reasoning_ledger",
+            "version": 3,
+            "embedding_dimensions": self.embedding_dimensions,
+            "authority_model": "immutable_revision_event_projection",
+            "contract_signature": authority_schema_signature(
+                schema=self.schema,
+                embedding_dimensions=self.embedding_dimensions,
+            ),
+        }
+        value = dict(metadata["value"] or {}) if metadata is not None else {}
+        catalog_signature = value.pop("catalog_signature", None)
+        if value != expected_metadata:
+            raise RuntimeError(
+                "reasoning-ledger schema metadata differs from the authority contract"
+            )
+        actual_catalog_signature = self._catalog_signature(conn)
+        if catalog_signature is None:
+            expected_catalog_signature = self._expected_catalog_signature(conn)
+            if actual_catalog_signature != expected_catalog_signature:
+                raise RuntimeError(
+                    "reasoning-ledger unsigned catalog differs from the generated "
+                    "version-3 authority schema"
+                )
+            if require_catalog_signature:
+                raise RuntimeError(
+                    "reasoning-ledger catalog signature has not been frozen"
+                )
+        elif (
+            not isinstance(catalog_signature, str)
+            or len(catalog_signature) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in catalog_signature
+            )
+            or catalog_signature != actual_catalog_signature
+        ):
+            raise RuntimeError(
+                "reasoning-ledger actual catalog differs from its frozen signature"
+            )
+        return actual_catalog_signature
 
     @staticmethod
     def _revision_key(statement_id: str, revision: int) -> str:
