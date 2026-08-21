@@ -57,6 +57,7 @@ class CleanCheckoutSealTests(unittest.TestCase):
             seal_path = checkout / SEAL_PATH
             environment = dict(os.environ)
             environment["PYTHONPATH"] = str(checkout / "src")
+            environment["PYTHONUTF8"] = "1"
             verification = subprocess.run(
                 [
                     sys.executable,
