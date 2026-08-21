@@ -34,7 +34,13 @@ class MutationAccountabilityTests(unittest.TestCase):
             }
             state_path = run_root / "RUN_STATE.json"
             state_bytes = (
-                json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n"
+                json.dumps(
+                    state,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
             ).encode("utf-8")
             state_path.write_bytes(state_bytes)
             database = runtime / "project_state" / "checkpoints.sqlite3"
