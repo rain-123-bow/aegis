@@ -347,7 +347,6 @@ def _load_witness_config(project: Path) -> tuple[str, str, Path, str]:
     identity_sha256 = identity["sha256"]
     if (
         not isinstance(identity_path_value, str)
-        or not identity_path_value.isascii()
         or "\x00" in identity_path_value
         or not Path(identity_path_value).is_absolute()
         or not isinstance(identity_sha256, str)

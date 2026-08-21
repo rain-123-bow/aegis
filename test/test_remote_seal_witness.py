@@ -85,6 +85,17 @@ class RemoteSealWitnessTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def test_unicode_ssh_identity_path_is_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory) / "项目"
+            self.write_config(project)
+
+            _, _, identity_path, _ = remote_seal_witness._load_witness_config(
+                project
+            )
+
+            self.assertEqual(identity_path, project / "test-ssh-identity")
+
     def witness(self, seal: StoredProjectSeal, head: str) -> dict[str, object]:
         return {
             "schema": "aegis.remote_seal_witness.v3",
