@@ -432,9 +432,9 @@ class ReasoningLedgerV2ContractTests(unittest.TestCase):
         self.assertIn("event.payload->>'new_validity'", v2_validation_source)
         self.assertIn("event.aggregate_kind <> 'REVISION'", v2_validation_source)
         self.assertEqual(self.sql.count("pg_current_xact_id()::xid"), 11)
-        self.assertIn("relation.xmin = pg_current_xact_id()::xid", self.sql)
-        self.assertIn("revision.xmin = pg_current_xact_id()::xid", self.sql)
-        self.assertIn("projection.xmin = pg_current_xact_id()::xid", self.sql)
+        self.assertIn("relation.xmin = pg_catalog.pg_current_xact_id()::xid", self.sql)
+        self.assertIn("revision.xmin = pg_catalog.pg_current_xact_id()::xid", self.sql)
+        self.assertIn("projection.xmin = pg_catalog.pg_current_xact_id()::xid", self.sql)
         self.assertIn(
             "_catalog_signature(conn)",
             inspect.getsource(ReasoningLedger._validate_schema_contract),
