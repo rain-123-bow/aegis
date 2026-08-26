@@ -78,6 +78,7 @@ from reviewer_contract import (
     FINAL_REVIEWER as REVIEW_CONTRACT_FINAL_REVIEWER,
     TEST_PLAN_REVIEWER as REVIEW_CONTRACT_TEST_PLAN_REVIEWER,
     TEST_RESULT_REVIEWER as REVIEW_CONTRACT_TEST_RESULT_REVIEWER,
+    complete_reviewer_model_output,
     coordinator_review_stage,
     reviewer_output_schema,
     validate_reviewer_output,
@@ -286,8 +287,32 @@ def build_planning_prompt(node_input: State, control: dict[str, object]) -> str:
     )
 
 
+def _remove_model_unsupported_schema_keywords(value: object) -> None:
+    if isinstance(value, dict):
+        value.pop("uniqueItems", None)
+        for nested in value.values():
+            _remove_model_unsupported_schema_keywords(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            _remove_model_unsupported_schema_keywords(nested)
+
+
+def _model_reviewer_output_schema(role: str) -> dict[str, Any]:
+    schema = reviewer_output_schema(role)
+    properties = schema.get("properties")
+    required = schema.get("required")
+    if not isinstance(properties, dict) or not isinstance(required, list):
+        raise RuntimeError("reviewer output schema is invalid")
+    properties.pop("finding_categories", None)
+    schema["required"] = [
+        field_name for field_name in required if field_name != "finding_categories"
+    ]
+    _remove_model_unsupported_schema_keywords(schema)
+    return schema
+
+
 def planning_review_output_schema() -> dict[str, Any]:
-    schema = reviewer_output_schema(REVIEW_CONTRACT_TEST_PLAN_REVIEWER)
+    schema = _model_reviewer_output_schema(REVIEW_CONTRACT_TEST_PLAN_REVIEWER)
     properties = schema.setdefault("properties", {})
     properties.update(
         {
@@ -337,7 +362,6 @@ def planning_review_output_schema() -> dict[str, Any]:
                         },
                         "predecessor_issue_ids": {
                             "type": "array",
-                            "uniqueItems": True,
                             "items": {"type": "string", "minLength": 1},
                         },
                     },
@@ -370,7 +394,6 @@ def planning_review_output_schema() -> dict[str, Any]:
                         },
                         "current_semantic_issue_ids": {
                             "type": "array",
-                            "uniqueItems": True,
                             "items": {"type": "string", "minLength": 1},
                         },
                         "rationale": {"type": "string", "minLength": 1},
@@ -401,9 +424,9 @@ def planning_review_output_schema() -> dict[str, Any]:
 
 def execution_reviewer_output_schema(role_key: str) -> dict[str, Any]:
     if role_key == TEST_RESULT_REVIEWER_ROLE:
-        return reviewer_output_schema(REVIEW_CONTRACT_TEST_RESULT_REVIEWER)
+        return _model_reviewer_output_schema(REVIEW_CONTRACT_TEST_RESULT_REVIEWER)
     if role_key == FINAL_REVIEWER_ROLE:
-        return reviewer_output_schema(REVIEW_CONTRACT_FINAL_REVIEWER)
+        return _model_reviewer_output_schema(REVIEW_CONTRACT_FINAL_REVIEWER)
     raise ValueError(f"unsupported execution reviewer role: {role_key}")
 
 
@@ -689,7 +712,7 @@ def test_plan_reviewer_node(state: State) -> State:
                 output_schema=planning_review_output_schema(),
                 job_id=str(control["job_id"]),
             )
-            node_output = json.loads(response)
+            node_output = complete_reviewer_model_output(json.loads(response))
             validated = validate_reviewer_envelope(
                 TEST_PLAN_REVIEWER_ROLE, node_input, node_output
             )
@@ -713,7 +736,7 @@ def test_plan_reviewer_node(state: State) -> State:
     else:
         prompt = build_node_prompt(node_input)
         response = send_planning_prompt(TEST_PLAN_REVIEWER_ROLE, prompt)
-        raw_output = json.loads(response)
+        raw_output = complete_reviewer_model_output(json.loads(response))
         validated = validate_reviewer_envelope(
             TEST_PLAN_REVIEWER_ROLE, node_input, raw_output
         )
@@ -780,7 +803,7 @@ def test_result_reviewer_node(state: State) -> State:
             ensure_ascii=False,
         )
     response = send_execution_prompt(TEST_RESULT_REVIEWER_ROLE, prompt)
-    node_output = json.loads(response)
+    node_output = complete_reviewer_model_output(json.loads(response))
     validated = validate_reviewer_envelope(
         TEST_RESULT_REVIEWER_ROLE, node_input, node_output
     )
@@ -843,7 +866,7 @@ def final_reviewer_node(state: State) -> State:
             ensure_ascii=False,
         )
     response = send_execution_prompt(FINAL_REVIEWER_ROLE, prompt)
-    node_output = json.loads(response)
+    node_output = complete_reviewer_model_output(json.loads(response))
     validated = validate_reviewer_envelope(
         FINAL_REVIEWER_ROLE, node_input, node_output
     )

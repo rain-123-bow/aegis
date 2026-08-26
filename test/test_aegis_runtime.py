@@ -6342,6 +6342,8 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
             review = coordinator.prepare_planning_review()
             self.assertEqual(review["reviewed_plan_sha256"], frozen["plan_sha256"])
+            self.assertNotIn("finding_categories", review["instructions"])
+            self.assertIn("derives finding categories", review["instructions"])
             first_report = Path(str(review["review_report_path"]))
             first_report.write_text(
                 "# Review\n\nOne blocking issue.\n", encoding="utf-8"

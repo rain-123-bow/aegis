@@ -45,13 +45,15 @@ class ReviewerIntegrationContractTests(unittest.TestCase):
         skill_path = PROJECT_ROOT / "skills" / "aegis_master_reviewer" / "SKILL.md"
         self.assertTrue(skill_path.is_file())
         skill = skill_path.read_text(encoding="utf-8")
+        result_contract = skill.split("```json", 1)[1].split("```", 1)[0]
         for required in (
             "review_conclusion",
-            "finding_categories",
             "findings",
             "review_output_artifacts",
         ):
             self.assertIn(required, skill)
+        self.assertNotIn('"finding_categories"', result_contract)
+        self.assertIn("derives `finding_categories`", skill)
         for forbidden in (
             "RETURN_TO",
             "recipient",
@@ -95,10 +97,45 @@ class ReviewerIntegrationContractTests(unittest.TestCase):
             encoded = json.dumps(schema, sort_keys=True)
             with self.subTest(schema_id=schema.get("$id")):
                 self.assertIn("review_conclusion", schema["properties"])
-                self.assertIn("finding_categories", schema["properties"])
+                self.assertNotIn("finding_categories", schema["properties"])
                 self.assertNotIn("status", schema["properties"])
+                self.assertNotIn("uniqueItems", encoded)
                 self.assertNotIn("disposition", encoded)
                 self.assertNotIn("RETURN_TO", encoded)
+
+    def test_model_reviewer_output_derives_finding_categories(self) -> None:
+        raw_output = _review_payload(category="EXECUTION_INCOMPLETE")
+        raw_output.pop("finding_categories")
+
+        completed = main.complete_reviewer_model_output(raw_output)
+
+        self.assertEqual(completed["finding_categories"], ["EXECUTION_INCOMPLETE"])
+        self.assertEqual(
+            main.validate_reviewer_envelope(
+                main.TEST_RESULT_REVIEWER_ROLE,
+                {
+                    "artifact_path": "C:/artifacts",
+                    "reasoning_ledger_context_pack": "C:/artifacts/context.json",
+                },
+                completed,
+            )["finding_categories"],
+            ["EXECUTION_INCOMPLETE"],
+        )
+
+    def test_runtime_completes_model_output_before_strict_validation(self) -> None:
+        raw_output = _review_payload(category="EXECUTION_INCOMPLETE")
+        raw_output.pop("finding_categories")
+
+        validated, artifacts = aegis_runtime._validated_execution_response(
+            "D", raw_output
+        )
+
+        self.assertIsNotNone(validated)
+        assert validated is not None
+        self.assertEqual(
+            validated["finding_categories"], ["EXECUTION_INCOMPLETE"]
+        )
+        self.assertEqual(artifacts, raw_output["review_output_artifacts"])
 
     def test_reviewer_control_hides_role_node_and_workflow_topology(self) -> None:
         control = main.reviewer_input_control(

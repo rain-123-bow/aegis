@@ -79,6 +79,28 @@ class ReviewContractError(ValueError):
     pass
 
 
+def complete_reviewer_model_output(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    completed = dict(payload)
+    if "finding_categories" in completed:
+        return completed
+    findings = completed.get("findings")
+    if not isinstance(findings, list):
+        raise ReviewContractError("reviewer model output findings must be an array")
+    categories: set[str] = set()
+    for finding in findings:
+        if not isinstance(finding, Mapping) or not isinstance(
+            finding.get("category"), str
+        ):
+            raise ReviewContractError(
+                "reviewer model output finding category is invalid"
+            )
+        categories.add(str(finding["category"]))
+    completed["finding_categories"] = sorted(categories)
+    return completed
+
+
 def reviewer_output_schema(role: str) -> dict[str, Any]:
     categories = sorted(_categories_for_role(role))
     artifact_descriptor = {

@@ -26,7 +26,7 @@ A-F roles are not provisioned here. RuntimeCoordinator creates or resumes their 
 - Missing reviewer blocks approval.
 - The reviewer instruction bundle must include `skills/aegis_master_reviewer/SKILL.md`.
 - The response must validate against `aegis.reviewer_output.master_reviewer.v1`.
-- The reviewer returns only factual conclusions, finding categories, findings, and its own output descriptors.
+- The reviewer returns only factual conclusions, categorized findings, and its own output descriptors. The Coordinator derives the category set.
 
 ## Persistence
 

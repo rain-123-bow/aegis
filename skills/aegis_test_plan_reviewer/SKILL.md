@@ -80,7 +80,6 @@ description: Review a frozen test plan against frozen requirements, implementati
 artifact_path
 reasoning_ledger_context_pack
 review_conclusion
-finding_categories
 findings
 review_output_artifacts
 reviewed_plan_sha256
@@ -90,6 +89,8 @@ warning_count
 semantic_issues
 prior_issue_assessments
 ```
+
+协调器从 `findings[*].category` 确定性派生 `finding_categories`；机器输出不得返回该冗余字段。
 
 `review_output_artifacts` 必须且只能描述控制输入指定的审核报告，标识为 `test-plan-review`。
 

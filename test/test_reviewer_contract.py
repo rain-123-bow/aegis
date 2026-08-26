@@ -83,6 +83,18 @@ class ReviewerContractTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, encoded)
 
+    def test_reviewer_schema_declares_collection_uniqueness(self) -> None:
+        schema = reviewer_output_schema(TEST_RESULT_REVIEWER)
+        properties = schema["properties"]
+
+        self.assertIs(properties["finding_categories"]["uniqueItems"], True)
+        self.assertIs(
+            properties["findings"]["items"]["properties"]["evidence_ids"][
+                "uniqueItems"
+            ],
+            True,
+        )
+
     def test_reviewer_cannot_return_a_routing_instruction(self) -> None:
         payload = _payload(conclusion="FAIL", categories=["TEST_PLAN_DEFECT"])
         payload["disposition"] = "RETURN_TO_A"

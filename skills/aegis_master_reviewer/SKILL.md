@@ -35,13 +35,12 @@ Return exactly these semantic fields plus the control-envelope fields required b
 ```json
 {
   "review_conclusion": "PASS | FAIL | UNDETERMINED",
-  "finding_categories": [],
   "findings": [],
   "review_output_artifacts": []
 }
 ```
 
-Allowed `finding_categories` values:
+Allowed `finding.category` values:
 
 - `REQUIREMENT_DEFECT`
 - `IMPLEMENTATION_PLAN_DEFECT`
@@ -61,7 +60,7 @@ Each finding contains exactly:
 }
 ```
 
-`PASS` requires empty categories and findings. `FAIL` and `UNDETERMINED` require at least one categorized finding. Declared categories must equal the categories used by findings.
+`PASS` requires empty findings. `FAIL` and `UNDETERMINED` require at least one categorized finding. The Coordinator deterministically derives `finding_categories` from the categories used by findings; do not return that redundant field.
 
 `review_output_artifacts` contains only the report created by this task, with exact `artifact_id`, absolute `path`, byte `size`, and lowercase `sha256` computed after the final write.
 

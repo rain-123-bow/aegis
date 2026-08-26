@@ -85,6 +85,7 @@ from reviewer_contract import (
     TEST_PLAN_REVIEWER as REVIEW_CONTRACT_TEST_PLAN_REVIEWER,
     TEST_RESULT_REVIEWER as REVIEW_CONTRACT_TEST_RESULT_REVIEWER,
     ReviewContractError,
+    complete_reviewer_model_output,
     coordinator_review_stage,
     validate_reviewer_output,
 )
@@ -186,7 +187,8 @@ def _validated_execution_response(
     reviewer_role = EXECUTION_REVIEWER_CONTRACT_ROLES.get(node)
     if reviewer_role is not None:
         try:
-            validated = validate_reviewer_output(reviewer_role, payload)
+            completed = complete_reviewer_model_output(payload)
+            validated = validate_reviewer_output(reviewer_role, completed)
         except ReviewContractError as error:
             raise RuntimeStateError(
                 f"{node} returned an invalid reviewer result: {error}"
@@ -2673,10 +2675,11 @@ class RuntimeCoordinator:
             "instructions": (
                 "Review only plan_path at reviewed_plan_sha256. Write the complete "
                 "review to review_report_path. Return reviewed_plan_sha256, score, "
-                "error_count, warning_count, review_conclusion, finding_categories, "
-                "findings, semantic_issues, review_output_artifacts, and one "
+                "error_count, warning_count, review_conclusion, findings, "
+                "semantic_issues, review_output_artifacts, and one "
                 "evidence-backed prior_issue_assessment for every prior semantic "
-                "issue. Do not modify any reviewed material."
+                "issue. The Coordinator derives finding categories from findings. "
+                "Do not modify any reviewed material."
             ),
             "skip_turn": status in {"rejected", "approved"},
             "accepted": status == "approved",
