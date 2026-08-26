@@ -368,6 +368,20 @@ class ReasoningLedgerIntegrationTests(unittest.TestCase):
                     (self.project_id, "fact.immutable"),
                 )
 
+    def test_forbidden_authority_key_scan_handles_nested_json_values(self) -> None:
+        with self.ledger.connect() as conn:
+            allowed = conn.execute(
+                f"SELECT {TEST_SCHEMA}.contains_forbidden_authority_key(%s::jsonb)",
+                (json.dumps({"allowed": [True, 1, None, {"key": "value"}]}),),
+            ).fetchone()
+            forbidden = conn.execute(
+                f"SELECT {TEST_SCHEMA}.contains_forbidden_authority_key(%s::jsonb)",
+                (json.dumps({"nested": [{"required_permissions": []}]}),),
+            ).fetchone()
+
+        self.assertFalse(allowed["contains_forbidden_authority_key"])
+        self.assertTrue(forbidden["contains_forbidden_authority_key"])
+
 
 class ReasoningLedgerProjectFileTests(unittest.TestCase):
     def test_bootstrap_creates_project_owned_v3_files(self) -> None:
@@ -475,6 +489,17 @@ class ReasoningLedgerProjectFileTests(unittest.TestCase):
     def test_build_init_sql_rejects_unsafe_schema_name(self) -> None:
         with self.assertRaises(ValueError):
             build_init_sql(schema="ledger;drop")
+
+    def test_build_init_sql_parenthesizes_case_expression_in_plpgsql_condition(
+        self,
+    ) -> None:
+        migration_sql = build_init_sql(schema="reasoning_ledger")
+
+        self.assertIn(
+            "linked_event.event_type <> (CASE NEW.validity",
+            migration_sql,
+        )
+        self.assertIn("        END) THEN", migration_sql)
 
 
 class MainCliSmokeTests(unittest.TestCase):

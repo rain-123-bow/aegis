@@ -2324,25 +2324,25 @@ class ReasoningLedger:
                     SELECT 1 FROM {evidence}
                     WHERE jsonb_path_exists(
                       scope,
-                      '$.**.keyvalue() ? (@.key == "required_permissions")'
+                      '$.** ? (@.type() == "object").keyvalue() ? (@.key == "required_permissions")'
                     )
                   )
                   OR EXISTS(
                     SELECT 1 FROM {revision}
                     WHERE jsonb_path_exists(
                             scope,
-                            '$.**.keyvalue() ? (@.key == "required_permissions")'
+                            '$.** ? (@.type() == "object").keyvalue() ? (@.key == "required_permissions")'
                           )
                        OR jsonb_path_exists(
                             structured_conditions,
-                            '$.**.keyvalue() ? (@.key == "required_permissions")'
+                            '$.** ? (@.type() == "object").keyvalue() ? (@.key == "required_permissions")'
                           )
                   )
                   OR EXISTS(
                     SELECT 1 FROM {relation}
                     WHERE jsonb_path_exists(
                       applicable_conditions,
-                      '$.**.keyvalue() ? (@.key == "required_permissions")'
+                      '$.** ? (@.type() == "object").keyvalue() ? (@.key == "required_permissions")'
                     )
                   ) AS present
                 """
@@ -2789,15 +2789,16 @@ class ReasoningLedger:
         ).fetchall()
         constraints = conn.execute(
             """
-            SELECT relation.relname AS table_name, constraint.contype,
-                   constraint.condeferrable, constraint.condeferred,
-                   constraint.convalidated,
-                   pg_catalog.pg_get_constraintdef(constraint.oid, true) AS definition
-            FROM pg_catalog.pg_constraint constraint
-            JOIN pg_catalog.pg_class relation ON relation.oid = constraint.conrelid
+            SELECT relation.relname AS table_name, catalog_constraint.contype,
+                   catalog_constraint.condeferrable, catalog_constraint.condeferred,
+                   catalog_constraint.convalidated,
+                   pg_catalog.pg_get_constraintdef(catalog_constraint.oid, true) AS definition
+            FROM pg_catalog.pg_constraint catalog_constraint
+            JOIN pg_catalog.pg_class relation ON relation.oid = catalog_constraint.conrelid
             JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
             WHERE namespace.nspname = %s
-            ORDER BY relation.relname, constraint.contype, constraint.conname
+            ORDER BY relation.relname, catalog_constraint.contype,
+                     catalog_constraint.conname
             """,
             (target_schema,),
         ).fetchall()
@@ -3426,11 +3427,11 @@ class ReasoningLedger:
         constraints = conn.execute(
             """
             SELECT relation.relname AS table_name,
-                   constraint.contype AS constraint_type,
-                   pg_catalog.pg_get_constraintdef(constraint.oid, true) AS definition,
-                   constraint.convalidated AS validated
-            FROM pg_catalog.pg_constraint constraint
-            JOIN pg_catalog.pg_class relation ON relation.oid = constraint.conrelid
+                   catalog_constraint.contype AS constraint_type,
+                   pg_catalog.pg_get_constraintdef(catalog_constraint.oid, true) AS definition,
+                   catalog_constraint.convalidated AS validated
+            FROM pg_catalog.pg_constraint catalog_constraint
+            JOIN pg_catalog.pg_class relation ON relation.oid = catalog_constraint.conrelid
             JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
             WHERE namespace.nspname = %s
             """,
@@ -3535,7 +3536,7 @@ class ReasoningLedger:
             if row["constraint_type"] == "c"
         )
         for required in (
-            "required_permissions",
+            "contains_forbidden_authority_key",
             "SUPERSEDES",
             "INDEX_STORAGE_REINDEXED",
             "content_sha256",

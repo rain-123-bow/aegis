@@ -211,7 +211,7 @@ PARALLEL SAFE
 AS $$
   SELECT pg_catalog.jsonb_path_exists(
     value,
-    '$.**.keyvalue() ? (@.key == "required_permissions")'
+    '$.** ? (@.type() == "object").keyvalue() ? (@.key == "required_permissions")'
   )
 $$;
 """.strip()
@@ -555,12 +555,12 @@ BEGIN
         AND linked_event.event_type <> 'REVISION_SUPERSEDED' THEN
     RAISE EXCEPTION 'reasoning-ledger revision transition event type is invalid';
   ELSIF TG_OP = 'UPDATE' AND NEW.revision = OLD.revision
-        AND linked_event.event_type <> CASE NEW.validity
+        AND linked_event.event_type <> (CASE NEW.validity
           WHEN 'ACTIVE' THEN 'REVISION_REVALIDATED'
           WHEN 'STALE' THEN 'REVISION_MARKED_STALE'
           WHEN 'INVALID' THEN 'REVISION_INVALIDATED'
           ELSE ''
-        END THEN
+        END) THEN
     RAISE EXCEPTION 'reasoning-ledger validity projection event type is invalid';
   END IF;
   revision_key := NEW.statement_id || '@' || NEW.revision::text;

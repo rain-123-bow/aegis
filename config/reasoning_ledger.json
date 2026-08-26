@@ -7,7 +7,7 @@
     "artifact_root": ".aegis/reasoning_ledger/artifacts",
     "embedding_dimensions": 1536,
     "authority_schema_version": 3,
-    "project_anchor_sha256": null,
+    "project_anchor_sha256": "87d9a3f2d8f302f86fb2d94957038c44296b391fa668ab8ac10bb70d41d33acf",
     "approximate_vector_index": false,
     "minimum_postgresql_major": 16,
     "minimum_pgvector_version": "0.8.0"
