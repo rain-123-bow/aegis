@@ -18,6 +18,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from runtime_identity import (
     RuntimeIdentityError,
     _installed_distribution_versions,
+    _stable_file_identity,
     _verify_tracerelay_source_identity,
     git_runtime_manifest,
     hold_verified_git_runtime,
@@ -25,6 +26,25 @@ from runtime_identity import (
 
 
 class ProductionRuntimeIdentityTests(unittest.TestCase):
+    def test_runtime_file_identity_ignores_windows_change_time_metadata(self) -> None:
+        first = SimpleNamespace(
+            device=1,
+            inode=2,
+            size=3,
+            modified_ns=4,
+            changed_ns=5,
+        )
+        second = SimpleNamespace(
+            device=1,
+            inode=2,
+            size=3,
+            modified_ns=4,
+            changed_ns=6,
+        )
+
+        self.assertEqual(_stable_file_identity(first), _stable_file_identity(second))
+        self.assertNotIn("changed_ns", _stable_file_identity(first))
+
     def test_installed_distribution_versions_survive_json_round_trip(self) -> None:
         distributions = (
             SimpleNamespace(metadata={"Name": "Zulu"}, name="zulu", version="2"),

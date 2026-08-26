@@ -301,6 +301,22 @@ def _installed_distribution_versions() -> list[list[str]]:
     ]
 
 
+def _stable_file_identity(identity: Any) -> dict[str, int]:
+    """Return identity fields that remain stable while Windows executes a file.
+
+    NTFS ChangeTime can advance when installed Git and Codex executables run even
+    though their file object, content, size, and modification time are unchanged.
+    Content authority remains bound by the independently verified SHA-256.
+    """
+
+    return {
+        "device": int(identity.device),
+        "inode": int(identity.inode),
+        "size": int(identity.size),
+        "modified_ns": int(identity.modified_ns),
+    }
+
+
 def capture_production_runtime_identity(
     project_root: str | Path,
     *,
@@ -358,13 +374,7 @@ def capture_production_runtime_identity(
             "source": source,
             "size": len(content),
             "sha256": sha256,
-            "file_identity": {
-                "device": identity.device,
-                "inode": identity.inode,
-                "size": identity.size,
-                "modified_ns": identity.modified_ns,
-                "changed_ns": identity.changed_ns,
-            },
+            "file_identity": _stable_file_identity(identity),
         }
 
     add(sys.executable, "python_executable")

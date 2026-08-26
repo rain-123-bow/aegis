@@ -631,6 +631,7 @@ def _process_identity(pid: int) -> str:
         from ctypes import wintypes
 
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        SYNCHRONIZE = 0x00100000
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         kernel32.OpenProcess.restype = wintypes.HANDLE
@@ -642,8 +643,14 @@ def _process_identity(pid: int) -> str:
             ctypes.POINTER(wintypes.FILETIME),
         ]
         kernel32.GetProcessTimes.restype = wintypes.BOOL
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        handle = kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+            False,
+            pid,
+        )
         if not handle:
             import ctypes
 
@@ -666,6 +673,11 @@ def _process_identity(pid: int) -> str:
                 ctypes.byref(user),
             ):
                 raise RegistryError(f"cannot read coordinator process identity {pid}")
+            wait_result = int(kernel32.WaitForSingleObject(handle, 0))
+            if wait_result == 0:  # WAIT_OBJECT_0
+                raise _ProcessNotFound(f"coordinator process {pid} is not running")
+            if wait_result != 258:  # WAIT_TIMEOUT
+                raise RegistryError(f"cannot read coordinator process state {pid}")
             value = (int(created.dwHighDateTime) << 32) | int(created.dwLowDateTime)
             return f"windows-filetime:{value}"
         finally:

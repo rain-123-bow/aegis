@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 import threading
@@ -16,6 +17,21 @@ from agent_registry import DynamicAgentRegistry, RegistryError
 
 
 class DynamicAgentRegistryTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "win32", "Windows process semantics only")
+    def test_exited_windows_owner_is_not_alive_while_handle_remains_open(self) -> None:
+        with subprocess.Popen(
+            [sys.executable, "-c", "raise SystemExit(259)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ) as process:
+            identity = agent_registry._process_identity(process.pid)
+            self.assertEqual(process.wait(timeout=10), 259)
+
+            self.assertFalse(
+                agent_registry._process_owner_is_alive(process.pid, identity)
+            )
+
     def test_project_lease_rejects_parallel_instance_even_for_same_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             runtime_root = Path(directory)
