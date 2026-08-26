@@ -34,7 +34,20 @@ from aegis_test_support import (  # noqa: E402
     write_test_runtime_scope_policy,
 )
 from engineering_input_manifest import validate_engineering_input_manifest  # noqa: E402
+from main import (  # noqa: E402
+    complete_reviewer_model_output,
+    execution_output_schema,
+    execution_reviewer_output_schema,
+    planning_review_output_schema,
+    require_control_envelope_unchanged,
+    validate_reviewer_envelope,
+)
 from project_seal_store import record_project_seal  # noqa: E402
+from reviewer_contract import (  # noqa: E402
+    FINAL_REVIEWER as REVIEW_CONTRACT_FINAL_REVIEWER,
+    TEST_RESULT_REVIEWER as REVIEW_CONTRACT_TEST_RESULT_REVIEWER,
+    coordinator_review_stage,
+)
 from tracerelay_client import (  # noqa: E402
     _windows_job_name,
     _windows_process_creation_time_100ns,
@@ -57,115 +70,14 @@ NODE_SCHEMA = {
     },
 }
 
-REVIEW_NODE_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [
-        "artifact_path",
-        "reasoning_ledger_context_pack",
-        "status",
-        "reviewed_plan_sha256",
-        "score",
-        "error_count",
-        "warning_count",
-        "verdict",
-        "semantic_issues",
-        "prior_issue_assessments",
-    ],
-    "properties": {
-        **NODE_SCHEMA["properties"],
-        "reviewed_plan_sha256": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$",
-        },
-        "score": {"type": "integer", "minimum": 0, "maximum": 100},
-        "error_count": {"type": "integer", "minimum": 0},
-        "warning_count": {"type": "integer", "minimum": 0},
-        "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
-        "semantic_issues": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": [
-                    "semantic_issue_id",
-                    "premises",
-                    "inference",
-                    "conclusion",
-                    "missing_evidence",
-                    "alternative_explanations",
-                    "closure_conditions",
-                    "predecessor_issue_ids",
-                ],
-                "properties": {
-                    "semantic_issue_id": {"type": "string", "minLength": 1},
-                    "premises": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                    "inference": {"type": "string", "minLength": 1},
-                    "conclusion": {"type": "string", "minLength": 1},
-                    "missing_evidence": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                    "alternative_explanations": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                    "closure_conditions": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                    "predecessor_issue_ids": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                },
-            },
-        },
-        "prior_issue_assessments": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": [
-                    "prior_semantic_issue_id",
-                    "disposition",
-                    "current_semantic_issue_ids",
-                    "rationale",
-                    "evidence",
-                ],
-                "properties": {
-                    "prior_semantic_issue_id": {
-                        "type": "string",
-                        "minLength": 1,
-                    },
-                    "disposition": {
-                        "type": "string",
-                        "enum": [
-                            "RESOLVED",
-                            "REPEATED_UNRESOLVED",
-                            "SUPERSEDED",
-                        ],
-                    },
-                    "current_semantic_issue_ids": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                    "rationale": {"type": "string", "minLength": 1},
-                    "evidence": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                },
-            },
-        },
-    },
-}
+REVIEW_NODE_SCHEMA = planning_review_output_schema()
+
+CONTROL_PLANE_REPORT_SCHEMA = "aegis.app_server_control_acceptance.v7"
+
+AEGIS_SOURCE_BINDINGS = tuple(
+    path.relative_to(PROJECT_ROOT).as_posix()
+    for path in sorted((PROJECT_ROOT / "src").rglob("*.py"))
+)
 
 TRACERELAY_SOURCE_BINDINGS = (
     "third_party/TraceRelay/src/tracerelay/cli.py",
@@ -336,9 +248,25 @@ def _write_execution_crash_control_artifacts(
     plan_bytes = plan_path.read_bytes()
     review_bytes = review_path.read_bytes()
     plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
+    review_sha256 = hashlib.sha256(review_bytes).hexdigest()
     approved_path, handoff_path = coordinator._expected_planning_handoff_paths()
     approved_path.write_bytes(plan_bytes)
     now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    review_result = {
+        "artifact_path": str(coordinator.artifact_path),
+        "reasoning_ledger_context_pack": str(context_path),
+        "review_conclusion": "PASS",
+        "finding_categories": [],
+        "findings": [],
+        "review_output_artifacts": [
+            {
+                "artifact_id": "test-plan-review",
+                "path": str(review_path),
+                "size": len(review_bytes),
+                "sha256": review_sha256,
+            }
+        ],
+    }
     planning_round: dict[str, object] = {
         "round_id": round_id,
         "status": "approved",
@@ -349,12 +277,16 @@ def _write_execution_crash_control_artifacts(
         "plan_path": str(plan_path),
         "plan_sha256": plan_sha256,
         "review_report_path": str(review_path),
-        "review_report_sha256": hashlib.sha256(review_bytes).hexdigest(),
+        "review_report_sha256": review_sha256,
         "reviewed_plan_sha256": plan_sha256,
         "score": 100,
         "error_count": 0,
         "warning_count": 0,
         "verdict": "PASS",
+        "review_conclusion": "PASS",
+        "finding_categories": [],
+        "findings": [],
+        "review_result": review_result,
         "semantic_issues": [],
         "prior_issue_assessments": [],
         "repeated_unresolved_issue_ids": [],
@@ -467,6 +399,41 @@ def _source_sha256(*relative_paths: str) -> dict[str, str]:
     }
 
 
+class AcceptanceReportSourceBindingContractTests(unittest.TestCase):
+    def test_control_plane_report_schema_is_v7(self) -> None:
+        self.assertEqual(
+            CONTROL_PLANE_REPORT_SCHEMA,
+            "aegis.app_server_control_acceptance.v7",
+        )
+
+    def test_reports_bind_every_aegis_python_source(self) -> None:
+        expected = tuple(
+            path.relative_to(PROJECT_ROOT).as_posix()
+            for path in sorted((PROJECT_ROOT / "src").rglob("*.py"))
+        )
+
+        self.assertEqual(AEGIS_SOURCE_BINDINGS, expected)
+
+    def test_control_plane_report_binds_current_codex_cli_bytes(self) -> None:
+        captured = {
+            "codex_cli_path": r"C:\\tools\\codex.cmd",
+            "codex_cli_version": "codex-cli 0.test",
+            "codex_cli_sha256": "ab" * 32,
+        }
+        state = {
+            "codex_cli_path": captured["codex_cli_path"],
+            "codex_cli_version": captured["codex_cli_version"],
+        }
+
+        with patch(
+            f"{__name__}._validate_current_codex_cli_identity",
+            return_value=captured,
+        ):
+            identity = _control_plane_codex_identity(state, captured)
+
+        self.assertEqual(identity, captured)
+
+
 def _capture_codex_cli_identity(command: str | Path) -> dict[str, str]:
     path = Path(command).resolve(strict=True)
     if not path.is_file():
@@ -506,6 +473,19 @@ def _validate_current_codex_cli_identity(
     current = _capture_codex_cli_identity(path_text)
     if current != identity:
         raise AssertionError("Codex CLI identity changed during acceptance")
+    return current
+
+
+def _control_plane_codex_identity(
+    state: dict[str, object],
+    captured_identity: dict[str, object],
+) -> dict[str, str]:
+    current = _validate_current_codex_cli_identity(captured_identity)
+    if (
+        state.get("codex_cli_path") != current["codex_cli_path"]
+        or state.get("codex_cli_version") != current["codex_cli_version"]
+    ):
+        raise AssertionError("run state used a different Codex CLI identity")
     return current
 
 
@@ -932,10 +912,7 @@ def _publish_registration_crash_report(
         ).hexdigest(),
         **codex_identity,
         "source_sha256": _source_sha256(
-            "src/codex_app_server_client.py",
-            "src/tracerelay_client.py",
-            "src/windows_job_runner.py",
-            "src/aegis_runtime.py",
+            *AEGIS_SOURCE_BINDINGS,
             "test/test_traced_app_server_real_integration.py",
             *TRACERELAY_SOURCE_BINDINGS,
         ),
@@ -1499,6 +1476,9 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
         initial_status = json.loads(initial_raw.decode("utf-8", errors="replace"))
         if initial_status.get("state") != "NOT_RUNNING":
             self.skipTest("TraceRelay is already running; ownership is ambiguous")
+        codex_identity = _capture_codex_cli_identity(
+            aegis_runtime.default_app_server_command()[0]
+        )
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
         short_id = uuid4().hex[:12]
         run_id = f"p-{short_id}"
@@ -1688,7 +1668,9 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                         "requirement. Apply the coordinator threshold without leniency. Write the "
                         "complete review Markdown to review_report_path. Return the exact reviewed "
                         "hash and your actual score, error_count, warning_count, and PASS/FAIL "
-                        "verdict; model status does not control routing.\n"
+                        "verdict; model status does not control routing. Set artifact_path "
+                        f"exactly to {artifact_path} and reasoning_ledger_context_pack exactly "
+                        f"to {review_control['context_pack_path']}.\n"
                         f"CONTROL={json.dumps(review_control, ensure_ascii=False)}"
                     ),
                     output_schema=REVIEW_NODE_SCHEMA,
@@ -1697,7 +1679,9 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                     ],
                     job_id=str(review_control["job_id"]),
                 )
-                reviewer_output = json.loads(reviewer_raw)
+                reviewer_output = complete_reviewer_model_output(
+                    json.loads(reviewer_raw)
+                )
                 reviewer_outputs.append(reviewer_output)
                 accepted = coordinator.record_planning_review(
                     str(review_control["round_id"]), reviewer_output
@@ -1709,9 +1693,10 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
 
             execution_instructions = {
                 "TEST_EXECUTOR": (
-                    "Persistent synthetic test executor. Use tools only for the requested "
-                    "synthetic command and evidence files. Do not use Aegis-specific skills. "
-                    "Return only schema-valid JSON after evidence is durable."
+                    "Persistent synthetic test executor. Inspect only the Coordinator-provided "
+                    "test execution request and any explicitly requested continuity file. Do "
+                    "not execute tests or create Coordinator-owned evidence. Do not use "
+                    "Aegis-specific skills. Return only schema-valid JSON."
                 ),
                 "TEST_RESULT_REVIEWER": (
                     "Independent synthetic evidence reviewer. Read only the requested evidence "
@@ -1733,7 +1718,6 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 role: str,
                 prompt: str,
                 node_state: dict[str, object],
-                expected_output: dict[str, object] | None = None,
             ) -> dict[str, object]:
                 def operation(input_state: dict[str, object]) -> dict[str, object]:
                     if node == "C":
@@ -1747,73 +1731,138 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                             workflow_run_id=coordinator.run_id,
                             attempt_id=str(attempt["attempt_id"]),
                         )
+                        control = coordinator.test_execution_control()
+                    else:
+                        control = coordinator.execution_node_control()
+                    node_message = {
+                        "artifact_path": input_state["artifact_path"],
+                        "reasoning_ledger_context_pack": input_state[
+                            "reasoning_ledger_context_pack"
+                        ],
+                    }
+                    turn_prompt = (
+                        prompt
+                        + "\nNODE_MESSAGE="
+                        + json.dumps(node_message, ensure_ascii=False)
+                        + "\nCONTROL="
+                        + json.dumps(control, ensure_ascii=False)
+                    )
                     raw = coordinator.run_execution_agent(
                         role,
-                        prompt,
-                        output_schema=NODE_SCHEMA,
+                        turn_prompt,
+                        output_schema=(
+                            execution_reviewer_output_schema(role)
+                            if node in {"D", "F"}
+                            else execution_output_schema()
+                        ),
                         developer_instructions=execution_instructions[role],
                         timeout_seconds=1_800,
                     )
                     output = json.loads(raw)
-                    self.assertEqual(output, expected_output or expected)
-                    return {**input_state, **output, "current_node": node}
+                    if node in {"D", "F"}:
+                        output = complete_reviewer_model_output(output)
+                        validated = validate_reviewer_envelope(
+                            role, input_state, output
+                        )
+                        contract_role = (
+                            REVIEW_CONTRACT_TEST_RESULT_REVIEWER
+                            if node == "D"
+                            else REVIEW_CONTRACT_FINAL_REVIEWER
+                        )
+                        review_stage = coordinator_review_stage(
+                            contract_role, validated
+                        )
+                        node_output = {
+                            **validated,
+                            "coordinator_review_stage": review_stage,
+                            "status": (
+                                review_stage == "TEST_REPORTING"
+                                if node == "D"
+                                else validated["review_conclusion"] == "PASS"
+                            ),
+                        }
+                    else:
+                        require_control_envelope_unchanged(
+                            node, input_state, output
+                        )
+                        self.assertIs(output["status"], True)
+                        node_output = output
+                    return {**input_state, **node_output, "current_node": node}
 
                 return coordinator.execute_node(node, operation, node_state)
 
+            execution_state = {
+                **expected,
+                "reasoning_ledger_context_pack": str(
+                    review_control["context_pack_path"]
+                ),
+            }
             first_c = execute_turn(
                 "C",
                 "TEST_EXECUTOR",
                 (
-                    'Run this exact command from project_root: `python -B -c "from '
-                    "src.acceptance_target import ACCEPTANCE_TARGET; print(ACCEPTANCE_TARGET); "
-                    'raise SystemExit(0 if ACCEPTANCE_TARGET is True else 1)"`. Write the '
-                    "captured stdout and exit code to artifact_path/EXECUTION_EVIDENCE.txt. "
-                    "Remember marker C-PERSISTENT-THREAD. Then return exactly this JSON object: "
-                    f"{expected_json}"
+                    "Read CONTROL.request_path without changing it. Do not execute its tests; "
+                    "the Coordinator executes them after this turn. Return NODE_MESSAGE fields, "
+                    "status=true, and output_artifacts containing exactly one descriptor with "
+                    "artifact_id=test-execution-request, the exact absolute CONTROL.request_path, "
+                    "and its actual positive byte size and lowercase SHA-256. Remember marker "
+                    "C-PERSISTENT-THREAD for your next turn."
                 ),
-                expected,
+                execution_state,
             )
             first_d = execute_turn(
                 "D",
                 "TEST_RESULT_REVIEWER",
                 (
-                    "Read artifact_path/EXECUTION_EVIDENCE.txt. Accept only when it records "
-                    "stdout True and exit code 0. For this first review round, deliberately "
-                    "request one retest by returning exactly this JSON object: "
-                    f"{json.dumps({**expected, 'status': False}, ensure_ascii=False, separators=(',', ':'))}"
+                    "Audit every descriptor in CONTROL.test_evidence_manifests and the files "
+                    "they bind. Write artifact_path/TEST_RESULT_REVIEW.md. For this first review "
+                    "round deliberately request one retest: return review_conclusion=FAIL, "
+                    "one EXECUTION_INCOMPLETE evidence-backed finding, "
+                    "and review_output_artifacts containing exactly one test-result-review "
+                    "descriptor for TEST_RESULT_REVIEW.md with its actual size and SHA-256. "
+                    "The Coordinator derives finding categories. Preserve both NODE_MESSAGE "
+                    "paths exactly."
                 ),
                 first_c,
-                {**expected, "status": False},
             )
+            self.assertIs(first_d["status"], False)
             second_c = execute_turn(
                 "C",
                 "TEST_EXECUTOR",
                 (
-                    "This is a second turn on your persistent role. Write the marker you were "
-                    "told to remember to artifact_path/THREAD_CONTINUITY.txt. Return exactly "
-                    f"this JSON object: {expected_json}"
+                    "This is a second turn on your persistent role. Write only the marker you "
+                    "were told to remember to artifact_path/THREAD_CONTINUITY.txt. Read the new "
+                    "CONTROL.request_path without changing it and do not execute its tests. "
+                    "Return NODE_MESSAGE fields, status=true, and output_artifacts containing "
+                    "exactly one test-execution-request descriptor for CONTROL.request_path "
+                    "with its actual positive byte size and lowercase SHA-256."
                 ),
-                {**first_d, "retry": 2},
+                first_d,
             )
             second_d = execute_turn(
                 "D",
                 "TEST_RESULT_REVIEWER",
                 (
                     "This is the second review turn on your persistent role. Re-read "
-                    "artifact_path/EXECUTION_EVIDENCE.txt and accept only when it records "
-                    "stdout True and exit code 0. Return exactly this JSON object when valid: "
-                    f"{expected_json}"
+                    "every manifest in CONTROL.test_evidence_manifests and its bound evidence. "
+                    "Accept only when the authoritative test records stdout True and exit code "
+                    "0. Overwrite artifact_path/TEST_RESULT_REVIEW.md with the complete accepted "
+                    "review. Return review_conclusion=PASS, empty findings, "
+                    "and exactly one test-result-review descriptor for the report with actual "
+                    "size and SHA-256. Preserve both NODE_MESSAGE paths exactly."
                 ),
                 second_c,
             )
+            self.assertIs(second_d["status"], True)
             reported = execute_turn(
                 "E",
                 "TEST_REPORT_WRITER",
                 (
-                    "Read artifact_path/EXECUTION_EVIDENCE.txt and write a concise final test "
-                    "report to artifact_path/TEST_REPORT.md. It must state stdout True, exit "
-                    "code 0, and PASS. Return exactly this JSON object after the report is "
-                    f"durable: {expected_json}"
+                    "Read every descriptor in CONTROL.test_evidence_manifests and its bound "
+                    "evidence, then write artifact_path/TEST_REPORT.md. It must state stdout "
+                    "True, exit code 0, and PASS. Return NODE_MESSAGE fields, status=true, and "
+                    "output_artifacts containing exactly one test-report descriptor for "
+                    "TEST_REPORT.md with its actual positive byte size and lowercase SHA-256."
                 ),
                 second_d,
             )
@@ -1826,8 +1875,8 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 (
                     "Independently audit project_root/src/acceptance_target.py, the reasoning "
                     "ledger context pack, artifact_path/TEST_REPORT.md, "
-                    "artifact_path/EXECUTION_EVIDENCE.txt, and the Coordinator-owned test "
-                    "evidence manifests. Accept only when code, reasoning facts, test evidence, "
+                    "and every Coordinator-owned test evidence manifest in CONTROL. Accept "
+                    "only when code, reasoning facts, test evidence, "
                     "and report consistently bind stdout True and exit code 0 to PASS. Write "
                     "artifact_path/FINAL_REVIEW.md with verdict PASS, explicit reasons, and the "
                     f"exact report SHA-256 {report_sha256}. Also write "
@@ -1841,9 +1890,11 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                     "into evidence_index. Then add exact descriptors with evidence IDs "
                     "final-review-input-manifest and final-review for the input manifest and "
                     "FINAL_REVIEW.md. Compute those two descriptors only after both files are "
-                    "durable. Omitting any Coordinator-required descriptor is a failure. Return exactly "
-                    "this JSON object when both final files are durable: "
-                    f"{expected_json}"
+                    "durable. Omitting any Coordinator-required descriptor is a failure. Return "
+                    "review_conclusion=PASS, empty findings, and "
+                    "review_output_artifacts containing exactly final-review and "
+                    "final-review-verdict descriptors for those two output files with actual "
+                    "sizes and SHA-256 values. Preserve both NODE_MESSAGE paths exactly."
                 ),
                 reported,
             )
@@ -2007,15 +2058,14 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             self.assertTrue((artifact_path / "FINAL_REVIEW.md").read_bytes().strip())
 
             report = {
-                "schema": "aegis.app_server_control_acceptance.v6",
+                "schema": CONTROL_PLANE_REPORT_SCHEMA,
                 "verdict": "PASS",
                 "created_at_utc": stamp,
                 "run_id": run_id,
                 "runtime_root": str(runtime_root),
                 "artifact_path": str(artifact_path),
                 "run_state_path": str(coordinator.run_state_path),
-                "codex_cli_path": state["codex_cli_path"],
-                "codex_cli_version": state["codex_cli_version"],
+                **_control_plane_codex_identity(state, codex_identity),
                 "planning_thread_ids": sorted(planning_threads),
                 "planning_turn_ids": sorted(planning_turns),
                 "execution_agents": state["execution_agents"],
@@ -2032,14 +2082,7 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                     Path(tracerelay_command[0]).read_bytes()
                 ).hexdigest(),
                 "source_sha256": _source_sha256(
-                    "src/codex_app_server_client.py",
-                    "src/tracerelay_client.py",
-                    "src/windows_job_runner.py",
-                    "src/aegis_runtime.py",
-                    "src/final_review_verdict.py",
-                    "src/runtime_behavior_scope.py",
-                    "src/runtime_identity.py",
-                    "src/main.py",
+                    *AEGIS_SOURCE_BINDINGS,
                     "test/test_traced_app_server_real_integration.py",
                     *TRACERELAY_SOURCE_BINDINGS,
                 ),
@@ -2138,7 +2181,10 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             encoding="utf-8",
         )
         worker_pycache = _shared_worker_pycache(root / "worker-pycache")
-        owned = False
+        # Initial status proved that no pre-existing runtime exists. Claim cleanup
+        # responsibility before the crash worker starts so pre-checkpoint failures
+        # cannot leak a relay and suppress the remaining acceptance cases.
+        owned = True
         coordinator: RuntimeCoordinator | None = None
         try:
             crashed = subprocess.run(
@@ -2166,7 +2212,6 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 91,
                 msg=f"stdout={crashed.stdout}\nstderr={crashed.stderr}",
             )
-            owned = True
             state_path = artifact_path / "runs" / run_id / "RUN_STATE.json"
             interrupted = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(
@@ -2295,11 +2340,7 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 ).hexdigest(),
                 **codex_identity,
                 "source_sha256": _source_sha256(
-                    "src/codex_app_server_client.py",
-                    "src/tracerelay_client.py",
-                    "src/windows_job_runner.py",
-                    "src/aegis_runtime.py",
-                    "src/final_review_verdict.py",
+                    *AEGIS_SOURCE_BINDINGS,
                     "test/test_traced_app_server_real_integration.py",
                     *TRACERELAY_SOURCE_BINDINGS,
                 ),
