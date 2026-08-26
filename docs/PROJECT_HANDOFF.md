@@ -1,7 +1,7 @@
 # Aegis 项目接管与云端归档
 
 状态：现行接管入口
-归档日期：2026-08-20
+最后验证日期：2026-08-25
 适用分支：`agent/aegis-seal-core-integration`
 
 ## 1. 当前结论
@@ -11,10 +11,33 @@
 当前实现尚未达到生产就绪：
 
 - 最新推理库和审核隔离改动通过同模型、只读静态对抗审核；没有剩余 P1/P2。
-- 本轮按用户要求未运行测试，也未连接真实 PostgreSQL、pgvector、Codex App Server 或 TraceRelay。
-- `config/reasoning_ledger.json` 的 `project_anchor_sha256` 仍为 `null`；协调器必须失败关闭。
+- Windows 本地最终源码测试基线已运行：共 291 项，结果为 `OK`，其中 5 项按真实验收开关或当前账户符号链接权限跳过；`git diff --check` 和 Python `compileall` 通过。
+- PostgreSQL 16.15、pgvector 0.8.3 和推理账本 schema v3 已完成迁移、目录签名和独立探测。`config/reasoning_ledger.json` 已绑定当前数据库项目锚点。
+- 迁移实测修复了 PL/pgSQL `CASE` 表达式、保留字目录查询和递归 JSONPath 对标量报错三个问题；修复后的推理账本集成测试全部通过。
+- 固定 TraceRelay SDK 已安装到仓库外的 Python 3.13.14 运行时，安装字节与上游提交 `9775e26e6f0999a7047e0cff72e13c62da99c065` 的仓库快照一致。不调用模型的真实强制代理验收已通过，结束后无残留 TraceRelay 进程。
+- Codex CLI 0.149.1 已登录并具备 App Server 能力。绑定当前源码的真实控制面、硬崩溃恢复和注册崩溃恢复三组验收均已完成，最终报告全部为 PASS。
 - `docs/AEGIS_RUNTIME_SCOPE_PROPOSAL.md` 仍为 `PROPOSED`；没有新的结构化审核、用户确认、范围决定、项目封印和受保护远程见证时不得启动生产流程。
+- 当前 PostgreSQL 使用仅监听回环地址的开发认证配置；pgvector 来自兼容的社区 Windows 二进制。数据库持久启动、备份恢复、生产凭据和 pgvector 发布来源仍需形成受批准的生产方案。
+- AegisSealCore 在当前主机已通过执行和字节校验，但跨机器稳定发布仍需要受信任代码签名。
 - 测试数据、测试报告、运行状态和公司项目材料按用户要求不进入云端仓库。
+
+### 1.1 2026-08-25 验收检查点
+
+- 外部验收根目录：`C:\code\aegis_artifacts\as_pilot\7b03c6694844`。
+- run ID：`p-7b03c6694844`；run 状态为 `completed`，工程结论为 `PASS`，`delivery_eligible=true`。
+- 规划状态：`completed`；一轮规划审核即取得 `PASS`，分数为 100。
+- 执行状态：共 6 个 attempt，顺序为 C、D FAIL、C、D PASS、E、F PASS；第一轮 D 的 `EXECUTION_INCOMPLETE` 类别由协调器从 finding 确定性派生。
+- 证据状态：规划和六个执行 attempt 共 7 个 TraceRelay 会话，全部为 `VALID_COMPLETE`，应用验证也全部为 `VALID_COMPLETE`。
+- 最终报告：`C:\code\aegis_artifacts\as_pilot\7b03c6694844\ACCEPTANCE_REPORT.json`，schema 为 `aegis.app_server_control_acceptance.v7`。
+- 报告 SHA-256：`7b75fefa637932d926ab1156c1d140e03bae0b6122ba623a683b40c41435aae7`。
+- `RUN_STATE.json` SHA-256：`07cd5ef47a2da47a5c9dc08d287f28a21cd2323fc181cabb4d3c4a69a4354759`。
+- 报告绑定 41 个当前 Aegis Python 源文件；复核无摘要差异，Codex CLI 与 TraceRelay Python 摘要均匹配。
+- 硬崩溃验收根目录：`C:\code\aegis_artifacts\as_crash_recovery\99fd7ff50a08`。报告 schema 为 `aegis.execution_crash_cleanup_acceptance.v4`，结论为 `PASS`，报告 SHA-256 为 `16110752ce6abc711bb936d0ec5bd71565b60bc6b1f32087f28c0ef5084ceca0`。崩溃工作进程按注入约定返回 91；原运行最终为 `terminated`，终止原因是 `FREEZE_CONTINUITY_LOST`。
+- 注册崩溃验收根目录：`C:\code\aegis_artifacts\as_registration_crash\193647380a79`。报告 schema 为 `aegis.registration_crash_acceptance.v7`，结论为 `PASS`，报告 SHA-256 为 `7a5a182867e3b150cf8620b5da57e054f83a935d7db3f3f3cda94a77b816e4a7`。
+- 注册崩溃的两个注入点为 `after_register_before_popen` 和 `after_popen_before_identity_checkpoint`；工作进程均按约定返回 91，恢复后运行均为 `terminated`，终止原因均为 `FREEZE_CONTINUITY_LOST`。两案 TraceRelay 传输记录均为 `VALID_COMPLETE`；应用验证为 `INVALID`，表示崩溃发生在应用身份检查点形成之前，没有把未完成会话误判为有效应用证据。
+- 三份报告各自绑定 41 个当前源码文件；独立复核无摘要差异，Codex CLI 与 TraceRelay Python 摘要均匹配。
+- TraceRelay 已停止，无受管运行时残留；防休眠辅助进程已停止。PostgreSQL 16.15 开发实例保留在 `127.0.0.1:55432`，供最终审查和后续数据库运维加固使用。
+- 当前原子阶段只剩最终 diff 展示以及用户决定是否提交和推送。不得用历史报告替代以上当前源码绑定报告。
 
 ## 2. 不可丢失的设计语义
 
@@ -135,13 +158,14 @@ TraceRelay 是第三方风格的独立软件开发工具包，不是子模块。
 
 ## 5. 新维护者的下一步
 
-1. 从远端克隆现行分支，不使用本机旧运行状态恢复。
-2. 在新的 Windows 11、PowerShell 7、Python 3.13 环境安装 `requirements-runtime.txt` 的精确依赖。
-3. 准备 PostgreSQL 16+ 和 pgvector 0.8.0+；执行显式版本迁移，取得项目锚点并更新配置。
-4. 运行本地测试和真实 Codex/App Server/TraceRelay 集成验收；重新生成绑定当前源码字节的报告。
+1. 核对 2026-08-25 验收检查点和当前工作树；保留三份 PASS 报告及其外部验收目录，不覆盖现有产物。
+2. 向用户展示最终变更和验证证据；取得明确授权后再提交和推送。
+3. 确定当前 PostgreSQL 集群是否成为长期权威库；在保留项目锚点的前提下完成自动启动、物理备份、恢复演练和生产认证加固。
+4. 为 pgvector 选择可审计的生产二进制来源，并把来源、版本和摘要纳入批准范围。
 5. 重新审核运行范围，取得用户结构化确认并写入范围决定。
-6. 提交干净工作树，生成新项目封印，初始化运行权威，最后发布受保护远程见证。
-7. 只有全部机械门禁通过后，才能声称可启动或生产就绪。
+6. 将当前迁移修复、回归测试、项目锚点和生成迁移 SQL 作为一个可审查批次提交；不要提交数据库连接串、虚拟环境或运行证据。
+7. 在干净工作树上重新运行必要门禁，生成新项目封印，初始化运行权威，最后发布受保护远程见证。
+8. 只有全部机械门禁通过后，才能声称可启动或生产就绪。
 
 ## 6. 权威顺序
 
