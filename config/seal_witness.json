@@ -3,7 +3,7 @@
   "repository_url": "ssh://git@github.com/rain-123-bow/aegis.git",
   "protected_ref": "refs/heads/aegis-seal-witness",
   "ssh_identity": {
-    "path": "C:/Users/playm/.ssh/id_ed25519",
-    "sha256": "37f410e907d1e2d972bd61224049bf0bde2035d904e73c57df13480ee50c1fd7"
+    "path": "C:/Users/穆佳希/.ssh/aegis-runtime-witness/id_ed25519",
+    "sha256": "30735a7bbc24802af0abe3fadf2214f88b866c0211ef32f776c9488f55318ad8"
   }
 }

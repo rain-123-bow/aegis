@@ -394,9 +394,25 @@ def capture_production_runtime_identity(
         )
     watched_roots[str(pycache_root).casefold()] = str(pycache_root)
 
+    python_import_paths: list[str] = []
+    for value in sys.path:
+        if not isinstance(value, str):
+            raise RuntimeIdentityError("Python import paths must be strings")
+        root = lexical_absolute(value)
+        python_import_paths.append(str(root))
+        existing = root
+        while not existing.exists() and existing.parent != existing:
+            existing = existing.parent
+        if not existing.is_dir():
+            raise RuntimeIdentityError(
+                f"unsupported file-backed Python import path: {root}"
+            )
+        # Absent search roots must not appear unnoticed after the initial capture.
+        watched_roots[str(existing).casefold()] = str(existing)
+
     python_roots: dict[str, Path] = {}
     for value in (
-        *sys.path,
+        *python_import_paths,
         str(Path(sys.base_prefix) / "Lib"),
         str(Path(sys.base_prefix) / "DLLs"),
         str(Path(sys.prefix) / "Lib" / "site-packages"),
@@ -416,7 +432,11 @@ def capture_production_runtime_identity(
             add(path, "python_native_runtime")
     for module in tuple(sys.modules.values()):
         module_file = getattr(module, "__file__", None)
-        if isinstance(module_file, str) and Path(module_file).is_file():
+        if module_file is not None:
+            if not isinstance(module_file, str) or not Path(module_file).is_file():
+                raise RuntimeIdentityError(
+                    f"loaded Python module has no regular backing file: {module_file}"
+                )
             add(module_file, "python_loaded_module")
 
     requirements = _pinned_runtime_requirements(project / "requirements-runtime.txt")
@@ -504,6 +524,7 @@ def capture_production_runtime_identity(
         "python_isolated": bool(sys.flags.isolated),
         "python_dont_write_bytecode": bool(sys.dont_write_bytecode),
         "python_pycache_prefix": str(Path(sys.pycache_prefix).resolve()),
+        "python_import_paths": python_import_paths,
         "distributions": distributions,
         "installed_distribution_versions": installed_versions,
         "tracerelay_command": list(tracerelay_prefix),

@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from contextlib import ExitStack
 from unittest.mock import patch
 
 
@@ -22,10 +23,79 @@ from runtime_identity import (
     _verify_tracerelay_source_identity,
     git_runtime_manifest,
     hold_verified_git_runtime,
+    capture_production_runtime_identity,
 )
 
 
 class ProductionRuntimeIdentityTests(unittest.TestCase):
+    def capture_fixture(self, root: Path, import_paths: list[str], modules=None) -> dict:
+        executable = root / "python.exe"
+        if not executable.exists():
+            executable.write_bytes(b"fixture executable")
+        cache = root / "cache"
+        cache.mkdir(exist_ok=True)
+        package = root / "node_modules" / "@openai" / "codex"
+        package.mkdir(parents=True, exist_ok=True)
+        fake_sys = SimpleNamespace(
+            executable=str(executable), _base_executable=str(executable),
+            flags=SimpleNamespace(isolated=True), dont_write_bytecode=True,
+            pycache_prefix=str(cache), path=import_paths, base_prefix=str(root),
+            prefix=str(root), modules=modules or {}, version="fixture Python",
+        )
+        with ExitStack() as stack:
+            stack.enter_context(patch("runtime_identity.sys", fake_sys))
+            for name, value in (
+                ("_pinned_runtime_requirements", []),
+                ("_validate_dependency_closure", None),
+                ("_installed_distribution_versions", []),
+                ("_verify_tracerelay_source_identity", {"installed_package_root": str(package)}),
+                ("git_runtime_manifest", ([executable], "0" * 64)),
+                ("shutil.which", str(executable)),
+            ):
+                stack.enter_context(patch(f"runtime_identity.{name}", return_value=value))
+            return capture_production_runtime_identity(
+                root, codex_command=executable,
+                tracerelay_command=[str(executable), "-I", "-B", "-m", "tracerelay"],
+                git_command=executable,
+            )
+
+    def test_external_file_backed_import_root_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "external" / "runtime.zip"
+            archive.parent.mkdir()
+            archive.write_bytes(b"PK\x05\x06" + bytes(18))
+            for entry in (str(archive), str(archive / "package")):
+                with self.subTest(entry=entry), self.assertRaisesRegex(
+                    RuntimeIdentityError, "file-backed Python import"
+                ):
+                    self.capture_fixture(root, [entry])
+
+    def test_import_path_order_changes_runtime_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, second = root / "first", root / "second"
+            first.mkdir()
+            second.mkdir()
+            forward = self.capture_fixture(root, [str(first), str(second)])
+            reverse = self.capture_fixture(root, [str(second), str(first)])
+            self.assertNotEqual(forward["manifest_sha256"], reverse["manifest_sha256"])
+
+    def test_missing_import_root_creation_is_watched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = root / "external"
+            parent.mkdir()
+            identity = self.capture_fixture(root, [str(parent / "missing" / "modules")])
+            self.assertIn(str(parent), identity["watched_roots"])
+
+    def test_loaded_archive_module_is_rejected_after_import_root_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = SimpleNamespace(__file__=str(root / "external.zip" / "module.py"))
+            with self.assertRaisesRegex(RuntimeIdentityError, "loaded Python module"):
+                self.capture_fixture(root, [], {"external": module})
+
     def test_runtime_file_identity_ignores_windows_change_time_metadata(self) -> None:
         first = SimpleNamespace(
             device=1,

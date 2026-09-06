@@ -124,6 +124,67 @@ class ProjectSealStoreTests(unittest.TestCase):
 
             self.assertEqual(record.git_head_before_record, head)
 
+    def test_record_rejects_uncommitted_replacement_approval_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(Path(directory))
+            head = self.git(project, "rev-parse", "HEAD")
+            review = project / runtime_behavior_scope.SCOPE_REVIEW_RELATIVE_PATH
+            review.write_text("# New internally consistent review\n\nPASS\n", encoding="utf-8")
+            self.refresh_scope_decision(project)
+            with self.assertRaisesRegex(project_seal_store.ProjectSealStoreError, "approval"):
+                project_seal_store.record_project_seal(
+                    project, git_head_before_record=head, project_id=bytes(range(16)),
+                )
+
+    def test_record_rejects_ignored_approval_artifacts_absent_from_head(self) -> None:
+        for relative in (
+            runtime_behavior_scope.SCOPE_REVIEW_RELATIVE_PATH,
+            runtime_behavior_scope.SCOPE_REVIEW_RESULT_RELATIVE_PATH,
+            runtime_behavior_scope.SCOPE_USER_CONFIRMATION_RELATIVE_PATH,
+            runtime_behavior_scope.SCOPE_DECISION_RELATIVE_PATH,
+        ):
+            with self.subTest(path=relative), tempfile.TemporaryDirectory() as directory:
+                project = self.make_project(Path(directory))
+                self.git(project, "rm", "--cached", "--", relative.as_posix())
+                (project / ".gitignore").write_text(relative.as_posix() + "\n", encoding="utf-8")
+                head = self.commit_all(project, "omit one approval artifact")
+                self.assertTrue((project / relative).is_file())
+                self.assertEqual(self.git(project, "status", "--porcelain"), "")
+                with self.assertRaisesRegex(project_seal_store.ProjectSealStoreError, "approval"):
+                    project_seal_store.record_project_seal(
+                        project, git_head_before_record=head, project_id=bytes(range(16)),
+                    )
+
+    def test_record_revalidates_approval_after_control_locks_are_acquired(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.make_project(Path(directory))
+            review = project / runtime_behavior_scope.SCOPE_REVIEW_RELATIVE_PATH
+            valid_review = review.read_bytes()
+            invalid_review = b"# Committed report B without descriptor refresh\n"
+            review.write_bytes(invalid_review)
+            head = self.commit_all(project, "commit inconsistent report B")
+            review.write_bytes(valid_review)
+            verify = project_seal_store._verify_scope_matches_git_commit
+
+            def swap_then_verify(*args, **kwargs):
+                if not kwargs.get("git_runtime_lock_held", False):
+                    review.write_bytes(invalid_review)
+                    self.assertEqual(self.git(project, "rev-parse", "HEAD"), head)
+                    self.assertEqual(self.git(project, "status", "--porcelain"), "")
+                return verify(*args, **kwargs)
+
+            with patch.object(
+                project_seal_store, "_verify_scope_matches_git_commit",
+                side_effect=swap_then_verify,
+            ):
+                with self.assertRaisesRegex(
+                    project_seal_store.ProjectSealStoreError, "approval.*locked",
+                ):
+                    project_seal_store.record_project_seal(
+                        project, git_head_before_record=head, project_id=bytes(range(16)),
+                    )
+            self.assertFalse((project / project_seal_store.SEAL_RECORD_RELATIVE_PATH).exists())
+
     def test_git_must_match_the_user_confirmed_trust_pin(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = self.make_project(Path(directory))

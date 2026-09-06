@@ -23,7 +23,11 @@ from path_security import (
     read_regular_file,
 )
 from runtime_behavior_scope import (
+    SCOPE_DECISION_RELATIVE_PATH,
     SCOPE_POLICY_RELATIVE_PATH,
+    SCOPE_REVIEW_RELATIVE_PATH,
+    SCOPE_REVIEW_RESULT_RELATIVE_PATH,
+    SCOPE_USER_CONFIRMATION_RELATIVE_PATH,
     RuntimeBehaviorScopeError,
     resolve_runtime_behavior_scope,
     runtime_behavior_path_is_selected,
@@ -39,6 +43,12 @@ SEAL_RECORD_RELATIVE_PATH = Path(
     ".aegis/reasoning_ledger/artifacts/facts/project-seal.json"
 )
 SEAL_CHAIN_SCHEMA = "aegis.project_seal_chain.v3"
+_SCOPE_APPROVAL_PATHS = (
+    SCOPE_REVIEW_RELATIVE_PATH,
+    SCOPE_REVIEW_RESULT_RELATIVE_PATH,
+    SCOPE_USER_CONFIRMATION_RELATIVE_PATH,
+    SCOPE_DECISION_RELATIVE_PATH,
+)
 
 _HEX_16_PATTERN = re.compile(r"[0-9a-f]{32}")
 _HEX_32_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -203,6 +213,7 @@ def record_project_seal(
             context.project_id,
             resolved_scope.entries,
             policy_sha256=resolved_scope.policy_sha256,
+            approval_decision_sha256=resolved_scope.decision_sha256,
             expected_git_sha256=resolved_scope.git_sha256,
             expected_git_runtime_sha256=resolved_scope.git_runtime_sha256,
             runner=runner,
@@ -298,6 +309,7 @@ def verify_expected_project_seal(
             record.project_id,
             resolved_scope.entries,
             policy_sha256=resolved_scope.policy_sha256,
+            approval_decision_sha256=resolved_scope.decision_sha256,
             expected_git_sha256=resolved_scope.git_sha256,
             expected_git_runtime_sha256=resolved_scope.git_runtime_sha256,
             runner=subprocess.run,
@@ -500,6 +512,7 @@ def _verify_scope_matches_git_commit(
     entries: tuple[Any, ...],
     *,
     policy_sha256: str,
+    approval_decision_sha256: str | None,
     expected_git_sha256: str,
     expected_git_runtime_sha256: str,
     runner: Runner,
@@ -522,6 +535,7 @@ def _verify_scope_matches_git_commit(
                         project_id,
                         entries,
                         policy_sha256=policy_sha256,
+                        approval_decision_sha256=approval_decision_sha256,
                         expected_git_sha256=expected_git_sha256,
                         expected_git_runtime_sha256=expected_git_runtime_sha256,
                         runner=runner,
@@ -530,6 +544,20 @@ def _verify_scope_matches_git_commit(
                     )
         except RuntimeIdentityError as error:
             raise ProjectSealStoreError(str(error)) from error
+    try:
+        locked_scope = resolve_runtime_behavior_scope(root, project_id)
+    except RuntimeBehaviorScopeError as error:
+        raise ProjectSealStoreError(
+            f"runtime scope approval failed locked validation: {error}"
+        ) from error
+    if (
+        locked_scope.policy_sha256 != policy_sha256
+        or locked_scope.decision_sha256 != approval_decision_sha256
+        or locked_scope.entries != entries
+    ):
+        raise ProjectSealStoreError(
+            "runtime scope approval or file set changed before locked validation"
+        )
     try:
         git_environment = trusted_git_environment(git)
     except RuntimeIdentityError as error:
@@ -619,35 +647,36 @@ def _verify_scope_matches_git_commit(
                 f"runtime file bytes differ from repository HEAD: {entry.path}"
             )
 
-    policy_bytes = _run_git_bytes(
-        runner,
-        [
-            *git_prefix,
-            "cat-file",
-            "blob",
-            f"{head}:{SCOPE_POLICY_RELATIVE_PATH.as_posix()}",
-        ],
-        "read committed runtime scope policy",
-        environment=git_environment,
-        working_directory=root,
-    )
-    try:
-        policy = json.loads(policy_bytes.decode("utf-8", errors="strict"))
-        canonical_policy = json.dumps(
-            policy,
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    except (UnicodeError, json.JSONDecodeError, ValueError) as error:
+    if approval_decision_sha256 is None:
         raise ProjectSealStoreError(
-            "committed runtime scope policy is invalid JSON"
-        ) from error
-    if hashlib.sha256(canonical_policy).hexdigest() != policy_sha256:
-        raise ProjectSealStoreError(
-            "runtime scope policy does not match the repository HEAD"
+            "runtime scope approval decision is unavailable"
         )
+    for relative in (SCOPE_POLICY_RELATIVE_PATH, *_SCOPE_APPROVAL_PATHS):
+        label = f"runtime scope approval control {relative.as_posix()}"
+        committed_bytes = _run_git_bytes(
+            runner,
+            [*git_prefix, "cat-file", "blob", f"{head}:{relative.as_posix()}"],
+            f"read committed {label}",
+            environment=git_environment,
+            working_directory=root,
+        )
+        try:
+            working_bytes, _identity = read_regular_file(
+                root / relative, allowed_root=root, label=label,
+                max_bytes=16 * 1024 * 1024,
+            )
+        except PathSecurityError as error:
+            raise ProjectSealStoreError(str(error)) from error
+        expected_digest = (
+            policy_sha256 if relative == SCOPE_POLICY_RELATIVE_PATH
+            else approval_decision_sha256 if relative == SCOPE_DECISION_RELATIVE_PATH
+            else None
+        )
+        if working_bytes != committed_bytes or (
+            expected_digest is not None
+            and hashlib.sha256(committed_bytes).hexdigest() != expected_digest
+        ):
+            raise ProjectSealStoreError(f"{label} does not match repository HEAD")
     return head
 
 
@@ -726,6 +755,10 @@ def _hold_repository_git_inputs(
     refs = git_directory / "refs"
     if refs.is_dir():
         candidates.extend(path for path in refs.rglob("*") if path.is_file())
+    candidates.extend(
+        root / relative
+        for relative in (SCOPE_POLICY_RELATIVE_PATH, *_SCOPE_APPROVAL_PATHS)
+    )
     if include_witness_inputs:
         candidates.extend(
             (
