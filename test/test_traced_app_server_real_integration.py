@@ -1416,6 +1416,9 @@ def _windows_process_command_line(process_pid: int) -> str:
             "-NonInteractive",
             "-Command",
             (
+                # Hidden Windows PowerShell processes otherwise use the local
+                # code page, while the reader below requires lossless UTF-8.
+                "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
                 "$process = Get-CimInstance Win32_Process -Filter "
                 f"'ProcessId = {process_pid}'; "
                 "if ($null -eq $process) { exit 3 }; "
@@ -1429,6 +1432,7 @@ def _windows_process_command_line(process_pid: int) -> str:
         errors="strict",
         check=False,
         timeout=10,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     command_line = completed.stdout.strip()
     if completed.returncode != 0 or not command_line:

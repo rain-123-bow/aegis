@@ -19,6 +19,25 @@ import test_traced_app_server_real_integration as real_acceptance  # noqa: E402
 
 
 class RegistrationCrashReportTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "process attribution is Windows-only")
+    def test_command_line_attribution_preserves_unicode(self) -> None:
+        marker = "aegis-命令行-路径-\U0001f9ea"
+        child = subprocess.Popen(
+            [sys.executable, "-I", "-B", "-c", "import sys; sys.stdin.read()", marker],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        try:
+            command_line = real_acceptance._windows_process_command_line(child.pid)
+            self.assertIn(marker, command_line)
+        finally:
+            child.terminate()
+            child.wait(timeout=5)
+            assert child.stdin is not None
+            child.stdin.close()
+
     def test_wait_failure_is_not_reported_as_process_termination(self) -> None:
         class Function:
             def __init__(self, result: object) -> None:
