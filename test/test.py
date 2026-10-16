@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 import tempfile
@@ -7,11 +8,6 @@ from pathlib import Path
 from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
-
-
-THREAD_ID_A = "019f12bb-e555-7102-960a-7178f8b78a20"
-THREAD_ID_B = "019f12bb-e64d-7542-a147-56459f759923"
-PROMPT_TO_A = "helllo"
 
 
 class State(TypedDict):
@@ -65,15 +61,13 @@ def send_prompt_to_thread(thread_id: str, prompt: str) -> str:
             output_path.unlink(missing_ok=True)
 
 
-def node_a(state: State) -> State:
-    return {"message": send_prompt_to_thread(THREAD_ID_A, state["message"])}
+def build_graph(thread_a: str, thread_b: str):
+    def node_a(state: State) -> State:
+        return {"message": send_prompt_to_thread(thread_a, state["message"])}
 
+    def node_b(state: State) -> State:
+        return {"message": send_prompt_to_thread(thread_b, state["message"])}
 
-def node_b(state: State) -> State:
-    return {"message": send_prompt_to_thread(THREAD_ID_B, state["message"])}
-
-
-def build_graph():
     graph = StateGraph(State)
     graph.add_node("A", node_a)
     graph.add_node("B", node_b)
@@ -84,7 +78,14 @@ def build_graph():
 
 
 def main() -> None:
-    result = build_graph().invoke({"message": PROMPT_TO_A})
+    parser = argparse.ArgumentParser(
+        description="Legacy CLI forwarding demo; this does not run the Aegis governance workflow."
+    )
+    parser.add_argument("--thread-a", required=True, help="Explicitly authorized existing Codex thread")
+    parser.add_argument("--thread-b", required=True, help="Explicitly authorized existing Codex thread")
+    parser.add_argument("--prompt", required=True)
+    args = parser.parse_args()
+    result = build_graph(args.thread_a, args.thread_b).invoke({"message": args.prompt})
     output = result["message"]
     print(output, end="" if output.endswith("\n") else "\n")
 
