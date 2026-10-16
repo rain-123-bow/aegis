@@ -37,6 +37,7 @@ from runtime_identity import (
     hold_verified_git_runtime,
     trusted_git_environment,
 )
+from witness_identity import resolve_witness_identity
 
 
 SEAL_RECORD_RELATIVE_PATH = Path(
@@ -799,21 +800,13 @@ def _sealed_ssh_identity_spec(root: Path) -> StablePathSpec:
             max_bytes=1024 * 1024,
         )
         config = json.loads(content.decode("utf-8", errors="strict"))
-        identity = config["ssh_identity"]
-        identity_path_value = identity["path"]
-    except (PathSecurityError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as error:
+        if not isinstance(config, dict):
+            raise ValueError("remote seal witness config must be an object")
+        identity_path, _digest = resolve_witness_identity(config)
+    except (PathSecurityError, UnicodeError, ValueError, KeyError, TypeError) as error:
         raise ProjectSealStoreError(
-            "remote seal witness SSH identity descriptor cannot be locked"
+            f"remote seal witness SSH identity descriptor cannot be locked: {error}"
         ) from error
-    if not isinstance(identity_path_value, str):
-        raise ProjectSealStoreError(
-            "remote seal witness SSH identity descriptor cannot be locked"
-        )
-    identity_path = Path(identity_path_value)
-    if not identity_path.is_absolute():
-        raise ProjectSealStoreError(
-            "remote seal witness SSH identity path must be absolute"
-        )
     return StablePathSpec(
         path=identity_path,
         allowed_root=Path(identity_path.anchor),

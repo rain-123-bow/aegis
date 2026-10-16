@@ -6,28 +6,28 @@ import re
 import shutil
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from urllib.parse import urlsplit
 
-from path_security import PathSecurityError, read_regular_file
+from path_security import PathSecurityError, StablePathSpec, hold_paths_stable, read_regular_file
 from project_seal_store import (
     ProjectSealStoreError,
     StoredProjectSeal,
     hold_verified_project_git_runtime,
 )
 from runtime_identity import RuntimeIdentityError, trusted_git_environment
+from witness_identity import WITNESS_CONFIG_SCHEMA, resolve_witness_identity
 
 
 WITNESS_CONFIG_RELATIVE_PATH = Path("config/seal_witness.json")
-WITNESS_CONFIG_SCHEMA = "aegis.remote_seal_witness_config.v3"
 WITNESS_SCHEMA = "aegis.remote_seal_witness.v3"
 WITNESS_FILE_NAME = "aegis-seal-witness.json"
 SSH_KNOWN_HOSTS_RELATIVE_PATH = Path("config/git_ssh_known_hosts")
 
 _CONFIG_FIELDS = {"schema", "repository_url", "protected_ref", "ssh_identity"}
-_SSH_IDENTITY_FIELDS = {"path", "sha256"}
 _WITNESS_FIELDS = {
     "schema",
     "project_id_hex",
@@ -94,13 +94,10 @@ def assert_remote_witness_not_published(
     if not git:
         raise RemoteSealWitnessError("git executable is unavailable")
     try:
-        environment = trusted_git_environment(
-            git,
-            ssh_known_hosts=project / SSH_KNOWN_HOSTS_RELATIVE_PATH,
-            ssh_identity_file=identity_file,
-            expected_ssh_identity_sha256=identity_sha256,
-        )
-        with tempfile.TemporaryDirectory(prefix="aegis-witness-proof-") as directory:
+        with (
+            _locked_witness_environment(project, git, identity_file, identity_sha256) as environment,
+            tempfile.TemporaryDirectory(prefix="aegis-witness-proof-") as directory,
+        ):
             command = [
                 git,
                 "--no-pager",
@@ -166,16 +163,10 @@ def verify_remote_project_seal_witness(
     git = git_executable or shutil.which("git")
     if not git:
         raise RemoteSealWitnessError("git executable is unavailable")
-    try:
-        environment = trusted_git_environment(
-            git,
-            ssh_known_hosts=project / SSH_KNOWN_HOSTS_RELATIVE_PATH,
-            ssh_identity_file=identity_file,
-            expected_ssh_identity_sha256=identity_sha256,
-        )
-    except RuntimeIdentityError as error:
-        raise RemoteSealWitnessError(str(error)) from error
-    with tempfile.TemporaryDirectory(prefix="aegis-witness-fetch-") as directory:
+    with (
+        _locked_witness_environment(project, git, identity_file, identity_sha256) as environment,
+        tempfile.TemporaryDirectory(prefix="aegis-witness-fetch-") as directory,
+    ):
         temporary_root = Path(directory)
         bare_repository = temporary_root / "witness.git"
         empty_template = temporary_root / "empty-template"
@@ -311,6 +302,30 @@ def _load_json(path: Path, *, allowed_root: Path, description: str) -> Any:
         ) from error
 
 
+@contextmanager
+def _locked_witness_environment(
+    project: Path, git: str, identity_file: Path, identity_sha256: str,
+) -> Iterator[dict[str, str]]:
+    # Lock the resolved transport path, not a second environment lookup. An outer
+    # repository lock may have resolved the same variable at an earlier point.
+    spec = StablePathSpec(
+        path=identity_file,
+        allowed_root=Path(identity_file.anchor),
+        label="sealed SSH transport identity",
+    )
+    try:
+        with hold_paths_stable((spec,)):
+            environment = trusted_git_environment(
+                git,
+                ssh_known_hosts=project / SSH_KNOWN_HOSTS_RELATIVE_PATH,
+                ssh_identity_file=identity_file,
+                expected_ssh_identity_sha256=identity_sha256,
+            )
+            yield environment
+    except (PathSecurityError, RuntimeIdentityError) as error:
+        raise RemoteSealWitnessError(str(error)) from error
+
+
 def _load_witness_config(project: Path) -> tuple[str, str, Path, str]:
     config = _load_json(
         project / WITNESS_CONFIG_RELATIVE_PATH,
@@ -319,10 +334,6 @@ def _load_witness_config(project: Path) -> tuple[str, str, Path, str]:
     )
     if not isinstance(config, dict) or set(config) != _CONFIG_FIELDS:
         raise RemoteSealWitnessError("remote seal witness config has invalid fields")
-    if config["schema"] != WITNESS_CONFIG_SCHEMA:
-        raise RemoteSealWitnessError(
-            "remote seal witness config has an unsupported schema"
-        )
     repository_url = config["repository_url"]
     if not isinstance(repository_url, str) or not _canonical_ssh_url(repository_url):
         raise RemoteSealWitnessError(
@@ -338,24 +349,11 @@ def _load_witness_config(project: Path) -> tuple[str, str, Path, str]:
         raise RemoteSealWitnessError(
             "remote seal witness has an invalid protected ref"
         )
-    identity = config["ssh_identity"]
-    if not isinstance(identity, dict) or set(identity) != _SSH_IDENTITY_FIELDS:
-        raise RemoteSealWitnessError(
-            "remote seal witness SSH identity descriptor is invalid"
-        )
-    identity_path_value = identity["path"]
-    identity_sha256 = identity["sha256"]
-    if (
-        not isinstance(identity_path_value, str)
-        or "\x00" in identity_path_value
-        or not Path(identity_path_value).is_absolute()
-        or not isinstance(identity_sha256, str)
-        or _HEX_32_PATTERN.fullmatch(identity_sha256) is None
-    ):
-        raise RemoteSealWitnessError(
-            "remote seal witness SSH identity descriptor is invalid"
-        )
-    return repository_url, protected_ref, Path(identity_path_value), identity_sha256
+    try:
+        identity_path, identity_sha256 = resolve_witness_identity(config)
+    except ValueError as error:
+        raise RemoteSealWitnessError(str(error)) from error
+    return repository_url, protected_ref, identity_path, identity_sha256
 
 
 def _canonical_ssh_url(value: str) -> bool:
