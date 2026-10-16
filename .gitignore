@@ -11,3 +11,15 @@ __pycache__/
 *.sqlite3-wal
 
 *.bak.*
+
+# Deployment credentials stay outside versioned governance configuration.
+.env
+.env.*
+!.env.example
+*.local.json
+*.pem
+*.key
+*.pfx
+*.p12
+id_rsa
+id_ed25519

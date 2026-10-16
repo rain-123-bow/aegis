@@ -54,6 +54,8 @@ Preflight fails closed unless all enabled checks pass:
 
 Remote witness verification is disabled only in isolated unit construction. `src/main.py` always enables it. There is no production offline fallback.
 
+Witness configuration v4 resolves `ssh_identity.path_env` from the launching process environment. The sealed configuration still binds the identity SHA-256, repository URL, and protected ref. Both Seal verification and remote transport use the shared resolver; remote transport locks the exact selected identity file for the complete Git operation. Legacy v3 configurations with an explicit absolute `path` remain readable. See [Windows deployment](WINDOWS_DEPLOYMENT.md) for relocation prerequisites.
+
 ## Role runtime contract
 
 `config/agent_registry.json` is a role-template registry. It contains no real thread IDs.

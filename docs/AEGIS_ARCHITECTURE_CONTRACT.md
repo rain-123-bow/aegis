@@ -213,7 +213,9 @@ Test/demo 不进入 runtime behavior Seal。C 只提交 `aegis.test_execution_re
 
 所有 Git 调用必须位于同一个已验证 Git 运行时锁会话内。会话按 scope policy 固定 launcher SHA-256 与完整 Git 依赖闭包 SHA-256；Windows 文件与祖先目录共享锁从校验前持续到最后一次本地或远端 Git 调用返回，禁止校验后替换可执行文件、DLL 或子命令。
 
-`config/seal_witness.json` 使用 `aegis.remote_seal_witness_config.v3`，直接封存 canonical SSH repository URL、protected ref、SSH identity 绝对路径与 SHA-256；禁止 remote alias。SSH 强制使用锁定 Git 发行版内的 `usr/bin/ssh.exe`、锁定 identity、`config/git_ssh_known_hosts`、Ed25519 host key、空 HOME、无代理配置。默认 identity、agent、PKCS#11 与 security-key provider 全部禁用。远程读取在一次性 bare repository 中执行，不读取项目 `.git/config`。引用指向的提交必须包含仓库根文件 `aegis-seal-witness.json`；该文件使用 `aegis.remote_seal_witness.v3`，绑定 project ID、seal chain ID、sequence、Seal、scope policy SHA-256、scope decision SHA-256、resolved manifest SHA-256、runtime authority ID 和受治理分支提交。Witness分支提交与受治理分支提交是两个不同对象；前者携带见证文件，后者由其中的 `git_commit` 指向。
+`config/seal_witness.json` 使用 `aegis.remote_seal_witness_config.v4`，封存 canonical SSH repository URL、protected ref、SSH identity 的 `path_env` 环境变量名与 SHA-256；身份文件绝对路径由当前部署通过该变量显式提供，禁止 remote alias。旧 v3 的显式 `path` 配置仍可读取。共享解析函数用于项目校验和远端读取，远端操作须从身份摘要验证前到最后一次 Git 调用返回，持续锁定实际选用的身份文件。
+
+SSH 强制使用锁定 Git 发行版内的 `usr/bin/ssh.exe`、锁定 identity、`config/git_ssh_known_hosts`、Ed25519 host key、空 HOME、无代理配置。默认 identity、agent、PKCS#11 与 security-key provider 全部禁用。远程读取在一次性 bare repository 中执行，不读取项目 `.git/config`。引用指向的提交必须包含仓库根文件 `aegis-seal-witness.json`；该文件使用 `aegis.remote_seal_witness.v3`，绑定 project ID、seal chain ID、sequence、Seal、scope policy SHA-256、scope decision SHA-256、resolved manifest SHA-256、runtime authority ID 和受治理分支提交。Witness分支提交与受治理分支提交是两个不同对象；前者携带见证文件，后者由其中的 `git_commit` 指向。
 
 ## 14. 命令、边界与成功标准
 
