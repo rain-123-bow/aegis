@@ -322,6 +322,18 @@ def bootstrap_project_ledger(
         schema=schema,
         embedding_dimensions=embedding_dimensions,
     )
+    config_exists = os.path.lexists(config.config_path)
+    if config_exists:
+        existing = ProjectLedgerConfig.load(root)
+        for name in ("project_id", "dsn_env", "schema", "embedding_dimensions"):
+            if getattr(existing, name) != getattr(config, name):
+                raise ValueError(f"bootstrap conflicts with existing reasoning ledger {name}")
+        # The anchor and project-owned settings survive a repeated bootstrap.
+        config = existing
+
+    # Check existing SQL before creating directories or saving any configuration.
+    if os.path.lexists(config.migration_path):
+        config.ensure_migration_artifact()
     ledger_root = root / ".aegis" / "reasoning_ledger"
     directories = [
         root / ".aegis",
@@ -339,10 +351,11 @@ def bootstrap_project_ledger(
         directory.mkdir(parents=True, exist_ok=True)
 
     migration_sql = build_init_sql(schema=schema, embedding_dimensions=embedding_dimensions)
-    config.save()
     config.ensure_migration_artifact()
+    if not config_exists:
+        config.save()
     readme_path = ledger_root / "README.md"
-    readme_path.write_text(
+    readme_text = (
         "\n".join(
             [
                 "# Reasoning Ledger",
@@ -357,9 +370,11 @@ def bootstrap_project_ledger(
                 "- Evidence paths are project-relative and byte-bound by size and SHA-256.",
                 "",
             ]
-        ),
-        encoding="utf-8",
+        )
     )
+    if not os.path.lexists(readme_path):
+        with readme_path.open("x", encoding="utf-8") as stream:
+            stream.write(readme_text)
 
     return BootstrapResult(
         config=config,
