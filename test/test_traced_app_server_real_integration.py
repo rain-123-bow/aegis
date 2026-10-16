@@ -21,6 +21,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "test"))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import aegis_runtime  # noqa: E402
+from acceptance_preparation import resolve_acceptance_fixture  # noqa: E402
 from aegis_runtime import (  # noqa: E402
     RuntimeCoordinator,
     TraceRelayClient,
@@ -395,7 +396,7 @@ def _source_sha256(*relative_paths: str) -> dict[str, str]:
         relative_path: hashlib.sha256(
             (PROJECT_ROOT / relative_path).read_bytes()
         ).hexdigest()
-        for relative_path in relative_paths
+        for relative_path in (*relative_paths, "test/acceptance_preparation.py")
     }
 
 
@@ -1466,6 +1467,7 @@ def _same_windows_executable_path(left: str | Path, right: str | Path) -> bool:
 )
 class TracedAppServerRealIntegrationTests(unittest.TestCase):
     def test_planning_and_per_turn_execution_control_planes(self) -> None:
+        root = resolve_acceptance_fixture("control-plane")
         tracerelay_command = resolve_tracerelay_command(
             os.environ.get("TRACERELAY_PYTHON")
         )
@@ -1484,17 +1486,8 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             aegis_runtime.default_app_server_command()[0]
         )
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-        short_id = uuid4().hex[:12]
+        short_id = root.name
         run_id = f"p-{short_id}"
-        root = (
-            Path(
-                os.environ.get(
-                    "AEGIS_APP_SERVER_ACCEPTANCE_ROOT", r"C:\code\aegis_artifacts"
-                )
-            )
-            / "as_pilot"
-            / short_id
-        ).resolve()
         project = root / "project"
         runtime_root = root / "runtime"
         artifact_path = runtime_root / "runs" / run_id / "artifacts"
@@ -2108,6 +2101,7 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
                 _stop_test_runtime(tracerelay_command)
 
     def test_hard_crash_cleans_exact_session_and_terminates_original_run(self) -> None:
+        root = resolve_acceptance_fixture("hard-crash")
         tracerelay_command = resolve_tracerelay_command(
             os.environ.get("TRACERELAY_PYTHON")
         )
@@ -2126,17 +2120,8 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             aegis_runtime.default_app_server_command()[0]
         )
 
-        short_id = uuid4().hex[:12]
+        short_id = root.name
         run_id = f"crash-{short_id}"
-        root = (
-            Path(
-                os.environ.get(
-                    "AEGIS_APP_SERVER_ACCEPTANCE_ROOT", r"C:\code\aegis_artifacts"
-                )
-            )
-            / "as_crash_recovery"
-            / short_id
-        ).resolve()
         project = root / "project"
         artifact_path = root / "artifacts"
         source = project / "src" / "acceptance_target.py"
@@ -2362,6 +2347,7 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
     def test_registration_intent_recovers_both_real_pre_checkpoint_crashes(
         self,
     ) -> None:
+        root = resolve_acceptance_fixture("registration-crash")
         tracerelay_command = resolve_tracerelay_command(
             os.environ.get("TRACERELAY_PYTHON")
         )
@@ -2386,16 +2372,7 @@ class TracedAppServerRealIntegrationTests(unittest.TestCase):
             aegis_runtime.default_app_server_command()[0]
         )
 
-        short_id = uuid4().hex[:12]
-        root = (
-            Path(
-                os.environ.get(
-                    "AEGIS_APP_SERVER_ACCEPTANCE_ROOT", r"C:\code\aegis_artifacts"
-                )
-            )
-            / "as_registration_crash"
-            / short_id
-        ).resolve()
+        short_id = root.name
         project = root / "project"
         source = project / "src" / "acceptance_target.py"
         source.parent.mkdir(parents=True, exist_ok=True)

@@ -33,29 +33,29 @@ from reasoning_ledger import (  # noqa: E402
 )
 
 
-TEST_DSN = os.environ.get(
-    "AEGIS_LEDGER_DSN",
-    "postgresql://aegis:aegis@127.0.0.1:5432/aegis_ledger?connect_timeout=3",
-)
-TEST_SCHEMA = "aegis_test_ledger_v3"
+# Explicit opt-in: never borrow the business ledger connection for destructive tests.
+TEST_DSN = os.environ.get("AEGIS_TEST_LEDGER_DSN")
+TEST_SCHEMA = f"aegis_test_ledger_v3_{uuid4().hex[:12]}"
 CAPTURED_AT = "2026-08-20T00:00:00Z"
 
 
 def require_test_database() -> None:
+    if not TEST_DSN:
+        raise unittest.SkipTest("set AEGIS_TEST_LEDGER_DSN to an isolated test database")
     try:
-        with psycopg.connect(TEST_DSN, autocommit=True) as conn:
+        with psycopg.connect(TEST_DSN, autocommit=True, connect_timeout=3) as conn:
             server_version = int(conn.execute("SHOW server_version_num").fetchone()[0])
             vector = conn.execute(
                 "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
             ).fetchone()
     except psycopg.OperationalError as error:
-        raise unittest.SkipTest(
-            f"PostgreSQL/pgvector integration database is unavailable: {error}"
+        raise RuntimeError(
+            "configured PostgreSQL/pgvector test database is unavailable"
         ) from error
     if server_version // 10000 < 16 or vector is None or tuple(
         int(part) for part in str(vector[0]).split(".")
     ) < (0, 8, 0):
-        raise unittest.SkipTest(
+        raise RuntimeError(
             "PostgreSQL >=16 and pgvector >=0.8.0 integration baseline is unavailable"
         )
 

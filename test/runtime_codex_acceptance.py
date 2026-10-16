@@ -326,6 +326,15 @@ def _verify_session(
 
 
 def run_acceptance(args: argparse.Namespace) -> dict[str, object]:
+    raise RuntimeError(
+        "This F-start acceptance entry is retired; use "
+        "test/test_traced_app_server_real_integration.py with its explicit "
+        "acceptance configuration. See docs/WINDOWS_DEPLOYMENT.md."
+    )
+
+
+def _historical_f_start_acceptance(args: argparse.Namespace) -> dict[str, object]:
+    """Historical harness retained for evidence interpretation, not CLI execution."""
     if os.name != "nt":
         raise RuntimeError("runtime acceptance is Windows-only")
     tracerelay_command = resolve_tracerelay_command(args.tracerelay_python)
@@ -581,10 +590,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--upstream-port", type=int, default=7899)
     parser.add_argument(
-        "--evidence-root", default=r"C:\code\aegis-acceptance-artifacts"
+        "--evidence-root", help="Retired option; this harness no longer executes."
     )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
-    print(json.dumps(run_acceptance(parse_args()), ensure_ascii=False, indent=2))
+    try:
+        print(json.dumps(run_acceptance(parse_args()), ensure_ascii=False, indent=2))
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from error
